@@ -1,0 +1,48 @@
+name: Build Windows exe
+
+on:
+  push:
+    branches: [ claude/creche-roster-generator-uppzpv ]
+    paths:
+      - 'roster_generator.py'
+      - 'roster_gui.py'
+      - '.github/workflows/build-windows-exe.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller openpyxl
+
+      - name: Build exe
+        run: pyinstaller --onefile --windowed --name RosterPlanner roster_gui.py
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RosterPlanner-windows
+          path: dist/RosterPlanner.exe
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "roster-planner-run${{ github.run_number }}" \
+            "dist/RosterPlanner.exe" \
+            --title "Roster Planner (Windows build ${{ github.run_number }})" \
+            --notes "Automated Windows build of RosterPlanner.exe from commit ${{ github.sha }}." \
+            --repo "${{ github.repository }}"
