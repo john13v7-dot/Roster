@@ -43,7 +43,16 @@ ROLE_FIXED = "fixed"
 ROLE_STATIC = "static"
 ROLE_VACANT = "vacant"
 ROLE_BLANK = "blank"
-VALID_ROLES = {ROLE_ROTATING, ROLE_FIXED, ROLE_STATIC, ROLE_VACANT, ROLE_BLANK, ""}
+ROLE_MANAGEMENT = "management"
+VALID_ROLES = {ROLE_ROTATING, ROLE_FIXED, ROLE_STATIC, ROLE_VACANT, ROLE_BLANK, ROLE_MANAGEMENT, ""}
+
+# Management-team staff (e.g. a room leader and an office manager) only ever work the early
+# or late start time, never the two middle ones. A management person with a Floor set is
+# "attached to a room" and always counts toward the early/late ratio; one with no Floor is a
+# floating cover who normally does management duties and only joins the room count when the
+# rotating/fixed pool can't meet the ratio on its own (or when explicitly overridden).
+MANAGEMENT_SLOTS = ["early", "late"]
+MANAGEMENT_LABEL = "Management"
 
 LEAVE_TYPES = ["Holiday", "Maternity Leave", "Sick", "Other"]
 FLOORS = {"down", "up", ""}
@@ -410,8 +419,8 @@ DEFAULT_STAFF_ROWS = [
     ("", "", "blank", "", "", "", "", "", "", "", "", "", "No"),
     ("Eirini", "", "static", "", "8:30 – 5:30", "", "", "", "", "", "", "", "No"),
     ("Megan", "", "static", "", "8:30 – 5:30", "", "", "", "", "", "", "", "Yes"),
-    ("Jason", "", "fixed", "up", "", "", "", "", "", "", "", "", "Yes"),
-    ("Shehnaz", "Shehnaz 7:30", "static", "", "7:30 – 4:30", "", "", "", "", "", "", "", "Yes"),
+    ("Jason", "", "management", "up", "", "", "", "", "", "", "", "", "Yes"),
+    ("Shehnaz", "", "management", "", "", "", "", "", "", "", "", "", "Yes"),
     ("Priscilla", "", "static", "", "10:00 – 2:00", "10:00 – 6:00", "10:00 – 6:00",
      "10:00 – 6:00", "10:00 – 6:00", "", "", "", "Yes"),
     ("Laura", "", "static", "", "9:00 – 1:00", "", "", "", "", "", "", "", "Yes"),
@@ -426,12 +435,21 @@ HOW_TO_USE_TEXT = [
     "Roster Planner — how to use this workbook",
     "",
     "1. Fill in the 'Staff' tab: one row per person, in the order you want them printed.",
-    "   Role is one of: rotating, fixed, static, vacant, or leave blank for a spacer row.",
+    "   Role is one of: rotating, fixed, static, vacant, management, or leave blank for a",
+    "   spacer row.",
     "     - rotating: shares the four start times (early/mid1/mid2/late) via the rotation.",
     "     - fixed: always works the early start time when scheduled.",
     "     - static: works their own typed hours (fill the Mon column; add more days only",
     "       if the hours differ from Monday).",
     "     - vacant: an empty post that still shows shifts, with no name.",
+    "     - management: a management-team member who only ever works the early or late",
+    "       start time (never a middle one). Give them a Floor if they're also attached to",
+    "       a room (they then always count toward that day's early/late ratio, like Jason);",
+    "       leave Floor blank if they're purely management and only cover the room when",
+    "       the rotating/fixed/room-management staff can't meet the ratio on their own",
+    "       (like Shehnaz). Either way the generator picks 7:30 or 9:00 for them fairly.",
+    "       To force a specific day yourself, type the early or late start time (e.g. 7:30",
+    "       or 9:00) straight into that day's Mon-Fri cell; leave it blank for automatic.",
     "   Floor is 'down' or 'up' (used to mix floors across each start time).",
     "   Days off is a permanent weekly day off, e.g. 'Thu'.",
     "   Start date / End date control joiners and leavers; leave blank if not relevant.",
@@ -475,9 +493,16 @@ def create_template(path: str) -> None:
     for c, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(c)].width = w
     last_row = 1 + len(DEFAULT_STAFF_ROWS) + 20
-    _add_dropdown(ws, "C2:C{}".format(last_row), '"rotating,fixed,static,vacant"')
+    _add_dropdown(ws, "C2:C{}".format(last_row), '"rotating,fixed,static,vacant,management"')
     _add_dropdown(ws, "D2:D{}".format(last_row), '"down,up"')
     _add_dropdown(ws, "M2:M{}".format(last_row), '"Yes,No"')
+    # Management staff only ever work one of two start times, so give their Mon-Fri cells a
+    # matching dropdown (blank = automatic) instead of the freeform text static rows use.
+    management_time_list = '"{},{}"'.format(DEFAULT_SETTINGS["early_start"], DEFAULT_SETTINGS["late_start"])
+    for i, row_data in enumerate(DEFAULT_STAFF_ROWS):
+        if row_data[2] == ROLE_MANAGEMENT:
+            r = i + 2
+            _add_dropdown(ws, f"E{r}:I{r}", management_time_list)
 
     ws = wb.create_sheet("Leave")
     for c, header in enumerate(LEAVE_HEADERS, start=1):
@@ -558,15 +583,45 @@ def _joiner_starting_history(history: dict[str, HistoryEntry]) -> HistoryEntry:
     return HistoryEntry(**{slot: round(totals[slot] / n) for slot in SLOTS})
 
 
-def compute_target_sizes(n_present: int, fixed_present_count: int, people_early: int, people_late: int) -> dict[str, int]:
-    early_needed = max(0, people_early - fixed_present_count)
+def compute_target_sizes(n_present: int, early_external: int, late_external: int,
+                          people_early: int, people_late: int) -> dict[str, int]:
+    """Sizes for the rotating pool once fixed/management staff already covering early or
+    late (early_external / late_external) are accounted for."""
+    early_needed = max(0, people_early - early_external)
     early_needed = min(early_needed, n_present)
     remaining = n_present - early_needed
-    late_needed = min(people_late, remaining)
+    late_needed = max(0, min(people_late - late_external, remaining))
     remaining -= late_needed
     mid1 = -(-remaining // 2)  # ceil -> larger group to 08:00
     mid2 = remaining // 2
     return {"early": early_needed, "late": late_needed, "mid1": mid1, "mid2": mid2}
+
+
+def management_override_slot(person: StaffMember, day: str, settings: dict) -> Optional[str]:
+    """A management-role person's Mon-Fri cell may hold an explicit override of the early or
+    late start time (matching Settings), instead of the default automatic choice."""
+    text = person.day_text(day)
+    if not text:
+        return None
+    norm = parse_time_string(text)
+    if norm == settings["early_start"]:
+        return "early"
+    if norm == settings["late_start"]:
+        return "late"
+    raise RosterInputError(
+        f"{person.name}, {day}: '{text}' is not a valid management time. "
+        f"Use {settings['early_start']} or {settings['late_start']}, or leave blank for automatic."
+    )
+
+
+def choose_management_base_slot(name: str, history: dict[str, HistoryEntry], salt: str) -> str:
+    """Pick the fairer of the two allowed slots for a management person's weekly base,
+    balancing their own early/late history and breaking exact ties deterministically."""
+    entry = history.get(name) or HistoryEntry()
+    if entry.early == entry.late:
+        digest = hashlib.sha256(f"{salt}|{name}".encode("utf-8")).hexdigest()
+        return "early" if int(digest[:8], 16) % 2 == 0 else "late"
+    return "early" if entry.early < entry.late else "late"
 
 
 def _multinomial_estimate(n: int, sizes: dict[str, int]) -> int:
@@ -678,9 +733,14 @@ def _local_search_partition(people_sorted: list[str], sizes: dict[str, int], cos
 
 
 def make_cost_fn(history: dict[str, HistoryEntry], last_week_map: dict[str, str],
-                  floors: dict[str, str], mix_floors: bool, fixed_floors_early: list[str],
+                  floors: dict[str, str], mix_floors: bool,
+                  external_floors: Optional[dict[str, list[str]]] = None,
                   base_map: Optional[dict[str, str]] = None,
                   use_repeat_penalty: bool = True) -> "callable":
+    """external_floors carries the floors of people already locked into a slot outside the
+    solver's control (fixed staff, always early; management staff, early or late) — counted
+    for the floor-mix check but not part of the assignment being searched over."""
+    external_floors = external_floors or {}
     def cost_fn(assignment: dict[str, list[str]]) -> float:
         total = 0.0
         total_people = sum(len(v) for v in assignment.values())
@@ -695,8 +755,7 @@ def make_cost_fn(history: dict[str, HistoryEntry], last_week_map: dict[str, str]
                 if base_map is not None and base_map.get(p) is not None and base_map.get(p) != slot:
                     total += DEVIATION_WEIGHT
             group_floors = [floors.get(p) for p in members if floors.get(p)]
-            if slot == "early":
-                group_floors += [f for f in fixed_floors_early if f]
+            group_floors += [f for f in external_floors.get(slot, []) if f]
             if mix_floors and len(group_floors) >= 2 and len(set(group_floors)) < 2:
                 total += FLOOR_MIX_WEIGHT
             if slot in ("mid1", "mid2") and len(members) == 0 and total_people > 0:
@@ -711,6 +770,7 @@ class WeekResult:
     week_dates: dict[str, date]
     day_assignments: dict[str, dict[str, list[str]]]  # day -> slot -> [rotating names]
     fixed_by_day: dict[str, list[str]]  # day -> [fixed names present]
+    management_assignments: dict[str, dict[str, str]]  # day -> {management name: 'early'/'late'}
     base_map: dict[str, str]
     warnings: list[str] = field(default_factory=list)
 
@@ -720,6 +780,8 @@ def build_week(staff: list[StaffMember], leaves: list[Leave], settings: dict,
     week_dates = {day: monday + timedelta(days=i) for i, day in enumerate(DAYS)}
     rotating = [s for s in staff if s.role == ROLE_ROTATING]
     fixed = [s for s in staff if s.role == ROLE_FIXED]
+    management_room = [s for s in staff if s.role == ROLE_MANAGEMENT and s.floor]
+    management_floating = [s for s in staff if s.role == ROLE_MANAGEMENT and not s.floor]
     floors = {s.name: s.floor for s in staff}
     warnings: list[str] = []
 
@@ -730,7 +792,7 @@ def build_week(staff: list[StaffMember], leaves: list[Leave], settings: dict,
     fixed_work_days = {s.name: scheduled_days(s, week_dates) for s in fixed}
     fixed_present_base_count = sum(1 for s in fixed if len(fixed_work_days[s.name]) >= 3)
     fixed_floors_base = [s.floor for s in fixed if len(fixed_work_days[s.name]) >= 3]
-    for s in fixed:
+    for s in fixed + management_room + management_floating:
         if s.name not in history:
             history[s.name] = _joiner_starting_history(history)
 
@@ -740,14 +802,25 @@ def build_week(staff: list[StaffMember], leaves: list[Leave], settings: dict,
 
     last_week_map = {name: history[name].last_week_start for name in pool_names}
 
-    base_sizes = compute_target_sizes(len(pool_names), fixed_present_base_count, people_early, people_late)
-    needed_total = (people_early - fixed_present_base_count) + people_late
-    if needed_total > len(pool_names):
-        warnings.append(
-            f"Week of {monday.isoformat()}: not enough rotating staff to fully cover early+late "
-            f"(need {max(needed_total, 0)}, have {len(pool_names)})."
-        )
-    base_cost_fn = make_cost_fn(history, last_week_map, floors, mix_floors, fixed_floors_base,
+    # Management staff attached to a room keep one slot all week (like everyone else's
+    # stability rule), chosen fairly between early/late from their own history.
+    management_base_slot: dict[str, str] = {}
+    for s in management_room:
+        if len(scheduled_days(s, week_dates)) >= 1:
+            management_base_slot[s.name] = choose_management_base_slot(
+                s.name, history, salt=f"{monday.isoformat()}|mgmt-base")
+
+    early_external_base = fixed_present_base_count + sum(
+        1 for slot in management_base_slot.values() if slot == "early")
+    late_external_base = sum(1 for slot in management_base_slot.values() if slot == "late")
+    base_sizes = compute_target_sizes(len(pool_names), early_external_base, late_external_base,
+                                       people_early, people_late)
+    external_floors_base = {"early": list(fixed_floors_base), "late": []}
+    for s in management_room:
+        slot = management_base_slot.get(s.name)
+        if slot:
+            external_floors_base[slot].append(s.floor)
+    base_cost_fn = make_cost_fn(history, last_week_map, floors, mix_floors, external_floors_base,
                                  base_map=None, use_repeat_penalty=True)
     base_partition = partition_search(pool_names, base_sizes, base_cost_fn, salt=f"{monday.isoformat()}|base")
     base_map: dict[str, str] = {}
@@ -757,6 +830,7 @@ def build_week(staff: list[StaffMember], leaves: list[Leave], settings: dict,
 
     day_assignments: dict[str, dict[str, list[str]]] = {}
     fixed_by_day: dict[str, list[str]] = {}
+    management_assignments: dict[str, dict[str, str]] = {}
 
     for day, d in week_dates.items():
         present_rotating = [
@@ -770,38 +844,104 @@ def build_week(staff: list[StaffMember], leaves: list[Leave], settings: dict,
         ]
         fixed_by_day[day] = present_fixed
 
-        day_sizes = compute_target_sizes(len(present_rotating), len(present_fixed), people_early, people_late)
-        day_needed_total = (people_early - len(present_fixed)) + people_late
+        # Management attached to a room: today's slot is an explicit override if given,
+        # else the weekly base slot chosen above.
+        day_mgmt_room_slot: dict[str, str] = {}
+        for s in management_room:
+            if day not in scheduled_days(s, week_dates) or on_leave(s.name, d, leaves) is not None:
+                continue
+            override = management_override_slot(s, day, settings)
+            day_mgmt_room_slot[s.name] = override or management_base_slot.get(s.name, "early")
+
+        # Floating management: an explicit override forces coverage; otherwise they default
+        # to pure management duty and are only pulled onto the floor if the rotating/fixed/
+        # room-management pool can't meet the ratio on its own.
+        day_mgmt_floating_slot: dict[str, str] = {}
+        floating_available: list[StaffMember] = []
+        for s in management_floating:
+            if day not in scheduled_days(s, week_dates) or on_leave(s.name, d, leaves) is not None:
+                continue
+            override = management_override_slot(s, day, settings)
+            if override:
+                day_mgmt_floating_slot[s.name] = override
+            else:
+                floating_available.append(s)
+
+        def _external_counts():
+            early = len(present_fixed) + sum(1 for v in day_mgmt_room_slot.values() if v == "early") \
+                + sum(1 for v in day_mgmt_floating_slot.values() if v == "early")
+            late = sum(1 for v in day_mgmt_room_slot.values() if v == "late") \
+                + sum(1 for v in day_mgmt_floating_slot.values() if v == "late")
+            return early, late
+
+        early_external, late_external = _external_counts()
+        raw_early_target = max(0, people_early - early_external)
+        raw_late_target = max(0, people_late - late_external)
+        shortfall = max(0, (raw_early_target + raw_late_target) - len(present_rotating))
+
+        floating_available.sort(key=lambda s: (history[s.name].early + history[s.name].late, s.name))
+        for s in floating_available:
+            if shortfall <= 0:
+                break
+            if raw_early_target > 0:
+                day_mgmt_floating_slot[s.name] = "early"
+                raw_early_target -= 1
+            elif raw_late_target > 0:
+                day_mgmt_floating_slot[s.name] = "late"
+                raw_late_target -= 1
+            else:
+                break
+            shortfall -= 1
+
+        early_external, late_external = _external_counts()
+        day_sizes = compute_target_sizes(len(present_rotating), early_external, late_external,
+                                          people_early, people_late)
+        day_needed_total = max(0, people_early - early_external) + max(0, people_late - late_external)
         if day_needed_total > len(present_rotating):
             warnings.append(
                 f"{d.isoformat()} ({day}): understaffed — need {max(day_needed_total, 0)} rotating, "
                 f"have {len(present_rotating)}."
             )
 
+        external_floors_day = {"early": [s.floor for s in fixed if s.name in present_fixed], "late": []}
+        for s in management_room:
+            slot = day_mgmt_room_slot.get(s.name)
+            if slot:
+                external_floors_day[slot].append(s.floor)
+        for s in management_floating:
+            slot = day_mgmt_floating_slot.get(s.name)
+            if slot and s.floor:
+                external_floors_day[slot].append(s.floor)
+
         if set(present_rotating) == set(pool_names) and day_sizes == base_sizes:
             day_assignment = {slot: [p for p in base_partition[slot]] for slot in SLOTS}
         else:
-            present_fixed_floors = [s.floor for s in fixed if s.name in present_fixed]
-            day_cost_fn = make_cost_fn(history, last_week_map, floors, mix_floors, present_fixed_floors,
+            day_cost_fn = make_cost_fn(history, last_week_map, floors, mix_floors, external_floors_day,
                                         base_map=base_map, use_repeat_penalty=False)
             day_assignment = partition_search(present_rotating, day_sizes, day_cost_fn,
                                                salt=f"{monday.isoformat()}|{day}")
 
         day_assignments[day] = day_assignment
+        management_assignments[day] = {**day_mgmt_room_slot, **day_mgmt_floating_slot}
 
         for slot in SLOTS:
             for name in day_assignment[slot]:
                 setattr(history[name], slot, getattr(history[name], slot) + 1)
         for name in present_fixed:
             history[name].early += 1
+        for name, slot in management_assignments[day].items():
+            setattr(history[name], slot, getattr(history[name], slot) + 1)
 
     for name in pool_names:
         history[name].last_week_start = base_map.get(name, history[name].last_week_start)
     for s in fixed:
         history[s.name].last_week_start = "early"
+    for name, slot in management_base_slot.items():
+        history[name].last_week_start = slot
 
     return WeekResult(monday=monday, week_dates=week_dates, day_assignments=day_assignments,
-                       fixed_by_day=fixed_by_day, base_map=base_map, warnings=warnings)
+                       fixed_by_day=fixed_by_day, management_assignments=management_assignments,
+                       base_map=base_map, warnings=warnings)
 
 
 # --------------------------------------------------------------------------
@@ -840,6 +980,13 @@ def cell_for_person(person: StaffMember, day: str, d: date, leaves: list[Leave],
         if slot is None:
             return "", None
         start_key = {"early": "early_start", "mid1": "mid1_start", "mid2": "mid2_start", "late": "late_start"}[slot]
+        return shift_text(settings[start_key], settings["shift_length"]), None
+
+    if person.role == ROLE_MANAGEMENT:
+        slot = week_result.management_assignments.get(day, {}).get(person.name)
+        if slot is None:
+            return (MANAGEMENT_LABEL, None) if not person.floor else ("", None)
+        start_key = "early_start" if slot == "early" else "late_start"
         return shift_text(settings[start_key], settings["shift_length"]), None
 
     return "", None
@@ -924,6 +1071,8 @@ def write_checks_sheet(wb: Workbook, staff: list[StaffMember], settings: dict,
         for day, d in wr.week_dates.items():
             counts = {slot: len(wr.day_assignments[day][slot]) for slot in SLOTS}
             counts["early"] += len(wr.fixed_by_day.get(day, []))
+            for slot in wr.management_assignments.get(day, {}).values():
+                counts[slot] += 1
             issues = []
             if counts["early"] != people_early:
                 issues.append(f"early {counts['early']}/{people_early}")
@@ -963,11 +1112,15 @@ def write_checks_sheet(wb: Workbook, staff: list[StaffMember], settings: dict,
         ws.cell(row, c, h).font = Font(bold=True)
     row += 1
     floors = {s.name: s.floor for s in staff}
-    trackable = [s.name for s in staff if s.role in (ROLE_ROTATING, ROLE_FIXED)]
+    roles = {s.name: s.role for s in staff}
+    trackable = [s.name for s in staff if s.role in (ROLE_ROTATING, ROLE_FIXED, ROLE_MANAGEMENT)]
     for name in trackable:
         entry = history.get(name, HistoryEntry())
+        display_floor = floors.get(name, "")
+        if not display_floor and roles.get(name) == ROLE_MANAGEMENT:
+            display_floor = "management (floating)"
         ws.cell(row, 1, name)
-        ws.cell(row, 2, floors.get(name, ""))
+        ws.cell(row, 2, display_floor)
         ws.cell(row, 3, entry.early)
         ws.cell(row, 4, entry.mid1)
         ws.cell(row, 5, entry.mid2)

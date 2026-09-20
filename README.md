@@ -47,12 +47,26 @@ warnings = build_roster("Roster_Planner.xlsx", date(2026, 9, 28), weeks=4, commi
 
   - **Role**: `rotating` (shares the four start times), `fixed` (always the
     early start when scheduled), `static` (own typed hours, e.g. part-timers),
-    `vacant` (an empty post that still shows shifts but no name), or leave
-    blank for a spacer row.
-  - **Floor**: `down` or `up` — used to mix floors at each start time.
+    `vacant` (an empty post that still shows shifts but no name), `management`
+    (see below), or leave blank for a spacer row.
+  - **Floor**: `down` or `up` — used to mix floors at each start time. For a
+    `management` row, Floor also decides whether they're attached to a room
+    (see below).
   - For a `static`/`vacant` row, fill in the **Mon** column; if the other days
     are left blank, Monday's hours are applied to all five days. Fill in
     individual days only where the hours differ (e.g. a different Monday).
+  - **`management`** rows only ever work the early or late start time — never
+    a middle one. The generator picks whichever is fairer for them
+    automatically, but you can force a specific day by typing that start time
+    (e.g. `7:30` or `9:00`) straight into the Mon-Fri cell for that day (or
+    picking it from the dropdown); leave the cell blank for automatic.
+    - With a **Floor** set, they're attached to a room and always count
+      toward that day's opening/closing ratio (e.g. a room leader).
+    - With **Floor** left blank, they're purely management and stay off the
+      room count (shown as "Management") *unless* the rotating/fixed/
+      room-management staff can't meet the ratio that day on their own, in
+      which case they're automatically pulled in to cover the gap — or you
+      can force it yourself the same way, via the Mon-Fri dropdown.
   - **Days off** is a permanent weekly day off (shows as `OFF`).
   - **Start date** / **End date** control joiners and leavers. If someone
     isn't employed at all in a given week, their row is left out of that

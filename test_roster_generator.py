@@ -359,3 +359,148 @@ def test_week_range_formatting_same_month():
 
 def test_week_range_formatting_spans_months():
     assert rg.format_week_range(date(2026, 9, 28)) == "28th September – 2nd October 2026"
+
+
+# --------------------------------------------------------------------------
+# Management role: room-attached vs floating, ratio counting, auto vs override
+# --------------------------------------------------------------------------
+
+def _team_with_management(n_rotating=9):
+    rows = default_team(n_rotating=n_rotating)
+    rows = [r for r in rows if r[2] != "fixed"]  # drop the plain "fixed" helper for these tests
+    rows.append(make_staff_row(name="Room1", role="management", floor="up"))
+    rows.append(make_staff_row(name="Float1", role="management", floor=""))
+    return rows
+
+
+def test_management_room_always_covers_one_of_two_slots(tmp_path):
+    staff_rows = _team_with_management(n_rotating=9)
+    planner = tmp_path / "Roster_Planner.xlsx"
+    write_workbook(str(planner), staff_rows, [])
+    wb = load_workbook(str(planner))
+    staff = rg.read_staff(wb["Staff"])
+    settings = rg.read_settings(wb["Settings"])
+    history = {}
+    wr = rg.build_week(staff, [], settings, history, date(2026, 9, 28))
+
+    for day in rg.DAYS:
+        slot = wr.management_assignments[day].get("Room1")
+        assert slot in ("early", "late")
+        # Room1 must count toward that day's early/late ratio.
+        early_count = len(wr.day_assignments[day]["early"]) + len(wr.fixed_by_day.get(day, [])) + \
+            sum(1 for n, s in wr.management_assignments[day].items() if s == "early")
+        late_count = len(wr.day_assignments[day]["late"]) + \
+            sum(1 for n, s in wr.management_assignments[day].items() if s == "late")
+        assert early_count == settings["people_early"]
+        assert late_count == settings["people_late"]
+
+
+def test_management_room_never_gets_a_middle_slot(tmp_path):
+    staff_rows = _team_with_management(n_rotating=9)
+    planner = tmp_path / "Roster_Planner.xlsx"
+    write_workbook(str(planner), staff_rows, [])
+    wb = load_workbook(str(planner))
+    staff = rg.read_staff(wb["Staff"])
+    settings = rg.read_settings(wb["Settings"])
+    history = {}
+    for i in range(6):
+        wr = rg.build_week(staff, [], settings, history, date(2026, 9, 28) + timedelta(weeks=i))
+        for day in rg.DAYS:
+            for name in ("Room1", "Float1"):
+                slot = wr.management_assignments[day].get(name)
+                if slot is not None:
+                    assert slot in ("early", "late")
+
+
+def test_floating_management_off_grid_when_fully_staffed(tmp_path):
+    staff_rows = _team_with_management(n_rotating=9)
+    planner = tmp_path / "Roster_Planner.xlsx"
+    write_workbook(str(planner), staff_rows, [])
+    wb = load_workbook(str(planner))
+    staff = rg.read_staff(wb["Staff"])
+    settings = rg.read_settings(wb["Settings"])
+    history = {}
+    wr = rg.build_week(staff, [], settings, history, date(2026, 9, 28))
+
+    # With a fully staffed rotating pool, Float1 shouldn't be needed to meet the ratio.
+    for day in rg.DAYS:
+        assert "Float1" not in wr.management_assignments[day]
+
+
+def test_floating_management_auto_covers_shortfall(tmp_path):
+    staff_rows = _team_with_management(n_rotating=9)
+    planner = tmp_path / "Roster_Planner.xlsx"
+    write_workbook(str(planner), staff_rows, [])
+    wb = load_workbook(str(planner))
+    staff = rg.read_staff(wb["Staff"])
+    settings = rg.read_settings(wb["Settings"])
+    monday = date(2026, 9, 28)
+    wed = monday + timedelta(days=2)
+    # Take out enough rotating staff on Wednesday that the ratio can't be met without help.
+    rotating_names = [f"Person{i:02d}" for i in range(9)]
+    leaves = [rg.Leave(name=n, type="Sick", from_date=wed, to_date=wed) for n in rotating_names[:7]]
+    history = {}
+    wr = rg.build_week(staff, leaves, settings, history, monday)
+
+    assert "Float1" in wr.management_assignments["Wed"]
+    # No warning should mention Float1 being unavailable; shortfall should shrink vs. no help.
+    early_count = len(wr.day_assignments["Wed"]["early"]) + \
+        sum(1 for n, s in wr.management_assignments["Wed"].items() if s == "early")
+    assert early_count <= settings["people_early"]
+
+
+def test_management_manual_override_forces_slot(tmp_path):
+    staff_rows = _team_with_management(n_rotating=9)
+    planner = tmp_path / "Roster_Planner.xlsx"
+    write_workbook(str(planner), staff_rows, [])
+    wb = load_workbook(str(planner))
+    staff = rg.read_staff(wb["Staff"])
+    settings = rg.read_settings(wb["Settings"])
+    monday = date(2026, 9, 28)
+
+    for s in staff:
+        if s.name == "Room1":
+            s.wed = settings["late_start"]
+        if s.name == "Float1":
+            s.thu = settings["early_start"]
+
+    history = {}
+    wr = rg.build_week(staff, [], settings, history, monday)
+
+    assert wr.management_assignments["Wed"]["Room1"] == "late"
+    assert wr.management_assignments["Thu"]["Float1"] == "early"
+    # Days without an override for Float1 stay off-grid (no shortfall in this scenario).
+    assert "Float1" not in wr.management_assignments["Mon"]
+
+
+def test_management_invalid_override_raises(tmp_path):
+    staff_rows = _team_with_management(n_rotating=9)
+    planner = tmp_path / "Roster_Planner.xlsx"
+    write_workbook(str(planner), staff_rows, [])
+    wb = load_workbook(str(planner))
+    staff = rg.read_staff(wb["Staff"])
+    settings = rg.read_settings(wb["Settings"])
+    for s in staff:
+        if s.name == "Room1":
+            s.mon = "11:00"
+    with pytest.raises(rg.RosterInputError, match="not a valid management time"):
+        rg.build_week(staff, [], settings, {}, date(2026, 9, 28))
+
+
+def test_management_fairness_alternates_over_weeks(tmp_path):
+    staff_rows = _team_with_management(n_rotating=9)
+    planner = tmp_path / "Roster_Planner.xlsx"
+    write_workbook(str(planner), staff_rows, [])
+    wb = load_workbook(str(planner))
+    staff = rg.read_staff(wb["Staff"])
+    settings = rg.read_settings(wb["Settings"])
+    history = {}
+    monday = date(2026, 9, 28)
+    for i in range(6):
+        rg.build_week(staff, [], settings, history, monday + timedelta(weeks=i))
+
+    entry = history["Room1"]
+    # Over 6 weeks Room1 should have worked both slots, not been stuck on just one.
+    assert entry.early > 0
+    assert entry.late > 0
+    assert abs(entry.early - entry.late) <= 5 * 2  # loosely balanced, not a hard 50/50
