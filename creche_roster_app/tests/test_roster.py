@@ -180,6 +180,19 @@ class FallbackCloser(unittest.TestCase):
         self.assertEqual(monday_fallback, [])
         self.assertEqual(r.breaches, [])  # still met, by rotating staff instead
 
+    def test_both_away_warns_of_policy(self):
+        # Policy: Jason and Shehnaz are never away at the same time. If it
+        # happens anyway (a leave data-entry mistake), flag it - don't stay
+        # silent just because cover still happens to work out.
+        leave = [
+            Leave("Jason", START, START + timedelta(days=4), "Holiday"),
+            Leave("Shehnaz", START, START + timedelta(days=4), "Holiday"),
+        ]
+        r = build_roster(inputs(leave=leave, weeks=1))
+        self.assertTrue(
+            any(c.rule == "Pairing policy" and c.level == "WARNING" for c in r.checks)
+        )
+
     def test_no_fallback_when_not_configured(self):
         leave = [
             Leave("Jason", START, START + timedelta(days=4), "Holiday"),

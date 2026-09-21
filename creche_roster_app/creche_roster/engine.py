@@ -508,6 +508,7 @@ def _check_floor(d, floor, slot_of, by_name, s, checks, wi, need=None) -> None:
 def _report_pairing(pair, days, cells, leave_kind, ignored_override, checks, wi) -> None:
     a, b = pair
     suspended: Dict[str, List[date]] = {}
+    both_away: List[date] = []
     for d in days:
         la, lb = leave_kind(a, d), leave_kind(b, d)
         if not la and not lb:
@@ -526,6 +527,20 @@ def _report_pairing(pair, days, cells, leave_kind, ignored_override, checks, wi)
             suspended.setdefault(a, []).append(d)
         elif lb and not la:
             suspended.setdefault(b, []).append(d)
+        else:
+            both_away.append(d)
+
+    if both_away:
+        checks.append(
+            Check(
+                "WARNING",
+                "Pairing policy",
+                f"{a} and {b} are both away on {fmt_days(both_away)} — policy says they should "
+                f"never be away at the same time. Double-check that leave.",
+                None,
+                wi,
+            )
+        )
 
     for absent, ds in suspended.items():
         partner = b if absent == a else a
