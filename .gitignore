@@ -3,3 +3,5 @@ __pycache__/
 .pytest_cache/
 Roster_Planner.xlsx
 *.xlsx
+*.xlsx.bak
+*.pdf

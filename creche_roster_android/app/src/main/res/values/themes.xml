@@ -1,0 +1,6 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Compose owns the actual theming (see ui/theme/Theme.kt); this base
+         theme only controls the window background before Compose attaches
+         and satisfies the manifest's android:theme reference. -->
+    <style name="Theme.CrecheRoster" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
