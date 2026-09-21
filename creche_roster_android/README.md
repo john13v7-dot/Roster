@@ -54,6 +54,10 @@ version trade-off that was made and how to move to a newer BOM if you want to.
 - **Staff / Leave / Overrides / Settings / History** — the same five inputs
   as the Excel tool's tabs, editable as simple on-device forms, persisted to
   a JSON file in the app's private storage (no Excel dependency on the phone).
+  Settings also lets you add, rename and remove floors, each with its own
+  minimum opening/closing cover; renaming a floor moves its staff with it,
+  removing one moves its staff onto the first remaining floor (at least one
+  floor must always exist).
 - **Roster** — builds the roster with the same engine, shows it as a
   horizontally-scrollable coloured grid (one tab per week, matching the old
   paper roster's look: red title, Holiday/Maternity/OFF colouring), and can
@@ -72,10 +76,6 @@ version trade-off that was made and how to move to a newer BOM if you want to.
   Android reliably needs a library like Apache POI, which has known rough
   edges on Android (AWT/StAX dependencies) that would have been unverifiable
   here. The PDF export covers the "hand someone a roster" need instead.
-- **Floors aren't editable in Settings yet** — the app seeds the same
-  single-floor "All" placeholder the Python tool ships with; changing the
-  floor *list* itself needs a small UI addition (per-floor min-cover fields
-  already adapt to however many floors there are).
 - **minSdk 26** (Android 8.0+, 2017) — chosen so the engine's `java.time`
   types work natively without adding a core-library-desugaring dependency
   that could not be verified here.
