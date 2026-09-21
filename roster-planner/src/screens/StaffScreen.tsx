@@ -169,6 +169,7 @@ export function StaffScreen() {
         activeTo: null,
         sortOrder: Date.now(),
         numbered: true,
+        floorOverride: null,
       };
       await insertStaff(db, newStaff);
       await addRoomHistoryEntry(db, { staffId: newStaff.id, roomId: addRoomId, fromWeek: startWeek, toWeek: null });

@@ -14,6 +14,7 @@ const hanny: Staff = {
   activeTo: null,
   sortOrder: 1010,
   numbered: true,
+  floorOverride: null,
 };
 
 const rows: RosterRow[] = [

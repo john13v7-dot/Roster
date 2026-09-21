@@ -5,6 +5,7 @@
 // also runs in production.
 
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { insertStaff } from './repository';
 import { weekDates } from '../domain/week';
 import type { LeaveEntry, RoomHistoryEntry, RosterEntry, Staff } from '../domain/types';
 
@@ -16,28 +17,41 @@ const EPOCH_WEEK = '2000-01-03';
 
 interface SeedStaff extends Staff {}
 
+function seed(overrides: Partial<Staff> & Pick<Staff, 'id' | 'name' | 'type' | 'sortOrder'>): SeedStaff {
+  return {
+    payrollIncluded: true,
+    activeFrom: null,
+    activeTo: null,
+    numbered: true,
+    floorOverride: null,
+    ...overrides,
+  };
+}
+
 const seedStaff: SeedStaff[] = [
-  { id: 'sue', name: 'Sue', type: 'static', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 100, numbered: true },
-  { id: 'hanny', name: 'Hanny', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 1010, numbered: true },
-  { id: 'manuel', name: 'Manuel', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 2010, numbered: true },
-  { id: 'irene', name: 'Irene', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 2020, numbered: true },
-  { id: 'deoshree', name: 'Deoshree', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 2030, numbered: true },
-  { id: 'sandrine', name: 'Sandrine', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 3010, numbered: true },
-  { id: 'daniel', name: 'Daniel', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 3020, numbered: true },
-  { id: 'arantza', name: 'Arantza', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 3030, numbered: true },
-  { id: 'david', name: 'David', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 4010, numbered: true },
-  { id: 'usha', name: 'Usha', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 4020, numbered: true },
+  seed({ id: 'sue', name: 'Sue', type: 'static', sortOrder: 100 }),
+  seed({ id: 'hanny', name: 'Hanny', type: 'rotating', sortOrder: 1010 }),
+  seed({ id: 'manuel', name: 'Manuel', type: 'rotating', sortOrder: 2010 }),
+  seed({ id: 'irene', name: 'Irene', type: 'rotating', sortOrder: 2020 }),
+  seed({ id: 'deoshree', name: 'Deoshree', type: 'rotating', sortOrder: 2030 }),
+  seed({ id: 'sandrine', name: 'Sandrine', type: 'rotating', sortOrder: 3010 }),
+  seed({ id: 'daniel', name: 'Daniel', type: 'rotating', sortOrder: 3020 }),
+  seed({ id: 'arantza', name: 'Arantza', type: 'rotating', sortOrder: 3030 }),
+  seed({ id: 'david', name: 'David', type: 'rotating', sortOrder: 4010 }),
+  seed({ id: 'usha', name: 'Usha', type: 'rotating', sortOrder: 4020 }),
   // Long-term leave row: no room while on leave (SPEC.md §18 item 2,
   // confirmed) — her return date and room are both unknown for now.
-  { id: 'eirini', name: 'Eirini', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 6010, numbered: false },
-  { id: 'megan', name: 'Megan', type: 'static', payrollIncluded: false, activeFrom: null, activeTo: null, sortOrder: 7010, numbered: true },
+  seed({ id: 'eirini', name: 'Eirini', type: 'rotating', sortOrder: 6010, numbered: false }),
+  seed({ id: 'megan', name: 'Megan', type: 'static', payrollIncluded: false, sortOrder: 7010 }),
   // No room_history row for Jason: he's a fixed extra on ECEC2/1st floor
   // for cover purposes (SPEC.md §5) but not one of its 2 counted seats —
-  // his floor attachment for the rules engine is Phase 5 work.
-  { id: 'jason', name: 'Jason', type: 'paired_management', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 7020, numbered: true },
-  { id: 'shehnaz', name: 'Shehnaz', type: 'paired_management', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 7030, numbered: true },
-  { id: 'priscilla', name: 'Priscilla', type: 'manager', payrollIncluded: false, activeFrom: null, activeTo: null, sortOrder: 7040, numbered: true },
-  { id: 'laura', name: 'Laura', type: 'static', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 7050, numbered: true },
+  // floorOverride carries that fixed floor for the rules engine (R4).
+  seed({ id: 'jason', name: 'Jason', type: 'paired_management', sortOrder: 7020, floorOverride: 'first' }),
+  // Shehnaz has no floorOverride: she's a genuine floater, counted toward
+  // whichever floor has fewer people in a given shift (SPEC.md §5).
+  seed({ id: 'shehnaz', name: 'Shehnaz', type: 'paired_management', sortOrder: 7030 }),
+  seed({ id: 'priscilla', name: 'Priscilla', type: 'manager', payrollIncluded: false, sortOrder: 7040 }),
+  seed({ id: 'laura', name: 'Laura', type: 'static', sortOrder: 7050 }),
 ];
 
 const seedRoomHistory: RoomHistoryEntry[] = [
@@ -90,11 +104,7 @@ export async function seedDevData(db: SQLiteDatabase): Promise<void> {
   if (existing && existing.count > 0) return; // already seeded
 
   for (const s of seedStaff) {
-    await db.runAsync(
-      `INSERT INTO staff (id, name, type, payroll_included, active_from, active_to, sort_order, numbered)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
-      [s.id, s.name, s.type, s.payrollIncluded ? 1 : 0, s.activeFrom, s.activeTo, s.sortOrder, s.numbered ? 1 : 0],
-    );
+    await insertStaff(db, s);
   }
 
   for (const h of seedRoomHistory) {

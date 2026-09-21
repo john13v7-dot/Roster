@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS staff (
   active_from TEXT,
   active_to TEXT,
   sort_order INTEGER NOT NULL,
-  numbered INTEGER NOT NULL DEFAULT 1
+  numbered INTEGER NOT NULL DEFAULT 1,
+  floor_override TEXT CHECK (floor_override IN ('ground','first'))
 );
 
 CREATE TABLE IF NOT EXISTS rooms (

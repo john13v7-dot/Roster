@@ -1,7 +1,7 @@
 // © 2026 David Juste. All rights reserved. Proprietary and confidential.
 
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { breakLabel } from '../config/creche.config';
 import { patternColors, statusColors } from '../config/theme';
 import type { RosterRow } from '../domain/rosterLayout';
@@ -42,7 +42,7 @@ function cellForEntry(entry: RosterEntry | undefined): { text: string; bg?: stri
   return { text };
 }
 
-export function RosterTable({ rows, dates, entriesByKey }: Props) {
+export function RosterTable({ rows, dates, entriesByKey, onCellPress }: Props) {
   return (
     <ScrollView style={styles.verticalScroll}>
       <View style={styles.rowContainer}>
@@ -81,14 +81,16 @@ export function RosterTable({ rows, dates, entriesByKey }: Props) {
                     const entry = staffId ? entriesByKey[`${staffId}|${date}`] : undefined;
                     const cell = cellForEntry(entry);
                     return (
-                      <View
+                      <Pressable
                         key={date}
+                        disabled={!staffId || !onCellPress}
+                        onPress={() => staffId && onCellPress?.(staffId, date)}
                         style={[styles.dayCell, { width: DAY_COL_WIDTH, backgroundColor: cell.bg }]}
                       >
                         <Text style={[styles.cellText, cell.fg ? { color: cell.fg } : null]} numberOfLines={1}>
                           {cell.text}
                         </Text>
-                      </View>
+                      </Pressable>
                     );
                   })}
                   <View style={[styles.dayCell, { width: BREAK_COL_WIDTH }]}>

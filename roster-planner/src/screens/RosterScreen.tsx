@@ -3,30 +3,50 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 import { addDays } from 'date-fns';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useSQLiteContext } from 'expo-sqlite';
-import { getAllStaff, getRoomHistory, getWeekRosterView } from '../db/repository';
+import {
+  deleteRosterEntry,
+  getAllLeave,
+  getAllStaff,
+  getFairnessLedger,
+  getRoomHistory,
+  getWeekRosterView,
+  upsertRosterEntry,
+} from '../db/repository';
 import { buildRosterRows, type RosterRow } from '../domain/rosterLayout';
 import { formatWeekRange, weekDates, weekStartOf } from '../domain/week';
-import type { RoomHistoryEntry, RosterEntry, Staff } from '../domain/types';
+import type { FairnessLedgerEntry, LeaveEntry, RoomHistoryEntry, RosterEntry, Staff } from '../domain/types';
 import { exportRosterToExcel, exportRosterToPdf } from '../export/exportRoster';
+import { computeCoverageStrip, evaluateWeekRules } from '../rules/rules';
+import { CellEditSheet, type CellEditResult } from '../ui/CellEditSheet';
+import { CoverageStrip } from '../ui/CoverageStrip';
 import { RosterTable } from '../ui/RosterTable';
+import { warningBadgeCount, WarningsPanel } from '../ui/WarningsPanel';
 
 const SEED_WEEK_START = '2026-09-21';
 
 export function RosterScreen() {
   const db = useSQLiteContext();
+  const navigation = useNavigation();
   const [weekStart, setWeekStart] = useState(SEED_WEEK_START);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [roomHistory, setRoomHistory] = useState<RoomHistoryEntry[]>([]);
   const [entriesByKey, setEntriesByKey] = useState<Record<string, RosterEntry>>({});
+  const [leaveEntries, setLeaveEntries] = useState<LeaveEntry[]>([]);
+  const [fairnessLedger, setFairnessLedger] = useState<FairnessLedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
   const dates = useMemo(() => weekDates(new Date(`${weekStart}T00:00:00`)), [weekStart]);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [staffRows, roomHistoryRows] = await Promise.all([getAllStaff(db), getRoomHistory(db)]);
+    const [staffRows, roomHistoryRows, leaveRows, ledgerRows] = await Promise.all([
+      getAllStaff(db),
+      getRoomHistory(db),
+      getAllLeave(db),
+      getFairnessLedger(db),
+    ]);
     const entries = await getWeekRosterView(
       db,
       weekStart,
@@ -36,6 +56,8 @@ export function RosterScreen() {
     setStaff(staffRows);
     setRoomHistory(roomHistoryRows);
     setEntriesByKey(entries);
+    setLeaveEntries(leaveRows);
+    setFairnessLedger(ledgerRows);
     setLoading(false);
   }, [db, weekStart, dates]);
 
@@ -51,6 +73,21 @@ export function RosterScreen() {
     () => buildRosterRows(staff, roomHistory, weekStart),
     [staff, roomHistory, weekStart],
   );
+
+  const warnings = useMemo(
+    () => evaluateWeekRules({ weekStart, dates, staff, roomHistory, entriesByKey, leaveEntries, fairnessLedger }),
+    [weekStart, dates, staff, roomHistory, entriesByKey, leaveEntries, fairnessLedger],
+  );
+
+  const coverage = useMemo(
+    () => computeCoverageStrip({ weekStart, dates, staff, roomHistory, entriesByKey }),
+    [weekStart, dates, staff, roomHistory, entriesByKey],
+  );
+
+  React.useEffect(() => {
+    const badgeCount = warningBadgeCount(warnings);
+    navigation.setOptions({ tabBarBadge: badgeCount > 0 ? badgeCount : undefined });
+  }, [navigation, warnings]);
 
   const goToWeek = (deltaWeeks: number) => {
     const current = new Date(`${weekStart}T00:00:00`);
@@ -74,6 +111,34 @@ export function RosterScreen() {
       setExporting(null);
     }
   };
+
+  const [editingCell, setEditingCell] = useState<{ staffId: string; date: string } | null>(null);
+
+  const saveCell = async (result: CellEditResult) => {
+    if (!editingCell) return;
+    const { staffId, date } = editingCell;
+    if (result.type === 'blank') {
+      await deleteRosterEntry(db, staffId, date);
+    } else {
+      await upsertRosterEntry(db, {
+        weekStart,
+        staffId,
+        date,
+        type: result.type,
+        patternCode: result.patternCode,
+        start: result.start,
+        end: result.end,
+        unpaidLunchMinutes: result.unpaidLunchMinutes,
+        source: 'manual',
+        note: null,
+      });
+    }
+    setEditingCell(null);
+    await load();
+  };
+
+  const editingStaffName = editingCell ? staff.find((s) => s.id === editingCell.staffId)?.name ?? '' : '';
+  const editingEntry = editingCell ? entriesByKey[`${editingCell.staffId}|${editingCell.date}`] : undefined;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -117,8 +182,26 @@ export function RosterScreen() {
           <Text>Loading…</Text>
         </View>
       ) : (
-        <RosterTable rows={rows} dates={dates} entriesByKey={entriesByKey} />
+        <>
+          <WarningsPanel warnings={warnings} />
+          <RosterTable
+            rows={rows}
+            dates={dates}
+            entriesByKey={entriesByKey}
+            onCellPress={(staffId, date) => setEditingCell({ staffId, date })}
+          />
+          <CoverageStrip coverage={coverage} />
+        </>
       )}
+
+      <CellEditSheet
+        visible={editingCell !== null}
+        staffName={editingStaffName}
+        date={editingCell?.date ?? ''}
+        currentEntry={editingEntry}
+        onSave={saveCell}
+        onClose={() => setEditingCell(null)}
+      />
     </SafeAreaView>
   );
 }

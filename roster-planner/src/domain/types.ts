@@ -1,6 +1,6 @@
 // © 2026 David Juste. All rights reserved. Proprietary and confidential.
 
-import type { ShiftPatternCode } from '../config/creche.config';
+import type { FloorId, ShiftPatternCode } from '../config/creche.config';
 
 export type StaffType = 'rotating' | 'paired_management' | 'manager' | 'static';
 
@@ -26,6 +26,14 @@ export interface Staff {
   sortOrder: number;
   /** False for a long-term-leave row that prints without a row number (e.g. maternity, SPEC.md §16). */
   numbered: boolean;
+  /**
+   * Fixed floor for R4 floor-balance cover counting (SPEC.md §5), for a
+   * roomless person who is still tied to one floor — e.g. Jason on ECEC2
+   * /1st floor. Null for an actual floater (Shehnaz, Priscilla), who
+   * counts toward whichever floor has fewer people in that shift, and for
+   * anyone with a room (their room's floor is used instead).
+   */
+  floorOverride: FloorId | null;
 }
 
 /**

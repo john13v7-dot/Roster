@@ -12,6 +12,7 @@ function staff(overrides: Partial<Staff> & Pick<Staff, 'id' | 'name' | 'sortOrde
     activeFrom: null,
     activeTo: null,
     numbered: true,
+    floorOverride: null,
     ...overrides,
   };
 }

@@ -2,6 +2,7 @@
 
 import type { SQLiteDatabase } from 'expo-sqlite';
 import type {
+  FairnessLedgerEntry,
   LeaveEntry,
   LeaveType,
   RoomHistoryEntry,
@@ -10,7 +11,7 @@ import type {
   RosterWeekStatus,
   Staff,
 } from '../domain/types';
-import type { ShiftPatternCode } from '../config/creche.config';
+import type { FloorId, ShiftPatternCode } from '../config/creche.config';
 import { mergeLeaveIntoEntries } from '../domain/leave';
 
 interface StaffRow {
@@ -22,6 +23,7 @@ interface StaffRow {
   active_to: string | null;
   sort_order: number;
   numbered: number;
+  floor_override: FloorId | null;
 }
 
 function toStaff(row: StaffRow): Staff {
@@ -34,6 +36,7 @@ function toStaff(row: StaffRow): Staff {
     activeTo: row.active_to,
     sortOrder: row.sort_order,
     numbered: row.numbered === 1,
+    floorOverride: row.floor_override,
   };
 }
 
@@ -44,8 +47,8 @@ export async function getAllStaff(db: SQLiteDatabase): Promise<Staff[]> {
 
 export async function insertStaff(db: SQLiteDatabase, staff: Staff): Promise<void> {
   await db.runAsync(
-    `INSERT INTO staff (id, name, type, payroll_included, active_from, active_to, sort_order, numbered)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+    `INSERT INTO staff (id, name, type, payroll_included, active_from, active_to, sort_order, numbered, floor_override)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
     [
       staff.id,
       staff.name,
@@ -55,6 +58,7 @@ export async function insertStaff(db: SQLiteDatabase, staff: Staff): Promise<voi
       staff.activeTo,
       staff.sortOrder,
       staff.numbered ? 1 : 0,
+      staff.floorOverride,
     ],
   );
 }
@@ -287,4 +291,16 @@ export async function getWeekRosterView(
 ): Promise<Record<string, RosterEntry>> {
   const [persisted, leave] = await Promise.all([getRosterEntriesForWeek(db, weekStart), getAllLeave(db)]);
   return mergeLeaveIntoEntries(persisted, dates, staffIds, leave, weekStart);
+}
+
+interface FairnessLedgerRow {
+  staff_id: string;
+  week_start: string;
+  pattern_code: ShiftPatternCode;
+}
+
+/** All locked weeks' pattern history — used by the rules engine (R9/R10) and the Fairness dashboard. */
+export async function getFairnessLedger(db: SQLiteDatabase): Promise<FairnessLedgerEntry[]> {
+  const rows = await db.getAllAsync<FairnessLedgerRow>('SELECT * FROM fairness_ledger;');
+  return rows.map((r) => ({ staffId: r.staff_id, weekStart: r.week_start, patternCode: r.pattern_code }));
 }

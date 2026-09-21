@@ -19,7 +19,7 @@ export type RosterRow =
   | { kind: 'vacant'; key: string; rowNumber: number | null; roomId: string }
   | { kind: 'spacer'; key: string; rowNumber: number | null };
 
-function isStaffActiveAtWeek(staff: Staff, weekStart: string): boolean {
+export function isStaffActiveAtWeek(staff: Staff, weekStart: string): boolean {
   if (staff.activeFrom && weekStart < staff.activeFrom) return false;
   if (staff.activeTo && weekStart > staff.activeTo) return false;
   return true;
@@ -41,17 +41,50 @@ export function roomIdForStaffAtWeek(
   return entry?.roomId ?? null;
 }
 
+/**
+ * Every currently-active person's room for the given week (roomless
+ * people are left out), ordered within each room the same way the
+ * printed roster orders them. Shared by buildRosterRows (below) and the
+ * rules engine, so vacancy/capacity (R5/R6) always agree with what's on
+ * screen.
+ */
+export function roomOccupantsForWeek(
+  staff: Staff[],
+  roomHistory: RoomHistoryEntry[],
+  weekStart: string,
+): Map<string, Staff[]> {
+  const active = staff.filter((s) => isStaffActiveAtWeek(s, weekStart));
+  const roomOf = new Map<string, { roomId: string; fromWeek: string }>();
+  for (const s of active) {
+    const entry = roomHistory.find((h) => h.staffId === s.id && roomHistoryCovers(h, weekStart));
+    if (entry) roomOf.set(s.id, { roomId: entry.roomId, fromWeek: entry.fromWeek });
+  }
+
+  const byRoom = new Map<string, Staff[]>();
+  for (const room of roomConfigs) {
+    const occupants = active
+      .filter((s) => roomOf.get(s.id)?.roomId === room.id)
+      .sort((a, b) => {
+        const fromA = roomOf.get(a.id)!.fromWeek;
+        const fromB = roomOf.get(b.id)!.fromWeek;
+        if (fromA !== fromB) return fromA < fromB ? -1 : 1;
+        return a.sortOrder - b.sortOrder;
+      });
+    byRoom.set(room.id, occupants);
+  }
+  return byRoom;
+}
+
 export function buildRosterRows(
   staff: Staff[],
   roomHistory: RoomHistoryEntry[],
   weekStart: string,
 ): RosterRow[] {
   const active = staff.filter((s) => isStaffActiveAtWeek(s, weekStart));
-
-  const roomOf = new Map<string, { roomId: string; fromWeek: string }>();
-  for (const s of active) {
-    const entry = roomHistory.find((h) => h.staffId === s.id && roomHistoryCovers(h, weekStart));
-    if (entry) roomOf.set(s.id, { roomId: entry.roomId, fromWeek: entry.fromWeek });
+  const byRoom = roomOccupantsForWeek(staff, roomHistory, weekStart);
+  const roomOf = new Map<string, string>();
+  for (const [roomId, occupants] of byRoom) {
+    for (const s of occupants) roomOf.set(s.id, roomId);
   }
 
   const roomless = active.filter((s) => !roomOf.has(s.id));
@@ -61,15 +94,7 @@ export function buildRosterRows(
   const rows: RosterRow[] = lead.map((s) => staffRow(s));
 
   for (const room of [...roomConfigs].sort((a, b) => a.sortOrder - b.sortOrder)) {
-    const occupants = active
-      .filter((s) => roomOf.get(s.id)?.roomId === room.id)
-      .sort((a, b) => {
-        const fromA = roomOf.get(a.id)!.fromWeek;
-        const fromB = roomOf.get(b.id)!.fromWeek;
-        if (fromA !== fromB) return fromA < fromB ? -1 : 1;
-        return a.sortOrder - b.sortOrder;
-      });
-
+    const occupants = byRoom.get(room.id) ?? [];
     rows.push(...occupants.map((s) => staffRow(s)));
 
     const vacancyCount = Math.max(0, room.seats - occupants.length);
