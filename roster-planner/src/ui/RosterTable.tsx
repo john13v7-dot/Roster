@@ -5,8 +5,8 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { breakLabel } from '../config/creche.config';
 import { patternColors, statusColors } from '../config/theme';
 import type { RosterRow } from '../domain/rosterLayout';
+import { rosterCellContent } from '../domain/rosterCell';
 import { weekdayLabels } from '../domain/week';
-import { formatTimeRange } from '../domain/week';
 import type { RosterEntry } from '../domain/types';
 
 const ROW_HEIGHT = 44;
@@ -23,26 +23,23 @@ interface Props {
   onCellPress?: (staffId: string, date: string) => void;
 }
 
+const statusBg: Record<'holiday' | 'maternity' | 'off', string> = {
+  holiday: statusColors.holiday,
+  maternity: statusColors.maternityLeave,
+  off: statusColors.off,
+};
+const statusFg: Partial<Record<'holiday' | 'maternity' | 'off', string>> = {
+  holiday: '#fff',
+  maternity: '#fff',
+};
+
 function cellForEntry(entry: RosterEntry | undefined): { text: string; bg?: string; fg?: string } {
-  if (!entry) return { text: '' };
-  switch (entry.type) {
-    case 'holiday':
-      return { text: 'Holiday', bg: statusColors.holiday, fg: '#fff' };
-    case 'maternity':
-      return { text: 'Maternity Leave', bg: statusColors.maternityLeave, fg: '#fff' };
-    case 'off':
-      return { text: 'OFF', bg: statusColors.off };
-    case 'blank':
-      return { text: '' };
-    case 'shift':
-      if (!entry.start || !entry.end) return { text: '' };
-      return {
-        text: formatTimeRange(entry.start, entry.end),
-        bg: entry.patternCode ? `${patternColors[entry.patternCode]}33` : undefined,
-      };
-    default:
-      return { text: '' };
+  const { text, status } = rosterCellContent(entry);
+  if (status) return { text, bg: statusBg[status], fg: statusFg[status] };
+  if (entry?.type === 'shift' && entry.patternCode) {
+    return { text, bg: `${patternColors[entry.patternCode]}33` };
   }
+  return { text };
 }
 
 export function RosterTable({ rows, dates, entriesByKey }: Props) {

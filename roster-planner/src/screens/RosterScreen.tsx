@@ -1,20 +1,17 @@
 // © 2026 David Juste. All rights reserved. Proprietary and confidential.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 import { addDays } from 'date-fns';
 import { useSQLiteContext } from 'expo-sqlite';
 import { getAllStaff, getRosterEntriesForWeek, getVacantSeats } from '../db/repository';
 import { buildRosterRows, type RosterRow } from '../domain/rosterLayout';
 import { formatWeekRange, weekDates, weekStartOf } from '../domain/week';
 import type { RosterEntry, Staff, VacantSeat } from '../domain/types';
+import { exportRosterToExcel, exportRosterToPdf } from '../export/exportRoster';
 import { RosterTable } from '../ui/RosterTable';
 
 const SEED_WEEK_START = '2026-09-21';
-
-function comingSoon(feature: string) {
-  Alert.alert(feature, 'This is coming in a later build phase.');
-}
 
 export function RosterScreen() {
   const db = useSQLiteContext();
@@ -51,6 +48,23 @@ export function RosterScreen() {
     setWeekStart(weekStartOf(next));
   };
 
+  const [exporting, setExporting] = useState<'excel' | 'pdf' | null>(null);
+
+  const runExport = async (kind: 'excel' | 'pdf') => {
+    setExporting(kind);
+    try {
+      if (kind === 'excel') {
+        await exportRosterToExcel(rows, dates, entriesByKey, weekStart);
+      } else {
+        await exportRosterToPdf(rows, dates, entriesByKey, weekStart);
+      }
+    } catch (error) {
+      Alert.alert('Export failed', error instanceof Error ? error.message : String(error));
+    } finally {
+      setExporting(null);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.weekPicker}>
@@ -64,11 +78,28 @@ export function RosterScreen() {
       </View>
 
       <View style={styles.toolbar}>
-        {['Generate week', 'Lock week', 'Copy last week', 'Export Excel', 'Export PDF'].map((label) => (
-          <Pressable key={label} style={styles.toolbarButton} onPress={() => comingSoon(label)}>
-            <Text style={styles.toolbarButtonText}>{label}</Text>
-          </Pressable>
-        ))}
+        <Pressable
+          style={styles.toolbarButton}
+          disabled={exporting !== null}
+          onPress={() => runExport('excel')}
+        >
+          {exporting === 'excel' ? (
+            <ActivityIndicator color="#1F4E79" />
+          ) : (
+            <Text style={styles.toolbarButtonText}>Export Excel</Text>
+          )}
+        </Pressable>
+        <Pressable
+          style={styles.toolbarButton}
+          disabled={exporting !== null}
+          onPress={() => runExport('pdf')}
+        >
+          {exporting === 'pdf' ? (
+            <ActivityIndicator color="#1F4E79" />
+          ) : (
+            <Text style={styles.toolbarButtonText}>Export PDF</Text>
+          )}
+        </Pressable>
       </View>
 
       {loading ? (
