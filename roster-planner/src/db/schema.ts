@@ -2,8 +2,16 @@
 //
 // SQLite schema (SPEC.md §13). No server, no account — this is the whole
 // on-device data store.
-
-export const SCHEMA_VERSION = 1;
+//
+// SCHEMA_VERSION is checked against SQLite's own PRAGMA user_version in
+// db/client.ts: a mismatch means the on-device tables predate a shape
+// change (e.g. Phase 4 dropped staff.room_id and vacant_seats in favour
+// of room_history; Phase 5 added staff.floor_override), so every table is
+// dropped and recreated rather than silently drifting out of sync with
+// the app's queries. Bump this whenever CREATE_TABLES_SQL changes shape.
+// Fine while there's no real user data yet (SPEC.md §22); a real
+// migration path is release-prep work (§21).
+export const SCHEMA_VERSION = 2;
 
 export const CREATE_TABLES_SQL = `
 CREATE TABLE IF NOT EXISTS staff (
@@ -102,4 +110,23 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
 );
+`;
+
+/** Every table this app has ever created, including ones later phases dropped
+ * (e.g. vacant_seats, pre-Phase-4) — DROP IF EXISTS is a no-op for a table
+ * that was never there. */
+export const DROP_TABLES_SQL = `
+DROP TABLE IF EXISTS duty_assignments;
+DROP TABLE IF EXISTS duties;
+DROP TABLE IF EXISTS fairness_ledger;
+DROP TABLE IF EXISTS roster_entries;
+DROP TABLE IF EXISTS roster_weeks;
+DROP TABLE IF EXISTS leave;
+DROP TABLE IF EXISTS static_hours;
+DROP TABLE IF EXISTS shift_patterns;
+DROP TABLE IF EXISTS room_history;
+DROP TABLE IF EXISTS vacant_seats;
+DROP TABLE IF EXISTS rooms;
+DROP TABLE IF EXISTS staff;
+DROP TABLE IF EXISTS settings;
 `;

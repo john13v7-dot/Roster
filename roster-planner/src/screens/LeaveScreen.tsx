@@ -52,6 +52,7 @@ export function LeaveScreen() {
   const [staff, setStaff] = useState<Staff[]>([]);
   const [leave, setLeave] = useState<LeaveEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [form, setForm] = useState<FormState | null>(null);
   const [staffPickerOpen, setStaffPickerOpen] = useState(false);
@@ -60,10 +61,16 @@ export function LeaveScreen() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [staffRows, leaveRows] = await Promise.all([getAllStaff(db), getAllLeave(db)]);
-    setStaff(staffRows);
-    setLeave(leaveRows);
-    setLoading(false);
+    setLoadError(null);
+    try {
+      const [staffRows, leaveRows] = await Promise.all([getAllStaff(db), getAllLeave(db)]);
+      setStaff(staffRows);
+      setLeave(leaveRows);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
   }, [db]);
 
   useFocusEffect(
@@ -174,6 +181,14 @@ export function LeaveScreen() {
       {loading ? (
         <View style={styles.centered}>
           <ActivityIndicator />
+        </View>
+      ) : loadError ? (
+        <View style={styles.centered}>
+          <Text style={styles.errorText}>Couldn't load leave entries.</Text>
+          <Text style={styles.errorDetail}>{loadError}</Text>
+          <Pressable style={styles.addButton} onPress={load}>
+            <Text style={styles.addButtonText}>Try again</Text>
+          </Pressable>
         </View>
       ) : leave.length === 0 ? (
         <View style={styles.centered}>
@@ -306,8 +321,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   addButtonText: { color: '#fff', fontWeight: '700' },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24 },
   emptyText: { color: '#718096' },
+  errorText: { fontSize: 15, fontWeight: '700', color: '#9B2C2C' },
+  errorDetail: { fontSize: 12, color: '#718096', textAlign: 'center', marginBottom: 8 },
   listContent: { paddingHorizontal: 12, paddingBottom: 24 },
   row: {
     flexDirection: 'row',

@@ -89,19 +89,26 @@ export function StaffScreen() {
   const [roomHistory, setRoomHistory] = useState<RoomHistoryEntry[]>([]);
   const [rooms, setRooms] = useState<RoomLookup[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [staffRows, roomHistoryRows, roomRows] = await Promise.all([
-      getAllStaff(db),
-      getRoomHistory(db),
-      getAllRooms(db),
-    ]);
-    setStaff(staffRows);
-    setRoomHistory(roomHistoryRows);
-    setRooms(roomRows);
-    setLoading(false);
+    setLoadError(null);
+    try {
+      const [staffRows, roomHistoryRows, roomRows] = await Promise.all([
+        getAllStaff(db),
+        getRoomHistory(db),
+        getAllRooms(db),
+      ]);
+      setStaff(staffRows);
+      setRoomHistory(roomHistoryRows);
+      setRooms(roomRows);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
   }, [db]);
 
   useFocusEffect(
@@ -295,6 +302,14 @@ export function StaffScreen() {
       {loading ? (
         <View style={styles.centered}>
           <ActivityIndicator />
+        </View>
+      ) : loadError ? (
+        <View style={styles.centered}>
+          <Text style={styles.errorText}>Couldn't load staff.</Text>
+          <Text style={styles.errorDetail}>{loadError}</Text>
+          <Pressable style={styles.addButton} onPress={load}>
+            <Text style={styles.addButtonText}>Try again</Text>
+          </Pressable>
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.listContent}>
@@ -522,7 +537,9 @@ const styles = StyleSheet.create({
   },
   removeButton: { backgroundColor: '#9B2C2C' },
   addButtonText: { color: '#fff', fontWeight: '700' },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24 },
+  errorText: { fontSize: 15, fontWeight: '700', color: '#9B2C2C' },
+  errorDetail: { fontSize: 12, color: '#718096', textAlign: 'center', marginBottom: 8 },
   listContent: { padding: 16 },
   section: { marginBottom: 20 },
   sectionTitle: { fontSize: 15, fontWeight: '700', color: '#1F4E79', marginBottom: 8 },

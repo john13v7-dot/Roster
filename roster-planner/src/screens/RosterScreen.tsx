@@ -36,29 +36,36 @@ export function RosterScreen() {
   const [leaveEntries, setLeaveEntries] = useState<LeaveEntry[]>([]);
   const [fairnessLedger, setFairnessLedger] = useState<FairnessLedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const dates = useMemo(() => weekDates(new Date(`${weekStart}T00:00:00`)), [weekStart]);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [staffRows, roomHistoryRows, leaveRows, ledgerRows] = await Promise.all([
-      getAllStaff(db),
-      getRoomHistory(db),
-      getAllLeave(db),
-      getFairnessLedger(db),
-    ]);
-    const entries = await getWeekRosterView(
-      db,
-      weekStart,
-      dates,
-      staffRows.map((s) => s.id),
-    );
-    setStaff(staffRows);
-    setRoomHistory(roomHistoryRows);
-    setEntriesByKey(entries);
-    setLeaveEntries(leaveRows);
-    setFairnessLedger(ledgerRows);
-    setLoading(false);
+    setLoadError(null);
+    try {
+      const [staffRows, roomHistoryRows, leaveRows, ledgerRows] = await Promise.all([
+        getAllStaff(db),
+        getRoomHistory(db),
+        getAllLeave(db),
+        getFairnessLedger(db),
+      ]);
+      const entries = await getWeekRosterView(
+        db,
+        weekStart,
+        dates,
+        staffRows.map((s) => s.id),
+      );
+      setStaff(staffRows);
+      setRoomHistory(roomHistoryRows);
+      setEntriesByKey(entries);
+      setLeaveEntries(leaveRows);
+      setFairnessLedger(ledgerRows);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
   }, [db, weekStart, dates]);
 
   // Re-load whenever this tab regains focus, so leave/staff changes made
@@ -179,7 +186,16 @@ export function RosterScreen() {
 
       {loading ? (
         <View style={styles.centered}>
+          <ActivityIndicator />
           <Text>Loading…</Text>
+        </View>
+      ) : loadError ? (
+        <View style={styles.centered}>
+          <Text style={styles.errorText}>Couldn't load the roster.</Text>
+          <Text style={styles.errorDetail}>{loadError}</Text>
+          <Pressable style={styles.toolbarButton} onPress={load}>
+            <Text style={styles.toolbarButtonText}>Try again</Text>
+          </Pressable>
         </View>
       ) : (
         <>
@@ -235,5 +251,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   toolbarButtonText: { color: '#1F4E79', fontWeight: '600', fontSize: 13 },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, padding: 24 },
+  errorText: { fontSize: 15, fontWeight: '700', color: '#9B2C2C' },
+  errorDetail: { fontSize: 12, color: '#718096', textAlign: 'center', marginBottom: 8 },
 });
