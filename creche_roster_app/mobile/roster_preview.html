@@ -709,20 +709,20 @@
     }
 
     db.collection('staff').onSnapshot(function(snap){
-      staffDocs = snap.docs.map(function(d){ var v = d.data() || {}; v._id = d.id; return v; });
+      staffDocs = snap.docs.map(function(d){ return Object.assign({}, d.data() || {}, { _id: d.id }); });
       renderStaffList();
     }, function(){ $('staffList').innerHTML = '<div class="empty">Could not load staff.</div>'; });
 
     db.collection('leave').onSnapshot(function(snap){
-      leaveDocs = snap.docs.map(function(d){ var v = d.data() || {}; v._id = d.id; return v; });
+      leaveDocs = snap.docs.map(function(d){ return Object.assign({}, d.data() || {}, { _id: d.id }); });
       renderEventList();
     });
     db.collection('transfers').onSnapshot(function(snap){
-      transferDocs = snap.docs.map(function(d){ var v = d.data() || {}; v._id = d.id; return v; });
+      transferDocs = snap.docs.map(function(d){ return Object.assign({}, d.data() || {}, { _id: d.id }); });
       renderEventList();
     });
     db.collection('changelog').orderBy('createdAt', 'desc').limit(20).onSnapshot(function(snap){
-      changeLogDocs = snap.docs.map(function(d){ var v = d.data() || {}; v._id = d.id; return v; });
+      changeLogDocs = snap.docs.map(function(d){ return Object.assign({}, d.data() || {}, { _id: d.id }); });
       renderChangeLog(changeLogDocs);
     }, function(){ $('changeLogList').innerHTML = '<div class="empty">Could not load the change log.</div>'; });
   }
