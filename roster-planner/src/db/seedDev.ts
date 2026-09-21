@@ -178,37 +178,10 @@ export async function seedDevData(db: SQLiteDatabase): Promise<void> {
     });
   }
 
-  // Shehnaz: Holiday all week.
-  for (const date of dates) {
-    entries.push({
-      weekStart: SEED_WEEK_START,
-      staffId: 'shehnaz',
-      date,
-      type: 'holiday',
-      patternCode: null,
-      start: null,
-      end: null,
-      unpaidLunchMinutes: 0,
-      source: 'manual',
-      note: null,
-    });
-  }
-
-  // Eirini: Maternity Leave all week.
-  for (const date of dates) {
-    entries.push({
-      weekStart: SEED_WEEK_START,
-      staffId: 'eirini',
-      date,
-      type: 'maternity',
-      patternCode: null,
-      start: null,
-      end: null,
-      unpaidLunchMinutes: 0,
-      source: 'manual',
-      note: null,
-    });
-  }
+  // Shehnaz (Holiday) and Eirini (Maternity Leave) are NOT written here as
+  // roster_entries — they're already in the `leave` table above, and
+  // getWeekRosterView derives their Holiday/Maternity cells from that for
+  // every week they cover (SPEC.md §12, src/domain/leave.ts).
   // Megan is left blank for the seed week (SPEC.md §16) — no entries inserted.
 
   for (const e of entries) {

@@ -1,10 +1,11 @@
 // © 2026 David Juste. All rights reserved. Proprietary and confidential.
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 import { addDays } from 'date-fns';
+import { useFocusEffect } from '@react-navigation/native';
 import { useSQLiteContext } from 'expo-sqlite';
-import { getAllStaff, getRosterEntriesForWeek, getVacantSeats } from '../db/repository';
+import { getAllStaff, getVacantSeats, getWeekRosterView } from '../db/repository';
 import { buildRosterRows, type RosterRow } from '../domain/rosterLayout';
 import { formatWeekRange, weekDates, weekStartOf } from '../domain/week';
 import type { RosterEntry, Staff, VacantSeat } from '../domain/types';
@@ -25,20 +26,26 @@ export function RosterScreen() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [staffRows, vacantRows, entries] = await Promise.all([
-      getAllStaff(db),
-      getVacantSeats(db),
-      getRosterEntriesForWeek(db, weekStart),
-    ]);
+    const [staffRows, vacantRows] = await Promise.all([getAllStaff(db), getVacantSeats(db)]);
+    const entries = await getWeekRosterView(
+      db,
+      weekStart,
+      dates,
+      staffRows.map((s) => s.id),
+    );
     setStaff(staffRows);
     setVacantSeats(vacantRows);
     setEntriesByKey(entries);
     setLoading(false);
-  }, [db, weekStart]);
+  }, [db, weekStart, dates]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Re-load whenever this tab regains focus, so leave/staff changes made
+  // on other tabs show up here without a manual refresh.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   const rows: RosterRow[] = useMemo(() => buildRosterRows(staff, vacantSeats), [staff, vacantSeats]);
 

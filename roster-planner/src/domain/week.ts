@@ -47,6 +47,11 @@ export function formatWeekRange(weekStartIso: string): string {
   return `${mondayDay} ${mondayMonth} – ${fridayDay} ${format(friday, 'MMMM yyyy')}`;
 }
 
+/** "21 Sep 2026" style date, for leave entries and similar lists. */
+export function formatDateLong(iso: string): string {
+  return format(new Date(`${iso}T00:00:00`), 'd MMM yyyy');
+}
+
 /** Standardised on-screen/print time format, e.g. "7:30 – 4:30" (SPEC.md §9). */
 export function formatTimeRange(start: string, end: string): string {
   return `${formatClock(start)} – ${formatClock(end)}`;

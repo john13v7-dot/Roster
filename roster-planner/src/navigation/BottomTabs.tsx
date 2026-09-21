@@ -3,6 +3,7 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { RosterScreen } from '../screens/RosterScreen';
+import { LeaveScreen } from '../screens/LeaveScreen';
 import { PlaceholderScreen } from '../screens/PlaceholderScreen';
 
 const Tab = createBottomTabNavigator();
@@ -22,9 +23,7 @@ export function BottomTabs() {
       <Tab.Screen name="Staff">
         {() => <PlaceholderScreen title="Staff" note="Add / Transfer / Remove staff arrives in a later build phase." />}
       </Tab.Screen>
-      <Tab.Screen name="Leave">
-        {() => <PlaceholderScreen title="Leave" note="Add Holiday / Maternity Leave arrives in a later build phase." />}
-      </Tab.Screen>
+      <Tab.Screen name="Leave" component={LeaveScreen} />
       <Tab.Screen name="Fairness">
         {() => <PlaceholderScreen title="Fairness" note="The fairness dashboard arrives in a later build phase." />}
       </Tab.Screen>

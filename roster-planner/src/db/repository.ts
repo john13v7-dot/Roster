@@ -1,8 +1,9 @@
 // © 2026 David Juste. All rights reserved. Proprietary and confidential.
 
 import type { SQLiteDatabase } from 'expo-sqlite';
-import type { RosterEntry, RosterEntryType, RosterWeekStatus, Staff, VacantSeat } from '../domain/types';
+import type { LeaveEntry, LeaveType, RosterEntry, RosterEntryType, RosterWeekStatus, Staff, VacantSeat } from '../domain/types';
 import type { ShiftPatternCode } from '../config/creche.config';
+import { mergeLeaveIntoEntries } from '../domain/leave';
 
 interface StaffRow {
   id: string;
@@ -156,4 +157,59 @@ export async function upsertRosterEntry(db: SQLiteDatabase, entry: RosterEntry):
 
 export async function deleteRosterEntry(db: SQLiteDatabase, staffId: string, date: string): Promise<void> {
   await db.runAsync('DELETE FROM roster_entries WHERE staff_id = ? AND date = ?;', [staffId, date]);
+}
+
+interface LeaveRow {
+  id: string;
+  staff_id: string;
+  type: LeaveType;
+  from_date: string;
+  to_date: string | null;
+}
+
+function toLeaveEntry(row: LeaveRow): LeaveEntry {
+  return { id: row.id, staffId: row.staff_id, type: row.type, fromDate: row.from_date, toDate: row.to_date };
+}
+
+export async function getAllLeave(db: SQLiteDatabase): Promise<LeaveEntry[]> {
+  const rows = await db.getAllAsync<LeaveRow>('SELECT * FROM leave ORDER BY from_date DESC;');
+  return rows.map(toLeaveEntry);
+}
+
+export async function addLeave(db: SQLiteDatabase, entry: LeaveEntry): Promise<void> {
+  await db.runAsync('INSERT INTO leave (id, staff_id, type, from_date, to_date) VALUES (?, ?, ?, ?, ?);', [
+    entry.id,
+    entry.staffId,
+    entry.type,
+    entry.fromDate,
+    entry.toDate,
+  ]);
+}
+
+export async function updateLeave(db: SQLiteDatabase, entry: LeaveEntry): Promise<void> {
+  await db.runAsync(
+    'UPDATE leave SET staff_id = ?, type = ?, from_date = ?, to_date = ? WHERE id = ?;',
+    [entry.staffId, entry.type, entry.fromDate, entry.toDate, entry.id],
+  );
+}
+
+export async function deleteLeave(db: SQLiteDatabase, id: string): Promise<void> {
+  await db.runAsync('DELETE FROM leave WHERE id = ?;', [id]);
+}
+
+/**
+ * The roster entries actually shown for a week: persisted roster_entries,
+ * with any staff currently on leave overriding their cells for the
+ * matching dates (SPEC.md §12, R7 "nobody on leave is given a shift").
+ * This is how an open-ended ("until further notice") leave entry fills
+ * every week without writing a row per day up front.
+ */
+export async function getWeekRosterView(
+  db: SQLiteDatabase,
+  weekStart: string,
+  dates: string[],
+  staffIds: string[],
+): Promise<Record<string, RosterEntry>> {
+  const [persisted, leave] = await Promise.all([getRosterEntriesForWeek(db, weekStart), getAllLeave(db)]);
+  return mergeLeaveIntoEntries(persisted, dates, staffIds, leave, weekStart);
 }
