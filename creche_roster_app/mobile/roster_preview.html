@@ -1,0 +1,821 @@
+<title>Roster Preview</title>
+<style>
+  :root{
+    --ink:#211c1a; --ink-dim:#6b625c; --paper:#fbf8f4; --card:#ffffff;
+    --line:#e7ddd4; --accent:#e04a32; --accent-dim:#f4d8d2;
+    --ok-bg:#eaf4e6; --ok-ink:#2f6b2f;
+    --warn-bg:#fdf2d6; --warn-ink:#8a6a12;
+    --bad-bg:#fbdede; --bad-ink:#9c1f13;
+    --chip-bg:#f1e9df;
+    --holiday-bg:#C65B35; --holiday-ink:#fdece3;
+    --maternity-bg:#2E9E57; --maternity-ink:#e7f7ee;
+    --off-bg:#A9D18E; --off-ink:#2c4a1e;
+    --duties-btn:#3f6b52; --requests-btn:#3a6ea5;
+    --info-bg:#e4eef8; --info-ink:#2c567e; --info-line:#c5dcef;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ink:#f1ece6; --ink-dim:#b8afa7; --paper:#1c1815; --card:#241f1b;
+      --line:#3a332c; --accent:#ff7a5c; --accent-dim:#402420;
+      --ok-bg:#1e3320; --ok-ink:#9fd79a;
+      --warn-bg:#3a3013; --warn-ink:#f0cf6e;
+      --bad-bg:#3d1e19; --bad-ink:#ff9c8c;
+      --chip-bg:#2c2721;
+      --duties-btn:#5c9877; --requests-btn:#6ba0d8;
+      --info-bg:#1c2e3f; --info-ink:#8fc0ec; --info-line:#2c455c;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ink:#f1ece6; --ink-dim:#b8afa7; --paper:#1c1815; --card:#241f1b;
+    --line:#3a332c; --accent:#ff7a5c; --accent-dim:#402420;
+    --ok-bg:#1e3320; --ok-ink:#9fd79a;
+    --warn-bg:#3a3013; --warn-ink:#f0cf6e;
+    --bad-bg:#3d1e19; --bad-ink:#ff9c8c;
+    --chip-bg:#2c2721;
+    --duties-btn:#5c9877; --requests-btn:#6ba0d8;
+    --info-bg:#1c2e3f; --info-ink:#8fc0ec; --info-line:#2c455c;
+  }
+  *{box-sizing:border-box;}
+  body{
+    background:var(--paper); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    padding:0 16px; padding-block:14px 40px;
+  }
+  h1,h2,h3{text-wrap:balance; margin:0;}
+  .screen{display:none;}
+  .screen.active{display:block;}
+
+  .topbar{
+    position:sticky; top:env(safe-area-inset-top,0px);
+    background:var(--paper); z-index:10; padding-block:6px 10px;
+    margin:0 -16px; padding-inline:16px; border-bottom:1px solid var(--line);
+  }
+  .eyebrow{
+    font-size:11px; letter-spacing:.09em; text-transform:uppercase;
+    color:var(--ink-dim); font-weight:600; margin-bottom:2px;
+  }
+  .pagetitle{font-size:19px; font-weight:800; margin-bottom:10px;}
+  .topbtns{display:flex; gap:8px; width:100%;}
+  .topbtns button{
+    flex:1 1 0; min-width:0; font-size:12px; font-weight:800; border:none; border-radius:11px;
+    padding:9px 6px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:4px;
+    color:#fff; white-space:nowrap;
+  }
+  .topbtns button svg{width:14px; height:14px; flex:none;}
+  #printBtn{background:var(--accent);}
+  #printBtn:disabled{background:var(--chip-bg); color:var(--ink-dim);}
+  #dutiesTopBtn{background:var(--duties-btn);}
+  #requestsTopBtn{background:var(--requests-btn);}
+  .backbtn{
+    display:inline-flex; align-items:center; gap:5px; background:none; border:none;
+    color:var(--accent); font-size:14px; font-weight:700; padding:6px 0; cursor:pointer;
+  }
+  .tabs{
+    display:flex; gap:6px; overflow-x:auto; margin-top:10px; padding-bottom:2px;
+    -webkit-overflow-scrolling:touch;
+  }
+  .tab{
+    flex:none; font-size:12.5px; font-weight:600; color:var(--ink-dim);
+    background:var(--chip-bg); border:1px solid var(--line); border-radius:999px;
+    padding:7px 13px; white-space:nowrap; cursor:pointer;
+  }
+  .tab.active{background:var(--accent); color:#fff; border-color:var(--accent);}
+
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    margin-top:16px; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.04);
+    padding:14px 16px;
+  }
+  .card h2{font-size:13px; letter-spacing:.03em; margin-bottom:10px;}
+  .week{display:none;}
+  .week.active{display:block;}
+
+  .status-row{
+    display:flex; align-items:center; gap:8px; padding:10px 12px; font-size:12.5px;
+    font-weight:600; border-radius:10px; margin-bottom:12px;
+  }
+  .status-ok{background:var(--ok-bg); color:var(--ok-ink);}
+  .status-bad{background:var(--bad-bg); color:var(--bad-ink);}
+  .status-warn{background:var(--warn-bg); color:var(--warn-ink);}
+  .msg-line{font-size:12px; line-height:1.5; padding:4px 2px; border-bottom:1px solid var(--line);}
+  .msg-line:last-child{border-bottom:none;}
+  .msg-bad{color:var(--bad-ink);}
+  .msg-warn{color:var(--warn-ink);}
+
+  .adjustbox{background:var(--info-bg); border-radius:10px; padding:10px 12px; margin-bottom:12px;}
+  .adjusthead{font-size:11.5px; font-weight:800; color:var(--info-ink); margin-bottom:6px;}
+  .adjustline{font-size:12px; line-height:1.5; color:var(--info-ink); padding:3px 0; border-top:1px solid var(--info-line);}
+  .adjustline:first-of-type{border-top:none;}
+
+  /* --- person roster rows --- */
+  .personrow{padding:10px 0; border-bottom:1px solid var(--line);}
+  .personrow:last-child{border-bottom:none;}
+  .personhead{display:flex; align-items:baseline; gap:7px; margin-bottom:7px;}
+  .personname{font-size:13.5px; font-weight:700;}
+  .personrole{font-size:10px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.04em;}
+  .daypills{display:grid; grid-template-columns:repeat(5,1fr); gap:5px;}
+  .daypill{
+    min-width:0; border-radius:9px; padding:5px 3px;
+    text-align:center; background:var(--chip-bg); border:1px solid var(--line);
+  }
+  .daypill .dlabel{font-size:9px; font-weight:700; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.03em;}
+  .daypill .dtext{font-size:10.5px; font-weight:600; margin-top:2px; line-height:1.25; word-break:break-word;}
+  .daypill-off{background:var(--off-bg); border-color:var(--off-bg);}
+  .daypill-off .dtext, .daypill-off .dlabel{color:var(--off-ink);}
+  .daypill-holiday{background:var(--holiday-bg); border-color:var(--holiday-bg);}
+  .daypill-holiday .dtext, .daypill-holiday .dlabel{color:var(--holiday-ink);}
+  .daypill-maternity{background:var(--maternity-bg); border-color:var(--maternity-bg);}
+  .daypill-maternity .dtext, .daypill-maternity .dlabel{color:var(--maternity-ink);}
+  .daypill-vacant{background:transparent; border-style:dashed;}
+  .daypill-vacant .dtext{color:var(--ink-dim); font-style:italic;}
+
+  .navbtn{
+    width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    margin-top:16px; padding:15px 16px; font-size:13.5px; font-weight:700; color:var(--ink);
+    cursor:pointer;
+  }
+  .navbtn .navmeta{font-size:11px; font-weight:500; color:var(--ink-dim); margin-top:2px;}
+  .navbtn .chev{color:var(--ink-dim); font-size:18px;}
+
+  .panel summary{cursor:pointer; font-size:13px; font-weight:700; list-style:none;}
+  .panel summary::-webkit-details-marker{display:none;}
+  .panel summary::after{content:"›"; float:right; transform:rotate(90deg); transition:transform .15s;}
+  details[open] summary::after{transform:rotate(-90deg);}
+  .rule-list{margin:10px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:8px;}
+  .rule-list li{font-size:12.5px; line-height:1.45; padding-left:16px; position:relative; color:var(--ink);}
+  .rule-list li::before{content:"✓"; position:absolute; left:0; color:var(--ok-ink); font-weight:800;}
+  .open-list li::before{content:"?"; color:var(--warn-ink);}
+  .note{font-size:12px; color:var(--ink-dim); line-height:1.5; margin-top:10px;}
+
+  /* --- staff & requests screen --- */
+  .syncline{display:flex; align-items:center; gap:7px; font-size:11.5px; color:var(--ink-dim); margin-bottom:12px;}
+  .dot{width:7px; height:7px; border-radius:50%; background:var(--ink-dim); flex:none;}
+  .dot.on{background:var(--ok-ink);}
+  .dot.off{background:var(--bad-ink);}
+  .btnrow{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
+  .actionbtn{
+    font-size:12.5px; font-weight:700; color:#fff; background:var(--accent);
+    border:none; border-radius:10px; padding:10px 13px; cursor:pointer;
+    flex:1 1 auto; min-width:120px;
+  }
+  .actionbtn:disabled{background:var(--chip-bg); color:var(--ink-dim); cursor:not-allowed;}
+  .rowlist{display:flex; flex-direction:column; gap:0;}
+  .rowlist .item{
+    display:flex; justify-content:space-between; align-items:center; gap:10px;
+    padding:9px 2px; border-bottom:1px solid var(--line); font-size:12.5px;
+  }
+  .rowlist .item:last-child{border-bottom:none;}
+  .item .meta{color:var(--ink-dim); font-size:11px;}
+  .item .name{font-weight:600;}
+  .pill{font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:999px; background:var(--chip-bg); color:var(--ink-dim);}
+  .pill.leave{background:var(--bad-bg); color:var(--bad-ink);}
+  .pill.transfer{background:var(--warn-bg); color:var(--warn-ink);}
+  .xbtn{
+    background:none; border:none; color:var(--ink-dim); font-size:15px; line-height:1;
+    cursor:pointer; padding:4px 6px;
+  }
+  .grouptitle{font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-dim); font-weight:700; margin:14px 0 4px;}
+  .grouptitle:first-child{margin-top:0;}
+  .empty{font-size:12px; color:var(--ink-dim); font-style:italic; padding:6px 2px;}
+
+  dialog#formDialog, dialog#confirmDialog{
+    border:none; border-radius:16px; padding:0; width:min(92vw,420px);
+    background:var(--card); color:var(--ink);
+  }
+  dialog#formDialog::backdrop, dialog#confirmDialog::backdrop{background:rgba(0,0,0,.4);}
+  .formhead{padding:16px 18px 4px; font-size:15px; font-weight:800;}
+  .formbody{padding:10px 18px 18px; display:flex; flex-direction:column; gap:12px;}
+  .confirmbody{padding:16px 18px; font-size:13px; line-height:1.5; color:var(--ink);}
+  .field label{display:block; font-size:11.5px; font-weight:700; color:var(--ink-dim); margin-bottom:5px;}
+  .field input, .field select{
+    width:100%; font-size:14px; padding:9px 10px; border-radius:9px;
+    border:1px solid var(--line); background:var(--paper); color:var(--ink);
+  }
+  .formfoot{display:flex; gap:8px; padding:2px 18px 18px;}
+  .formfoot button{flex:1; padding:11px; border-radius:10px; font-size:13.5px; font-weight:700; border:none; cursor:pointer;}
+  .formfoot .cancel{background:var(--chip-bg); color:var(--ink);}
+  .formfoot .save{background:var(--accent); color:#fff;}
+  .formerr{font-size:11.5px; color:var(--bad-ink); min-height:14px;}
+
+  #toast{
+    position:fixed; left:16px; right:16px; bottom:calc(16px + env(safe-area-inset-bottom,0px));
+    background:var(--ink); color:var(--paper); padding:12px 15px; border-radius:12px;
+    font-size:12.5px; line-height:1.4; box-shadow:0 4px 18px rgba(0,0,0,.25);
+    transform:translateY(120%); transition:transform .25s ease; z-index:50;
+  }
+  #toast.show{transform:translateY(0);}
+</style>
+
+<!-- ============================== HOME SCREEN ============================== -->
+<div class="screen active" id="homeScreen">
+  <div class="topbar">
+    <div class="eyebrow">Creche roster · live preview</div>
+    <div class="pagetitle">Weekly Staff Roster</div>
+    <div class="topbtns">
+      <button id="requestsTopBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Staff
+      </button>
+      <button id="dutiesTopBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z"/><rect x="5" y="4" width="14" height="18" rx="2"/><path d="M9 11h6M9 15h6"/></svg>
+        Duties
+      </button>
+      <button id="printBtn" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>
+        Print
+      </button>
+    </div>
+    <div class="tabs" id="tabs"></div>
+  </div>
+
+  <div id="weeks"></div>
+</div>
+
+<!-- ============================== DUTIES SCREEN ============================== -->
+<div class="screen" id="dutiesScreen">
+  <div class="topbar">
+    <button class="backbtn" data-back="homeScreen">‹ Roster</button>
+    <div class="pagetitle" style="margin-top:2px;">Duties</div>
+  </div>
+
+  <div class="card panel">
+    <h2>Duties (shell preview)</h2>
+    <p class="note" style="margin-top:0;">Placeholder duty list — send me your real one and I'll wire up proper assignment rules. Only people actually working the selected week are offered a duty.</p>
+    <div class="tabs" id="dutyTabs" style="margin-top:0;"></div>
+    <div class="rowlist" id="dutiesList" style="margin-top:12px;"></div>
+  </div>
+</div>
+
+<!-- ============================== REQUESTS SCREEN ============================== -->
+<div class="screen" id="requestsScreen">
+  <div class="topbar">
+    <button class="backbtn" data-back="homeScreen">‹ Roster</button>
+    <div class="pagetitle" style="margin-top:2px;">Staff & Requests</div>
+  </div>
+
+  <div class="card panel" id="requestsPanel">
+    <div class="syncline"><span class="dot" id="syncDot"></span><span id="syncText">Connecting…</span></div>
+
+    <div class="btnrow">
+      <button class="actionbtn" data-action="add-staff" disabled>+ Add Staff</button>
+      <button class="actionbtn" data-action="transfer" disabled>Transfer</button>
+      <button class="actionbtn" data-action="add-holiday" disabled>+ Add Holiday</button>
+      <button class="actionbtn" data-action="add-maternity" disabled>+ Add Maternity Leave</button>
+    </div>
+
+    <div class="grouptitle">Current staff</div>
+    <div class="rowlist" id="staffList"><div class="empty">Loading…</div></div>
+
+    <div class="grouptitle">Leave &amp; transfers</div>
+    <div class="rowlist" id="eventList"><div class="empty">Loading…</div></div>
+
+    <p class="note">Changes save straight away and — once you allow it on first use — notify Claude in this chat, who reruns the real scheduling engine and updates the Print files. Jason and Shehnaz are never scheduled away at the same time; this is blocked here and flagged on the roster if it ever slips through elsewhere.</p>
+  </div>
+
+  <div class="card panel">
+    <h2>Rules this build enforces</h2>
+    <ul class="rule-list">
+      <li>Mon–Fri layout, matching your paper roster exactly.</li>
+      <li>Four shifts: 07:30–16:30, 08:00–17:00, 08:30–17:30, 09:00–18:00. Each rotating person steps to the next shift week over week; fairness wins when that clashes with the simple rotation.</li>
+      <li>Jason and Shehnaz are always complementary — one on 07:30 means the other on 09:00 — and never away at the same time.</li>
+      <li>Opening cover: Jason-or-Shehnaz plus 2 more staff, 3 in total, every day.</li>
+      <li>Closing cover: Jason-or-Shehnaz plus 2 more staff, 3 in total. If neither is closing, Priscilla covers it automatically on the days her own hours reach closing time.</li>
+      <li>Sue, Laura, Megan and Priscilla keep their own manually-set hours.</li>
+      <li>The vacant seat (row 3) shows with no shift and isn't counted toward cover.</li>
+      <li>Holiday and Maternity Leave are picked up automatically for the dates you give them.</li>
+      <li>Joiners and leavers: a new staff member's Start date (set when you Add Staff) means they're not scheduled before it; an End date works the same way for someone leaving.</li>
+    </ul>
+    <ul class="rule-list open-list" style="margin-top:14px;">
+      <li><strong>Floor balance</strong> — everyone's on one list for now (no ground floor / 1st floor split yet). The Transfer form records a floor move, but it won't change the schedule until floors are split.</li>
+      <li><strong>Eirini's room</strong> — not placed yet.</li>
+    </ul>
+    <p class="note">Everything here is generated straight from the real Python scheduling engine — press Print on the Roster screen for the actual Excel and PDF.</p>
+  </div>
+</div>
+
+<dialog id="formDialog">
+  <div class="formhead" id="formTitle">Add Staff</div>
+  <div class="formbody" id="formBody"></div>
+  <div class="formerr" id="formErr" style="padding:0 18px;"></div>
+  <div class="formfoot">
+    <button type="button" class="cancel" id="formCancel">Cancel</button>
+    <button type="button" class="save" id="formSave">Save</button>
+  </div>
+</dialog>
+
+<dialog id="confirmDialog">
+  <div class="formhead" id="confirmTitle">Remove this?</div>
+  <div class="confirmbody" id="confirmBody"></div>
+  <div class="formfoot">
+    <button type="button" class="cancel" id="confirmCancel">Cancel</button>
+    <button type="button" class="save" id="confirmOk" style="background:var(--bad-ink);">Remove</button>
+  </div>
+</dialog>
+
+<div id="toast"></div>
+
+<script id="roster-data" type="application/json">__ROSTER_JSON__</script>
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var toastEl = $('toast');
+  function toast(msg, ms){
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastEl._t);
+    toastEl._t = setTimeout(function(){ toastEl.classList.remove('show'); }, ms || 4200);
+  }
+  function esc(s){
+    return String(s==null?'':s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
+  var data;
+  try{ data = JSON.parse($('roster-data').textContent); }
+  catch(e){ document.body.insertAdjacentHTML('afterbegin','<p style="color:red">Could not load roster data.</p>'); return; }
+
+  // ---------- screen navigation ----------
+  function showScreen(id){
+    document.querySelectorAll('.screen').forEach(function(s){ s.classList.toggle('active', s.id === id); });
+    window.scrollTo(0, 0);
+  }
+  $('requestsTopBtn').onclick = function(){ showScreen('requestsScreen'); };
+  $('dutiesTopBtn').onclick = function(){ showScreen('dutiesScreen'); };
+  document.querySelectorAll('.backbtn').forEach(function(btn){
+    btn.onclick = function(){ showScreen(btn.dataset.back); };
+  });
+
+  // ---------- roster (home screen) ----------
+  var tabsEl = $('tabs'), weeksEl = $('weeks'), dutyTabsEl = $('dutyTabs');
+
+  function pillClass(kind, text){
+    if(kind === 'vacant') return 'daypill-vacant';
+    if(kind === 'leave'){
+      var t = text.trim().toLowerCase();
+      if(t === 'off') return 'daypill-off';
+      if(t.indexOf('holiday') !== -1) return 'daypill-holiday';
+      if(t.indexOf('maternity') !== -1) return 'daypill-maternity';
+      return 'daypill-off';
+    }
+    return '';
+  }
+
+  data.weeks.forEach(function(week, wi){
+    var tab = document.createElement('div');
+    tab.className = 'tab' + (wi===0 ? ' active' : '');
+    tab.textContent = 'Week ' + (wi+1);
+    tab.onclick = function(){ selectWeek(wi); };
+    tabsEl.appendChild(tab);
+
+    var dtab = document.createElement('div');
+    dtab.className = 'tab' + (wi===0 ? ' active' : '');
+    dtab.textContent = 'Week ' + (wi+1);
+    dtab.onclick = function(){ selectDutyWeek(wi); };
+    dutyTabsEl.appendChild(dtab);
+
+    var wrap = document.createElement('div');
+    wrap.className = 'week card' + (wi===0 ? ' active' : '');
+    wrap.id = 'week-' + wi;
+
+    var heading = document.createElement('div');
+    heading.style.cssText = 'font-size:13px; font-weight:800; margin-bottom:10px;';
+    heading.textContent = week.label;
+    wrap.appendChild(heading);
+
+    var status = document.createElement('div');
+    status.className = 'status-row ' + (week.breaches.length ? 'status-bad' : (week.warnings.length ? 'status-warn' : 'status-ok'));
+    status.textContent = week.breaches.length
+      ? (week.breaches.length + ' cover breach' + (week.breaches.length>1?'es':'') + ' this week')
+      : (week.warnings.length ? (week.warnings.length + ' thing' + (week.warnings.length>1?'s':'') + ' worth checking') : 'All hard rules met (opening, closing, pairing).');
+    wrap.appendChild(status);
+
+    week.breaches.concat(week.warnings).forEach(function(msg, i){
+      var isBad = i < week.breaches.length;
+      var line = document.createElement('div');
+      line.className = 'msg-line ' + (isBad ? 'msg-bad' : 'msg-warn');
+      line.textContent = (isBad ? 'Breach: ' : 'Check: ') + msg;
+      wrap.appendChild(line);
+    });
+
+    if(week.adjustments.length){
+      var abox = document.createElement('div');
+      abox.className = 'adjustbox';
+      var ahead = document.createElement('div');
+      ahead.className = 'adjusthead';
+      ahead.textContent = 'How cover was kept this week (' + week.adjustments.length + ')';
+      abox.appendChild(ahead);
+      week.adjustments.forEach(function(msg){
+        var aline = document.createElement('div');
+        aline.className = 'adjustline';
+        aline.textContent = msg;
+        abox.appendChild(aline);
+      });
+      wrap.appendChild(abox);
+    }
+
+    week.people.forEach(function(p){
+      var row = document.createElement('div');
+      row.className = 'personrow';
+      var head = document.createElement('div');
+      head.className = 'personhead';
+      var nm = document.createElement('span');
+      nm.className = 'personname';
+      nm.textContent = p.name;
+      head.appendChild(nm);
+      if(p.role === 'vacant'){
+        var rl = document.createElement('span');
+        rl.className = 'personrole';
+        rl.textContent = 'vacant';
+        head.appendChild(rl);
+      }
+      row.appendChild(head);
+
+      var pills = document.createElement('div');
+      pills.className = 'daypills';
+      p.days.forEach(function(dcell, di){
+        var pill = document.createElement('div');
+        pill.className = 'daypill ' + pillClass(dcell.kind, dcell.text);
+        var lbl = document.createElement('div');
+        lbl.className = 'dlabel';
+        lbl.textContent = week.day_names[di];
+        var txt = document.createElement('div');
+        txt.className = 'dtext';
+        txt.textContent = dcell.text || '—';
+        pill.appendChild(lbl);
+        pill.appendChild(txt);
+        pills.appendChild(pill);
+      });
+      row.appendChild(pills);
+      wrap.appendChild(row);
+    });
+
+    if(week.notes.length){
+      var det = document.createElement('details');
+      det.style.marginTop = '10px';
+      var sum = document.createElement('summary');
+      sum.style.fontSize = '11.5px';
+      sum.style.color = 'var(--ink-dim)';
+      sum.style.fontWeight = '600';
+      sum.textContent = week.notes.length + ' scheduling note' + (week.notes.length>1?'s':'');
+      det.appendChild(sum);
+      week.notes.forEach(function(msg){
+        var p2 = document.createElement('p');
+        p2.className = 'note';
+        p2.textContent = msg;
+        det.appendChild(p2);
+      });
+      wrap.appendChild(det);
+    }
+
+    weeksEl.appendChild(wrap);
+  });
+
+  function selectWeek(i){
+    document.querySelectorAll('#tabs .tab').forEach(function(t,idx){ t.classList.toggle('active', idx===i); });
+    document.querySelectorAll('.week').forEach(function(w,idx){ w.classList.toggle('active', idx===i); });
+  }
+
+  // ---------- duties (requests screen) ----------
+  var DUTY_LIST = [
+    'Kitchen & snack prep', 'Nappy changing station', 'Toy & surface clean-down',
+    'Outdoor play supervision', 'Nap room settling', 'Book corner & registers',
+  ];
+  function renderDuties(wi){
+    var week = data.weeks[wi];
+    var list = $('dutiesList');
+    list.innerHTML = '';
+    if(!week.working.length){
+      list.innerHTML = '<div class="empty">Nobody scheduled this week.</div>';
+      return;
+    }
+    week.working.forEach(function(name, i){
+      var row = document.createElement('div');
+      row.className = 'item';
+      var duty = DUTY_LIST[i % DUTY_LIST.length];
+      row.innerHTML = '<div class="name">'+esc(name)+'</div><span class="pill">'+esc(duty)+'</span>';
+      list.appendChild(row);
+    });
+  }
+  function selectDutyWeek(i){
+    document.querySelectorAll('#dutyTabs .tab').forEach(function(t,idx){ t.classList.toggle('active', idx===i); });
+    renderDuties(i);
+  }
+  renderDuties(0);
+
+  // ---------- print (downloads capability) ----------
+  function b64ToBlob(b64, mime){
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for(var i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], {type: mime});
+  }
+
+  var printBtn = $('printBtn');
+  var downloadsCap = null;
+
+  async function doPrint(){
+    if(!downloadsCap){ toast('Printing isn’t available in this view.'); return; }
+    printBtn.disabled = true;
+    try{
+      var xlsxBlob = b64ToBlob(data.files.xlsx.b64, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      await downloadsCap.save({filename: data.files.xlsx.filename, data: xlsxBlob});
+      var pdfBlob = b64ToBlob(data.files.pdf.b64, 'application/pdf');
+      await downloadsCap.save({filename: data.files.pdf.filename, data: pdfBlob});
+      toast('Saved ' + data.files.xlsx.filename + ' and ' + data.files.pdf.filename + '.');
+    } catch(e){
+      var code = e && e.code;
+      if(code === 'declined'){ toast('Not saved.'); }
+      else { toast('Could not save: ' + (e && e.message ? e.message : 'try again.')); }
+    }
+    printBtn.disabled = false;
+  }
+  printBtn.onclick = doPrint;
+
+  // ---------- staff & requests: db / comments ----------
+  var dialog = $('formDialog');
+  var formTitle = $('formTitle');
+  var formBody = $('formBody');
+  var formErr = $('formErr');
+  $('formCancel').onclick = function(){ dialog.close(); };
+  var formSave = $('formSave');
+
+  var db = null, comments = null, canSend = 'off';
+  var staffDocs = [], leaveDocs = [], transferDocs = [];
+
+  function fmtDate(iso){
+    if(!iso) return '';
+    var d = new Date(iso + 'T00:00:00');
+    if(isNaN(d)) return iso;
+    return d.toLocaleDateString(undefined, {day:'numeric', month:'short', year:'numeric'});
+  }
+  function todayISO(){
+    var d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  }
+
+  function renderStaffList(){
+    var el = $('staffList');
+    var real = staffDocs.filter(function(s){ return s.role !== 'blank' && s.name; });
+    real.sort(function(a,b){ return (a.order||0)-(b.order||0); });
+    if(!real.length){ el.innerHTML = '<div class="empty">No staff yet.</div>'; return; }
+    el.innerHTML = '';
+    real.forEach(function(s){
+      var row = document.createElement('div');
+      row.className = 'item';
+      row.innerHTML =
+        '<div><div class="name">'+esc(s.name)+'</div><div class="meta">'+esc(s.floor||'All')+'</div></div>' +
+        '<span class="pill">'+esc(s.role)+'</span>';
+      el.appendChild(row);
+    });
+  }
+
+  function renderEventList(){
+    var el = $('eventList');
+    el.innerHTML = '';
+    var items = [];
+    leaveDocs.forEach(function(l){ items.push({type:'leave', doc:l}); });
+    transferDocs.forEach(function(t){ items.push({type:'transfer', doc:t}); });
+    if(!items.length){ el.innerHTML = '<div class="empty">Nothing on leave, no transfers.</div>'; return; }
+    items.forEach(function(it){
+      var row = document.createElement('div');
+      row.className = 'item';
+      if(it.type === 'leave'){
+        var l = it.doc;
+        row.innerHTML =
+          '<div><div class="name">'+esc(l.name)+'</div><div class="meta">'+esc(fmtDate(l.start))+' – '+(l.end?esc(fmtDate(l.end)):'until back')+'</div></div>' +
+          '<span class="pill leave">'+esc(l.kind)+'</span>';
+      } else {
+        var t = it.doc;
+        var label = t.slot ? ('starts ' + esc(t.slot)) : (t.text ? esc(t.text) : 'transfer');
+        row.innerHTML =
+          '<div><div class="name">'+esc(t.name)+'</div><div class="meta">from '+esc(fmtDate(t.start))+(t.end?(' to '+esc(fmtDate(t.end))):'')+'</div></div>' +
+          '<span class="pill transfer">'+label+'</span>';
+      }
+      var del = document.createElement('button');
+      del.className = 'xbtn';
+      del.textContent = '✕';
+      var label = it.type === 'leave' ? (it.doc.kind + ' for ' + it.doc.name) : ('the transfer for ' + it.doc.name);
+      del.onclick = function(){ deleteDoc(it.type === 'leave' ? 'leave' : 'transfers', it.doc._id, label); };
+      row.appendChild(del);
+      el.appendChild(row);
+    });
+  }
+
+  // Sandboxed iframes (this page's runtime) block window.confirm/alert/prompt -
+  // they no-op instead of showing a dialog, so a plain confirm() silently does
+  // nothing when tapped. Use the page's own <dialog> for a real confirmation.
+  var confirmDialog = $('confirmDialog');
+  var confirmResolve = null;
+  $('confirmCancel').onclick = function(){ confirmDialog.close(); };
+  $('confirmOk').onclick = function(){ confirmDialog.close('yes'); };
+  confirmDialog.addEventListener('close', function(){
+    if(confirmResolve){ confirmResolve(confirmDialog.returnValue === 'yes'); confirmResolve = null; }
+  });
+  function askConfirm(message){
+    $('confirmBody').textContent = message;
+    confirmDialog.returnValue = '';
+    try{
+      confirmDialog.showModal();
+    } catch(e){
+      // <dialog> unsupported in this webview: don't leave the action stuck
+      // with no way to confirm - proceed rather than silently do nothing.
+      return Promise.resolve(true);
+    }
+    return new Promise(function(resolve){ confirmResolve = resolve; });
+  }
+
+  async function deleteDoc(collection, id, label){
+    if(!db){ return; }
+    var ok = await askConfirm('Remove ' + label + '? Claude will rebuild the roster to match.');
+    if(!ok) return;
+    try{
+      await db.collection(collection).doc(id).delete();
+      toast('Removed. Notifying Claude to rebuild…');
+      await notifyClaude('Remove ' + label + '. Please rebuild the roster without it.');
+    } catch(e){
+      toast('Could not remove it — try again.');
+    }
+  }
+
+  async function init(){
+    if(!window.claude || !window.claude.use){
+      $('syncText').textContent = 'Live editing needs the Claude app or claude.ai.';
+      return;
+    }
+    db = await window.claude.use('db');
+    comments = await window.claude.use('comments');
+    downloadsCap = await window.claude.use('downloads');
+    if(downloadsCap){ printBtn.disabled = false; }
+    else { printBtn.title = 'Printing isn’t available in this view.'; }
+
+    if(!db){
+      $('syncDot').className = 'dot off';
+      $('syncText').textContent = 'Live editing isn’t available in this view.';
+      return;
+    }
+    $('syncDot').className = 'dot on';
+    $('syncText').textContent = comments ? 'Connected — changes sync and can notify Claude.' : 'Connected — changes save (notify Claude manually).';
+    document.querySelectorAll('.actionbtn').forEach(function(b){ b.disabled = false; });
+
+    if(comments && comments.canSendToClaude){
+      try { canSend = await comments.canSendToClaude(); } catch(e){ canSend = 'off'; }
+    }
+
+    db.collection('staff').onSnapshot(function(snap){
+      staffDocs = snap.docs.map(function(d){ var v = d.data() || {}; v._id = d.id; return v; });
+      renderStaffList();
+    }, function(){ $('staffList').innerHTML = '<div class="empty">Could not load staff.</div>'; });
+
+    db.collection('leave').onSnapshot(function(snap){
+      leaveDocs = snap.docs.map(function(d){ var v = d.data() || {}; v._id = d.id; return v; });
+      renderEventList();
+    });
+    db.collection('transfers').onSnapshot(function(snap){
+      transferDocs = snap.docs.map(function(d){ var v = d.data() || {}; v._id = d.id; return v; });
+      renderEventList();
+    });
+  }
+  init();
+
+  var ROLE_OPTS = [['rotating','Rotating (shares the 4 shifts)'],['fixed','Fixed (always one shift)'],
+                    ['static','Static (own set hours)'],['vacant','Vacant post'],['paired','Paired (Jason/Shehnaz only)']];
+  var FLOOR_OPTS = [['All','All / not split yet'],['down','Ground floor'],['up','1st floor']];
+
+  function field(labelText, inner){
+    return '<div class="field"><label>'+labelText+'</label>'+inner+'</div>';
+  }
+  function selectHTML(id, opts){
+    return '<select id="'+id+'">' + opts.map(function(o){ return '<option value="'+o[0]+'">'+o[1]+'</option>'; }).join('') + '</select>';
+  }
+  function staffOptionsHTML(){
+    var real = staffDocs.filter(function(s){ return s.role!=='blank' && s.role!=='vacant' && s.name; });
+    real.sort(function(a,b){ return (a.order||0)-(b.order||0); });
+    if(!real.length) return '<option value="">No staff yet</option>';
+    return real.map(function(s){ return '<option value="'+esc(s.name)+'">'+esc(s.name)+'</option>'; }).join('');
+  }
+
+  var currentAction = null;
+  function openForm(action){
+    currentAction = action;
+    formErr.textContent = '';
+    if(action === 'add-staff'){
+      formTitle.textContent = 'Add Staff';
+      formBody.innerHTML =
+        field('Name', '<input id="f_name" type="text" placeholder="e.g. Priya">') +
+        field('Floor', selectHTML('f_floor', FLOOR_OPTS)) +
+        field('Role', selectHTML('f_role', ROLE_OPTS)) +
+        field('Start date', '<input id="f_start" type="date" value="'+todayISO()+'">');
+    } else if(action === 'transfer'){
+      formTitle.textContent = 'Transfer';
+      formBody.innerHTML =
+        field('Staff', '<select id="f_staff">'+staffOptionsHTML()+'</select>') +
+        field('New floor', selectHTML('f_floor', FLOOR_OPTS)) +
+        field('From (week starting)', '<input id="f_start" type="date" value="'+todayISO()+'">');
+    } else if(action === 'add-holiday' || action === 'add-maternity'){
+      var kind = action === 'add-holiday' ? 'Holiday' : 'Maternity Leave';
+      formTitle.textContent = 'Add ' + kind;
+      formBody.innerHTML =
+        field('Staff', '<select id="f_staff">'+staffOptionsHTML()+'</select>') +
+        field('From', '<input id="f_start" type="date" value="'+todayISO()+'">') +
+        field('To (leave blank if open-ended)', '<input id="f_end" type="date">');
+    }
+    dialog.showModal();
+  }
+
+  document.querySelectorAll('.actionbtn').forEach(function(btn){
+    btn.addEventListener('click', function(){ openForm(btn.dataset.action); });
+  });
+
+  var PAIR = ['Jason', 'Shehnaz'];
+
+  function overlapsPartnerLeave(name, start, end){
+    if(PAIR.indexOf(name) === -1) return null;
+    var partner = name === PAIR[0] ? PAIR[1] : PAIR[0];
+    var partnerLeave = leaveDocs.filter(function(l){ return l.name === partner; });
+    var s1 = start, e1 = end || '9999-12-31';
+    for(var i=0;i<partnerLeave.length;i++){
+      var l = partnerLeave[i];
+      var s2 = l.start, e2 = l.end || '9999-12-31';
+      if(s1 <= e2 && s2 <= e1) return partner;
+    }
+    return null;
+  }
+
+  formSave.onclick = async function(){
+    formErr.textContent = '';
+    if(!db){ formErr.textContent = 'Not connected.'; return; }
+    formSave.disabled = true;
+    try{
+      if(currentAction === 'add-staff'){
+        var name = ($('f_name').value || '').trim();
+        if(!name){ formErr.textContent = 'Name is required.'; formSave.disabled=false; return; }
+        var floor = $('f_floor').value, role = $('f_role').value, start = $('f_start').value;
+        var id = name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || ('staff-'+Date.now());
+        var order = staffDocs.reduce(function(m,s){ return Math.max(m, s.order||0); }, 0) + 1;
+        await db.collection('staff').doc(id).set({
+          name: name, floor: floor, role: role, note: '', hours: ['','','','',''],
+          number: '', order: order, active: true, startDate: start,
+        });
+        var summary = 'Add staff: ' + name + ', floor ' + floor + ', role ' + role + ', starting ' + start + '.';
+        await notifyClaude(summary);
+        toast('Added ' + name + '.');
+      } else if(currentAction === 'transfer'){
+        var staff = $('f_staff').value, floor2 = $('f_floor').value, start2 = $('f_start').value;
+        if(!staff){ formErr.textContent = 'Pick a staff member.'; formSave.disabled=false; return; }
+        await db.collection('transfers').add({
+          name: staff, newFloor: floor2, start: start2, end: null, createdAt: todayISO(),
+        });
+        var summary2 = 'Transfer: ' + staff + ' to ' + floor2 + ', from ' + start2 + ' onward (past weeks unchanged).';
+        await notifyClaude(summary2);
+        toast('Transfer recorded for ' + staff + '.');
+      } else {
+        var kindWord = currentAction === 'add-holiday' ? 'Holiday' : 'Maternity Leave';
+        var staff3 = $('f_staff').value, start3 = $('f_start').value, end3 = $('f_end').value || null;
+        if(!staff3){ formErr.textContent = 'Pick a staff member.'; formSave.disabled=false; return; }
+        var clash = overlapsPartnerLeave(staff3, start3, end3);
+        if(clash){
+          formErr.textContent = 'Policy: ' + staff3 + ' and ' + clash + ' can’t both be away at the same time — check ' + clash + '’s leave first.';
+          formSave.disabled = false;
+          return;
+        }
+        await db.collection('leave').add({
+          name: staff3, kind: kindWord, start: start3, end: end3, createdAt: todayISO(),
+        });
+        var summary3 = 'Add ' + kindWord + ': ' + staff3 + ', from ' + start3 + (end3 ? (' to ' + end3) : ' (open-ended, until back)') + '.';
+        await notifyClaude(summary3);
+        toast(kindWord + ' recorded for ' + staff3 + '.');
+      }
+      dialog.close();
+    } catch(e){
+      formErr.textContent = 'Could not save: ' + (e && e.message ? e.message : 'try again.');
+    }
+    formSave.disabled = false;
+  };
+
+  async function notifyClaude(text){
+    if(!comments){ toast('Saved. Tell Claude in chat: "' + text + '"', 6500); return; }
+    try{
+      var anchor = await comments.anchorFor($('requestsPanel'));
+      if(canSend !== 'available' && comments.canSendToClaude){
+        try { canSend = await comments.canSendToClaude(); } catch(e){}
+      }
+      if(canSend === 'available'){
+        await comments.sendToClaude({ anchor: anchor, text: text });
+        toast('Saved and sent to Claude — it will rebuild the roster.');
+      } else {
+        await comments.create({ anchor: anchor, text: text });
+        toast('Saved and posted as a comment. Mention it in chat so Claude picks it up.', 6000);
+      }
+    } catch(e){
+      var code = e && e.code;
+      if(code === 'consent_required'){
+        toast('Saved. Allow this page to comment (you’ll be asked), then it can notify Claude automatically next time.', 6500);
+      } else {
+        toast('Saved. Tell Claude in chat: "' + text + '"', 6500);
+      }
+    }
+  }
+})();
+</script>
