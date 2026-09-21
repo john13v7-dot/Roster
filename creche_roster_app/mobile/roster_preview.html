@@ -418,20 +418,24 @@
     heading.textContent = week.label;
     wrap.appendChild(heading);
 
-    var status = document.createElement('div');
-    status.className = 'status-row ' + (week.breaches.length ? 'status-bad' : (week.warnings.length ? 'status-warn' : 'status-ok'));
-    status.textContent = week.breaches.length
-      ? (week.breaches.length + ' cover breach' + (week.breaches.length>1?'es':'') + ' this week')
-      : (week.warnings.length ? (week.warnings.length + ' thing' + (week.warnings.length>1?'s':'') + ' worth checking') : 'All hard rules met (opening, closing, pairing).');
-    wrap.appendChild(status);
+    // Only shown when there's something to flag - a clean week says nothing,
+    // rather than a constant "all good" banner once that's the normal case.
+    if(week.breaches.length || week.warnings.length){
+      var status = document.createElement('div');
+      status.className = 'status-row ' + (week.breaches.length ? 'status-bad' : 'status-warn');
+      status.textContent = week.breaches.length
+        ? (week.breaches.length + ' cover breach' + (week.breaches.length>1?'es':'') + ' this week')
+        : (week.warnings.length + ' thing' + (week.warnings.length>1?'s':'') + ' worth checking');
+      wrap.appendChild(status);
 
-    week.breaches.concat(week.warnings).forEach(function(msg, i){
-      var isBad = i < week.breaches.length;
-      var line = document.createElement('div');
-      line.className = 'msg-line ' + (isBad ? 'msg-bad' : 'msg-warn');
-      line.textContent = (isBad ? 'Breach: ' : 'Check: ') + msg;
-      wrap.appendChild(line);
-    });
+      week.breaches.concat(week.warnings).forEach(function(msg, i){
+        var isBad = i < week.breaches.length;
+        var line = document.createElement('div');
+        line.className = 'msg-line ' + (isBad ? 'msg-bad' : 'msg-warn');
+        line.textContent = (isBad ? 'Breach: ' : 'Check: ') + msg;
+        wrap.appendChild(line);
+      });
+    }
 
     week.people.forEach(function(p){
       var row = document.createElement('div');
