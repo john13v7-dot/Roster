@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A simple calendar/roster glyph, centred in the 108x108 adaptive icon
+     canvas (the safe zone for a circular/square mask is the middle 66dp). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M32,30 h44 a6,6 0 0 1 6,6 v42 a6,6 0 0 1 -6,6 h-44 a6,6 0 0 1 -6,-6 v-42 a6,6 0 0 1 6,-6 z" />
+    <path
+        android:fillColor="#E04A32"
+        android:pathData="M26,44 h56 v6 h-56 z" />
+    <path
+        android:fillColor="#E04A32"
+        android:pathData="M40,24 h6 v14 h-6 z" />
+    <path
+        android:fillColor="#E04A32"
+        android:pathData="M62,24 h6 v14 h-6 z" />
+    <path
+        android:fillColor="#E04A32"
+        android:pathData="M36,56 h10 v8 h-10 z" />
+    <path
+        android:fillColor="#E04A32"
+        android:pathData="M49,56 h10 v8 h-10 z" />
+    <path
+        android:fillColor="#E04A32"
+        android:pathData="M62,56 h10 v8 h-10 z" />
+    <path
+        android:fillColor="#E04A32"
+        android:pathData="M36,68 h10 v8 h-10 z" />
+    <path
+        android:fillColor="#E04A32"
+        android:pathData="M49,68 h10 v8 h-10 z" />
+</vector>
