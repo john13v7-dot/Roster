@@ -26,8 +26,9 @@ How it works
 
 from __future__ import annotations
 
+import re
 from collections import Counter
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from .models import (
@@ -44,7 +45,7 @@ from .models import (
     Staff,
     WeekRoster,
 )
-from .parsing import fmt_day, fmt_days, is_off
+from .parsing import fmt_day, fmt_days, is_off, parse_time
 
 BIG = 1000.0  # penalty per missing person on a hard rule (dwarfs everything else)
 W_FAIR = 10.0
@@ -110,6 +111,12 @@ def validate(inputs: Inputs) -> List[str]:
             p.append(f"Staff: '{st.name}' is fixed but has no valid slot (use early, mid1, mid2, late or a start time).")
     if len(paired) not in (0, 2):
         p.append(f"Staff: exactly two people must have role 'paired' (or none). Found {len(paired)}.")
+
+    if s.fallback_closer:
+        if s.fallback_closer.lower() not in names:
+            p.append(f"Settings: fallback_closer '{s.fallback_closer}' is not in the Staff tab.")
+        elif s.fallback_closer in paired:
+            p.append(f"Settings: fallback_closer '{s.fallback_closer}' can't be one of the two paired staff.")
 
     exact = {st.name: st for st in inputs.staff if st.role not in ("vacant", "blank") and st.name}
     for lv in inputs.leave:
@@ -214,6 +221,24 @@ def _choose_pair(
     who = a if present_a else b
     slot = "early" if share(who, "early") <= share(who, "late") else "late"
     return {who: slot}
+
+
+def _covers_closing(hours_text: str, late_end) -> bool:
+    """Whether a static person's own hours (e.g. '10:00 - 6:00') reach the
+    late shift's end time. Hours are typed 12-hour with no AM/PM, so an end
+    time at or before the start is read as afternoon/evening (a childcare
+    day never runs past midnight)."""
+    parts = [p.strip() for p in re.split(r"[-–—]", hours_text) if p.strip()]
+    if len(parts) < 2:
+        return False
+    try:
+        start = parse_time(parts[0])
+        end = parse_time(parts[-1])
+    except ValueError:
+        return False
+    if end <= start:
+        end = time((end.hour + 12) % 24, end.minute)
+    return end >= late_end
 
 
 def _most_common_slot(slots: List[str]) -> str:
@@ -353,9 +378,36 @@ def build_roster(inputs: Inputs) -> Roster:
                 else:
                     slot_of[st.name] = base[st.name]
 
+            fb = s.fallback_closer
+            fb_assignment = cells.get((fb, d)) if fb else None
+            fb_available = (
+                fb is not None
+                and fb in by_name
+                and fb_assignment is not None
+                and fb_assignment.kind == "static"
+                and _covers_closing(fb_assignment.text, s.shifts["late"].end)
+            )
+
             for floor in s.floors:
-                _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi)
-                _check_floor(d, floor, slot_of, by_name, s, checks, wi)
+                need = _needs(floor, s)
+                if fb_available and pair and by_name[fb].floor == floor and need.get("late", 0) > 0:
+                    covered = any(
+                        slot_of.get(p) == "late" for p in pair if by_name.get(p) and by_name[p].floor == floor
+                    )
+                    if not covered:
+                        need = dict(need)
+                        need["late"] = max(0, need["late"] - 1)
+                        checks.append(
+                            Check(
+                                "INFO",
+                                "Closing fallback",
+                                f"{fb} covers closing on {fmt_day(d)} because neither {pair[0]} nor {pair[1]} is closing.",
+                                d,
+                                wi,
+                            )
+                        )
+                _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=need)
+                _check_floor(d, floor, slot_of, by_name, s, checks, wi, need=need)
 
             for name, slot in slot_of.items():
                 cells[(name, d)] = Assignment(
@@ -395,8 +447,8 @@ def _needs(floor: str, s) -> Dict[str, int]:
     return {"early": s.min_open[floor], "late": s.min_close[floor]}
 
 
-def _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi) -> None:
-    need = _needs(floor, s)
+def _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=None) -> None:
+    need = _needs(floor, s) if need is None else need
     floor_names = [n for n in slot_of if by_name[n].floor == floor]
     for target in ("early", "late"):
         while Counter(slot_of[n] for n in floor_names)[target] < need[target]:
@@ -436,8 +488,8 @@ def _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi
             )
 
 
-def _check_floor(d, floor, slot_of, by_name, s, checks, wi) -> None:
-    need = _needs(floor, s)
+def _check_floor(d, floor, slot_of, by_name, s, checks, wi, need=None) -> None:
+    need = _needs(floor, s) if need is None else need
     cnt = Counter(slot_of[n] for n in slot_of if by_name[n].floor == floor)
     for slot, rule, what in (("early", "Opening cover", "opening"), ("late", "Closing cover", "closing")):
         if need[slot] > 0 and cnt[slot] < need[slot]:

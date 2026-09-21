@@ -134,9 +134,13 @@ def read_inputs(path) -> Inputs:
                     table[f] = int(v)
                 except (TypeError, ValueError):
                     problems.append(f"Settings {prefix}_{slug}: '{v}' is not a whole number.")
+    fallback_closer = _norm(get("fallback_closer", "")) or None
     if problems or roster_start is None:
         raise InputError(problems or ["Settings: roster_start is missing."])
-    settings = Settings(title, roster_start, weeks, floors, shifts, min_open, min_close, break_text, day_headers)
+    settings = Settings(
+        title, roster_start, weeks, floors, shifts, min_open, min_close,
+        break_text, day_headers, fallback_closer,
+    )
 
     # ---- Staff -----------------------------------------------------------
     staff: List[Staff] = []
@@ -525,6 +529,7 @@ def make_template(path, start: Optional[date] = None) -> Path:
         ("break_text", s.break_text, "Text in the break column next to each person."),
         ("day_headers", "no" if not s.day_headers else "yes", "yes = print Mon..Fri headings. The old roster has none."),
         ("floors", ", ".join(s.floors), "Comma separated. Each floor needs its own min_open_ / min_close_ rows below. 'All' = one group."),
+        ("fallback_closer", s.fallback_closer or "", "A static-hours person (matching a Staff name) who closes on a day neither paired person does. Leave blank for none."),
     ]
     for sl in SLOTS:
         rows.append((f"{sl}_start", s.shifts[sl].start, f"{SLOT_LABELS[sl]} start time."))

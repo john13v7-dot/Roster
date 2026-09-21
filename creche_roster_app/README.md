@@ -45,6 +45,16 @@ Roles: `rotating` (shares the four start times), `fixed` (always one slot), `pai
 in Mon..Fri; type OFF for a day off), `vacant` (empty post, hours optional),
 `blank` (spacer row). "Print no.": empty = automatic number, `-` = no number.
 
+## The closing fallback
+
+Set `fallback_closer` in Settings to a static-hours person's name (e.g. `Priscilla`)
+whose own hours reach the late shift's end time on a given day. On any day neither
+paired person is closing (both away, or the one who's in was overridden elsewhere),
+that person's presence counts toward closing cover automatically — no cell changes,
+it's just no longer flagged as short by one. A day where their own hours are shorter
+(e.g. a half day) doesn't count, and the normal repair (moving a rotating person)
+still runs if it's still short. Leave the setting blank for no fallback.
+
 ## The Shehnaz / Jason rule
 
 The two `paired` staff are always complementary:

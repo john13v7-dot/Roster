@@ -51,6 +51,7 @@ class Settings:
     min_close: Dict[str, int]  # per floor: minimum staff on the late slot
     break_text: str = "10 MINS"
     day_headers: bool = False  # the old printed roster has no Mon..Fri header row
+    fallback_closer: Optional[str] = None  # a static-hours person who closes when neither paired person does
 
 
 @dataclass

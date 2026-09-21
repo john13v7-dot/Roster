@@ -33,6 +33,7 @@ def sample_inputs(start: date) -> Inputs:
         min_close={"All": 3},  # Jason or Shehnaz (from the pairing rule) + 2 staff
         break_text="10 MINS",
         day_headers=False,
+        fallback_closer="Priscilla",  # closes when neither Jason nor Shehnaz does
     )
     rot = lambda n: Staff(n, "All", "rotating")  # noqa: E731
     staff = [

@@ -152,6 +152,43 @@ class PairingRule(unittest.TestCase):
         self.assertEqual(r.breaches, [])
 
 
+class FallbackCloser(unittest.TestCase):
+    def test_priscilla_closes_when_pair_both_away(self):
+        leave = [
+            Leave("Jason", START, START + timedelta(days=4), "Holiday"),
+            Leave("Shehnaz", START, START + timedelta(days=4), "Holiday"),
+        ]
+        r = build_roster(inputs(leave=leave, weeks=1))
+        self.assertEqual(r.breaches, [])
+        self.assertTrue(
+            any(c.rule == "Closing fallback" and "Priscilla" in c.message for c in r.checks)
+        )
+
+    def test_priscillas_shorter_monday_does_not_count(self):
+        # Priscilla's own Monday hours (10:00 - 2:00) don't reach closing (6:00),
+        # unlike the rest of her week (10:00 - 6:00) - only Tue-Fri may use her
+        # as the fallback closer.
+        leave = [
+            Leave("Jason", START, START + timedelta(days=4), "Holiday"),
+            Leave("Shehnaz", START, START + timedelta(days=4), "Holiday"),
+        ]
+        r = build_roster(inputs(leave=leave, weeks=1))
+        monday_fallback = [
+            c for c in r.checks
+            if c.rule == "Closing fallback" and c.day == START
+        ]
+        self.assertEqual(monday_fallback, [])
+        self.assertEqual(r.breaches, [])  # still met, by rotating staff instead
+
+    def test_no_fallback_when_not_configured(self):
+        leave = [
+            Leave("Jason", START, START + timedelta(days=4), "Holiday"),
+            Leave("Shehnaz", START, START + timedelta(days=4), "Holiday"),
+        ]
+        r = build_roster(inputs(leave=leave, weeks=1, settings={"fallback_closer": None}))
+        self.assertFalse(any(c.rule == "Closing fallback" for c in r.checks))
+
+
 class Overrides(unittest.TestCase):
     def test_solver_plans_around_overrides_without_repairs(self):
         leave = [Leave("Shehnaz", START, START + timedelta(days=13), "Holiday")]
