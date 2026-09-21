@@ -29,8 +29,8 @@ def sample_inputs(start: date) -> Inputs:
             "mid2": Shift(time(8, 30), time(17, 30)),
             "late": Shift(time(9, 0), time(18, 0)),
         },
-        min_open={"All": 2},  # PLACEHOLDER
-        min_close={"All": 2},  # PLACEHOLDER
+        min_open={"All": 3},  # Jason or Shehnaz (from the pairing rule) + 2 staff
+        min_close={"All": 3},  # Jason or Shehnaz (from the pairing rule) + 2 staff
         break_text="10 MINS",
         day_headers=False,
     )
