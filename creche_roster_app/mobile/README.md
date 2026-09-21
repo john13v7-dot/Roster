@@ -17,7 +17,15 @@ the main package turns that into a real `Inputs` and `build_preview.py`
 runs the actual engine on it - nothing here is hand-typed.
 
 Settings, fairness history and the last-slot memory aren't editable
-through the app yet, so they still come from `sample_inputs()`.
+through the app yet, so they still come from `sample_inputs()`. Every
+build re-runs the real engine over the *whole* roster from these inputs -
+it's never a patch applied to the previous result - so opening/closing
+cover and fairness are readjusted across everyone automatically on every
+request (a leave change, a staff change, anything), not just for the
+person the request was about. A brand-new staff doc with no entry in
+`history` is seeded at the team's rounded average per slot rather than
+zero, so they're folded into the fair rotation from day one instead of
+looking artificially "owed" every slot at once.
 
 Publish the output HTML with the Artifact tool (`db`, `comments` and
 `downloads` capabilities declared) to get a live link; write the returned

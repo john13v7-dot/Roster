@@ -74,6 +74,25 @@ class DbImport(unittest.TestCase):
         week1 = roster.weeks[0]
         self.assertEqual(set(week1.cells[("Priya", d)].text for d in week1.days), {"Not yet started"})
 
+    def test_new_joiner_is_seeded_at_the_team_average_not_zero(self):
+        staff_docs, leave_docs, transfer_docs = seed_docs()
+        staff_docs.append({
+            "name": "Priya", "floor": "All", "role": "rotating", "note": "",
+            "hours": ["", "", "", "", ""], "number": "", "order": 99,
+        })
+        history = {
+            "Hanny": {"early": 10, "mid1": 10, "mid2": 10, "late": 10},
+            "Manuel": {"early": 20, "mid1": 0, "mid2": 0, "late": 0},
+        }
+        settings = sample_inputs(START).settings
+        inputs = build_inputs_from_db(settings, staff_docs, leave_docs, transfer_docs, history, {})
+        # (10+20)/2=15, (10+0)/2=5, (10+0)/2=5, (10+0)/2=5 - the rounded
+        # average of everyone who already has a history entry, not zero.
+        self.assertEqual(inputs.history["Priya"], {"early": 15, "mid1": 5, "mid2": 5, "late": 5})
+        # Existing staff's own recorded history is untouched.
+        self.assertEqual(inputs.history["Hanny"], history["Hanny"])
+        self.assertEqual(inputs.history["Manuel"], history["Manuel"])
+
     def test_floor_only_transfer_is_not_a_scheduling_override(self):
         staff_docs, leave_docs, transfer_docs = seed_docs()
         transfer_docs.append({"name": "Manuel", "newFloor": "up", "start": "2026-10-05", "end": None})
