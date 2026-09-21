@@ -57,7 +57,10 @@ version trade-off that was made and how to move to a newer BOM if you want to.
   Settings also lets you add, rename and remove floors, each with its own
   minimum opening/closing cover; renaming a floor moves its staff with it,
   removing one moves its staff onto the first remaining floor (at least one
-  floor must always exist).
+  floor must always exist). The Staff screen has a "Select" mode (checkboxes
+  per row, with Select all/Clear all) for bulk actions: set a floor, or set a
+  fixed start time — the latter also switches the selected staff's role to
+  "fixed" — across every checked person at once.
 - **Roster** — builds the roster with the same engine, shows it as a
   horizontally-scrollable coloured grid (one tab per week, matching the old
   paper roster's look: red title, Holiday/Maternity/OFF colouring), and can
