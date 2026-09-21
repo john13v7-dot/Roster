@@ -184,6 +184,14 @@
   .grouptitle:first-child{margin-top:0;}
   .empty{font-size:12px; color:var(--ink-dim); font-style:italic; padding:6px 2px;}
 
+  .logentry{padding:10px 2px; border-bottom:1px solid var(--line);}
+  .logentry:last-child{border-bottom:none;}
+  .logrequest{font-size:12.5px; font-weight:600;}
+  .logwhen{font-size:10.5px; color:var(--ink-dim); margin-top:1px;}
+  .logimpact{font-size:12px; margin-top:5px; padding:7px 9px; border-radius:8px;}
+  .logimpact.none{background:var(--ok-bg); color:var(--ok-ink);}
+  .logimpact.some{background:var(--info-bg); color:var(--info-ink);}
+
   dialog#formDialog, dialog#confirmDialog{
     border:none; border-radius:16px; padding:0; width:min(92vw,420px);
     background:var(--card); color:var(--ink);
@@ -276,6 +284,12 @@
     <div class="rowlist" id="eventList"><div class="empty">Loading…</div></div>
 
     <p class="note">Changes save straight away and — once you allow it on first use — notify Claude in this chat, who reruns the real scheduling engine and updates the Print files. Jason and Shehnaz are never scheduled away at the same time; this is blocked here and flagged on the roster if it ever slips through elsewhere.</p>
+  </div>
+
+  <div class="card panel">
+    <h2>Change log</h2>
+    <p class="note" style="margin-top:0;">Every request, and exactly who else's shift changed because of it — logged automatically each time Claude rebuilds the roster, so it's here without having to ask.</p>
+    <div class="rowlist" id="changeLogList"><div class="empty">Loading…</div></div>
   </div>
 
   <div class="card panel">
@@ -554,6 +568,12 @@
     if(isNaN(d)) return iso;
     return d.toLocaleDateString(undefined, {day:'numeric', month:'short', year:'numeric'});
   }
+  function fmtWhen(iso){
+    if(!iso) return '';
+    var d = new Date(iso);  // a full ISO datetime, unlike fmtDate's date-only input
+    if(isNaN(d)) return iso;
+    return d.toLocaleString(undefined, {day:'numeric', month:'short', hour:'numeric', minute:'2-digit'});
+  }
   function todayISO(){
     var d = new Date();
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
@@ -690,8 +710,35 @@
       transferDocs = snap.docs.map(function(d){ var v = d.data() || {}; v._id = d.id; return v; });
       renderEventList();
     });
+    db.collection('changelog').orderBy('createdAt', 'desc').limit(20).onSnapshot(function(snap){
+      renderChangeLog(snap.docs.map(function(d){ return d.data() || {}; }));
+    }, function(){ $('changeLogList').innerHTML = '<div class="empty">Could not load the change log.</div>'; });
   }
   init();
+
+  function renderChangeLog(entries){
+    var el = $('changeLogList');
+    if(!entries.length){ el.innerHTML = '<div class="empty">No changes logged yet.</div>'; return; }
+    el.innerHTML = '';
+    entries.forEach(function(e){
+      var row = document.createElement('div');
+      row.className = 'logentry';
+      var req = document.createElement('div');
+      req.className = 'logrequest';
+      req.textContent = e.request || '(request)';
+      row.appendChild(req);
+      var when = document.createElement('div');
+      when.className = 'logwhen';
+      when.textContent = fmtWhen(e.createdAt) + (e.breaches ? ' · ' + e.breaches + ' breach' + (e.breaches>1?'es':'') : '');
+      row.appendChild(when);
+      var impact = document.createElement('div');
+      var none = !e.impact || /^no one|^nobody/i.test(e.impact);
+      impact.className = 'logimpact ' + (none ? 'none' : 'some');
+      impact.textContent = e.impact || 'No one else’s shift changed.';
+      row.appendChild(impact);
+      el.appendChild(row);
+    });
+  }
 
   var ROLE_OPTS = [['rotating','Rotating (shares the 4 shifts)'],['fixed','Fixed (always one shift)'],
                     ['static','Static (own set hours)'],['vacant','Vacant post'],['paired','Paired (Jason/Shehnaz only)']];
