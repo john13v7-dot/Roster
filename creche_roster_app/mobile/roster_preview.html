@@ -191,6 +191,11 @@
   .logimpact{font-size:12px; margin-top:5px; padding:7px 9px; border-radius:8px;}
   .logimpact.none{background:var(--ok-bg); color:var(--ok-ink);}
   .logimpact.some{background:var(--info-bg); color:var(--info-ink);}
+  .lognote{font-size:11.5px; color:var(--ink-dim); font-style:italic; margin-top:5px; padding-left:8px; border-left:2px solid var(--line);}
+  .lognotebtn{
+    background:none; border:none; color:var(--accent); font-size:11px; font-weight:700;
+    padding:6px 0 0; cursor:pointer;
+  }
 
   dialog#formDialog, dialog#confirmDialog{
     border:none; border-radius:16px; padding:0; width:min(92vw,420px);
@@ -560,7 +565,8 @@
   var formSave = $('formSave');
 
   var db = null, comments = null, canSend = 'off';
-  var staffDocs = [], leaveDocs = [], transferDocs = [];
+  var staffDocs = [], leaveDocs = [], transferDocs = [], changeLogDocs = [];
+  var logNoteTarget = null;
 
   function fmtDate(iso){
     if(!iso) return '';
@@ -650,10 +656,11 @@
     return new Promise(function(resolve){ confirmResolve = resolve; });
   }
 
-  async function deleteDoc(collection, id, label){
+  async function deleteDoc(collection, id, label, notify){
+    notify = notify !== false;
     if(!db){ return; }
     if(!id){ toast('Could not remove it — no id for this entry. Refresh and try again.'); return; }
-    var ok = await askConfirm('Remove ' + label + '? Claude will rebuild the roster to match.');
+    var ok = await askConfirm('Remove ' + label + (notify ? '? Claude will rebuild the roster to match.' : '?'));
     if(!ok) return;
     var ref = db.collection(collection).doc(id);
     try{
@@ -663,11 +670,15 @@
       // before telling the viewer, or Claude, that it's gone.
       var check = await ref.get();
       if(check.exists){
-        toast('Could not remove it — still there. Try again or tell Claude directly.');
+        toast('Could not remove it — still there. Try again' + (notify ? ' or tell Claude directly.' : '.'));
         return;
       }
-      toast('Removed. Notifying Claude to rebuild…');
-      await notifyClaude('Remove ' + label + '. Please rebuild the roster without it.');
+      if(notify){
+        toast('Removed. Notifying Claude to rebuild…');
+        await notifyClaude('Remove ' + label + '. Please rebuild the roster without it.');
+      } else {
+        toast('Removed.');
+      }
     } catch(e){
       toast('Could not remove it — try again.');
     }
@@ -711,7 +722,8 @@
       renderEventList();
     });
     db.collection('changelog').orderBy('createdAt', 'desc').limit(20).onSnapshot(function(snap){
-      renderChangeLog(snap.docs.map(function(d){ return d.data() || {}; }));
+      changeLogDocs = snap.docs.map(function(d){ var v = d.data() || {}; v._id = d.id; return v; });
+      renderChangeLog(changeLogDocs);
     }, function(){ $('changeLogList').innerHTML = '<div class="empty">Could not load the change log.</div>'; });
   }
   init();
@@ -723,19 +735,45 @@
     entries.forEach(function(e){
       var row = document.createElement('div');
       row.className = 'logentry';
+
+      var head = document.createElement('div');
+      head.style.cssText = 'display:flex; justify-content:space-between; gap:8px; align-items:flex-start;';
       var req = document.createElement('div');
       req.className = 'logrequest';
       req.textContent = e.request || '(request)';
-      row.appendChild(req);
+      head.appendChild(req);
+      var del = document.createElement('button');
+      del.className = 'xbtn';
+      del.textContent = '✕';
+      del.title = 'Remove this log entry';
+      del.onclick = function(){ deleteDoc('changelog', e._id, 'this log entry', false); };
+      head.appendChild(del);
+      row.appendChild(head);
+
       var when = document.createElement('div');
       when.className = 'logwhen';
       when.textContent = fmtWhen(e.createdAt) + (e.breaches ? ' · ' + e.breaches + ' breach' + (e.breaches>1?'es':'') : '');
       row.appendChild(when);
+
       var impact = document.createElement('div');
       var none = !e.impact || /^no one|^nobody/i.test(e.impact);
       impact.className = 'logimpact ' + (none ? 'none' : 'some');
       impact.textContent = e.impact || 'No one else’s shift changed.';
       row.appendChild(impact);
+
+      (e.notes || []).forEach(function(n){
+        var noteEl = document.createElement('div');
+        noteEl.className = 'lognote';
+        noteEl.textContent = (n.text || '') + (n.at ? ' — ' + fmtDate(n.at) : '');
+        row.appendChild(noteEl);
+      });
+
+      var addNote = document.createElement('button');
+      addNote.className = 'lognotebtn';
+      addNote.textContent = '+ Note';
+      addNote.onclick = function(){ logNoteTarget = e._id; openForm('log-note'); };
+      row.appendChild(addNote);
+
       el.appendChild(row);
     });
   }
@@ -781,6 +819,9 @@
         field('Staff', '<select id="f_staff">'+staffOptionsHTML()+'</select>') +
         field('From', '<input id="f_start" type="date" value="'+todayISO()+'">') +
         field('To (leave blank if open-ended)', '<input id="f_end" type="date">');
+    } else if(action === 'log-note'){
+      formTitle.textContent = 'Add a note';
+      formBody.innerHTML = field('Note', '<input id="f_note" type="text" placeholder="e.g. Confirmed with Deoshree">');
     }
     dialog.showModal();
   }
@@ -831,7 +872,7 @@
         var summary2 = 'Transfer: ' + staff + ' to ' + floor2 + ', from ' + start2 + ' onward (past weeks unchanged).';
         await notifyClaude(summary2);
         toast('Transfer recorded for ' + staff + '.');
-      } else {
+      } else if(currentAction === 'add-holiday' || currentAction === 'add-maternity'){
         var kindWord = currentAction === 'add-holiday' ? 'Holiday' : 'Maternity Leave';
         var staff3 = $('f_staff').value, start3 = $('f_start').value, end3 = $('f_end').value || null;
         if(!staff3){ formErr.textContent = 'Pick a staff member.'; formSave.disabled=false; return; }
@@ -847,6 +888,15 @@
         var summary3 = 'Add ' + kindWord + ': ' + staff3 + ', from ' + start3 + (end3 ? (' to ' + end3) : ' (open-ended, until back)') + '.';
         await notifyClaude(summary3);
         toast(kindWord + ' recorded for ' + staff3 + '.');
+      } else if(currentAction === 'log-note'){
+        var noteText = ($('f_note').value || '').trim();
+        if(!noteText){ formErr.textContent = 'Type a note.'; formSave.disabled=false; return; }
+        if(!logNoteTarget){ formErr.textContent = 'Lost track of which entry — reopen it and try again.'; formSave.disabled=false; return; }
+        var entry = changeLogDocs.filter(function(x){ return x._id === logNoteTarget; })[0];
+        var notes = (entry && entry.notes) ? entry.notes.slice() : [];
+        notes.push({text: noteText, at: todayISO()});
+        await db.collection('changelog').doc(logNoteTarget).update({notes: notes});
+        toast('Note added.');
       }
       dialog.close();
     } catch(e){
