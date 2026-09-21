@@ -356,7 +356,7 @@ Auto-assign with fairness: everyone cycles through all duties before repeating, 
 | 10 | David | Rotating | ECEC 2 |
 | 11 | Usha | Rotating | ECEC 2 |
 | 12–13 | spare blank rows | none | none |
-| n/a | Eirini | On maternity leave | room to confirm |
+| n/a | Eirini | On maternity leave | none — stays as her own line, not counted in any room's seats. Return date and room unknown. |
 | 14 | Megan | Static, off payroll | none |
 | 15 | Jason | Paired management | ECEC 2 (1st floor) |
 | 16 | Shehnaz | Paired management | none (floater) |
@@ -426,7 +426,7 @@ Auto-assign with fairness: everyone cycles through all duties before repeating, 
 ## 18. Open items to confirm
 
 1. **Floor balance rule** (R4): is "at least 1 per floor at opening and closing, and within 1 person across floors in each shift" what you want?
-2. **Eirini's room:** needed for seat counts.
+2. ~~**Eirini's room:**~~ Confirmed — she has no room while on leave (stays on her own line on the sheet, not counted against any room's seats). Return date and room are both unknown for now.
 3. **Jason and Shehnaz in payroll:** assumed yes.
 4. **Leavers:** the Remove Staff behaviour above is an assumption.
 5. **Fixed starts:** confirm no rotating staff member has a fixed start time. Only Sue, Laura, Megan and Priscilla are fixed.

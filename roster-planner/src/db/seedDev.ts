@@ -23,8 +23,8 @@ const seedStaff: SeedStaff[] = [
   { id: 'arantza', name: 'Arantza', type: 'rotating', roomId: 'ecec1', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 3030, numbered: true },
   { id: 'david', name: 'David', type: 'rotating', roomId: 'ecec2', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 4010, numbered: true },
   { id: 'usha', name: 'Usha', type: 'rotating', roomId: 'ecec2', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 4020, numbered: true },
-  // Long-term leave row: no room assigned (SPEC.md §18 item 2 is still open;
-  // flagged to confirm which room she should return to).
+  // Long-term leave row: no room while on leave (SPEC.md §18 item 2,
+  // confirmed) — her return date and room are both unknown for now.
   { id: 'eirini', name: 'Eirini', type: 'rotating', roomId: null, payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 6010, numbered: false },
   { id: 'megan', name: 'Megan', type: 'static', roomId: null, payrollIncluded: false, activeFrom: null, activeTo: null, sortOrder: 7010, numbered: true },
   // roomId set for floor-cover attribution only (SPEC.md §5) — not a counted seat.
