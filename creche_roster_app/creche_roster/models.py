@@ -63,6 +63,8 @@ class Staff:
     fixed_slot: Optional[str] = None  # resolved from note for role "fixed"
     hours: List[str] = field(default_factory=lambda: [""] * NDAYS)  # own hours Mon..Fri (static/vacant)
     number: str = ""  # printed row number: empty = automatic, "-" = none, "12" = set it
+    start_date: Optional[date] = None  # joiner: not scheduled before this date
+    end_date: Optional[date] = None  # leaver: not scheduled after this date
 
 
 @dataclass

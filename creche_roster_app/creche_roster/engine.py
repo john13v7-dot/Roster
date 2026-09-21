@@ -109,6 +109,8 @@ def validate(inputs: Inputs) -> List[str]:
             paired.append(st.name)
         if st.role == "fixed" and st.fixed_slot not in SLOTS:
             p.append(f"Staff: '{st.name}' is fixed but has no valid slot (use early, mid1, mid2, late or a start time).")
+        if st.start_date and st.end_date and st.end_date < st.start_date:
+            p.append(f"Staff: '{st.name}' has an End date before their Start date.")
     if len(paired) not in (0, 2):
         p.append(f"Staff: exactly two people must have role 'paired' (or none). Found {len(paired)}.")
 
@@ -270,6 +272,12 @@ def build_roster(inputs: Inputs) -> Roster:
     weeks: List[WeekRoster] = []
 
     def leave_kind(name: str, d: date) -> Optional[str]:
+        st = by_name.get(name)
+        if st is not None:
+            if st.start_date and d < st.start_date:
+                return "Not yet started"
+            if st.end_date and d > st.end_date:
+                return "Left"
         for lv in inputs.leave:
             if lv.name == name and lv.covers(d):
                 return lv.kind

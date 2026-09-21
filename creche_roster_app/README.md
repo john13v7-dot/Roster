@@ -34,7 +34,7 @@ One portrait A4 page per week, in Excel and in the PDF.
 
 | Tab | Columns |
 |---|---|
-| Staff | Name, Floor, Role, Fixed slot / hours, Mon..Fri (own hours), Print no. |
+| Staff | Name, Floor, Role, Fixed slot / hours, Mon..Fri (own hours), Print no., Start date, End date |
 | Leave | Name, From, To (empty = until back), Type (shown as typed: Holiday, Maternity Leave, OFF ...) |
 | Overrides | Name, From, To (empty = until back), Start time (static staff: their hours, or OFF) |
 | Settings | title, first Monday, weeks, break text, day headers yes/no, floors, the four start/end times, minimum cover |
@@ -54,6 +54,16 @@ that person's presence counts toward closing cover automatically — no cell cha
 it's just no longer flagged as short by one. A day where their own hours are shorter
 (e.g. a half day) doesn't count, and the normal repair (moving a rotating person)
 still runs if it's still short. Leave the setting blank for no fallback.
+
+## Joiners and leavers
+
+Start date / End date on the Staff tab are both optional. Leave them blank for
+someone already employed with no planned end. Before their Start date, or after
+their End date, a person shows "Not yet started" / "Left" instead of a shift or
+their own hours — same colouring as any other leave, and never counted toward
+opening/closing cover. Everything else about them (fairness history, floor,
+role) stays as configured, so their row is ready the moment their Start date
+arrives. Rows with an End date before their Start date are rejected.
 
 ## The Shehnaz / Jason rule
 

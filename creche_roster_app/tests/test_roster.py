@@ -257,6 +257,53 @@ class StaticVacantAndLeave(unittest.TestCase):
         self.assertEqual(r.weeks[0].cells[(vacant[1], START)].text, "")
 
 
+class JoinersAndLeavers(unittest.TestCase):
+    def _set_dates(self, inp, name, start=None, end=None):
+        for st in inp.staff:
+            if st.name == name:
+                st.start_date, st.end_date = start, end
+                return st
+        raise AssertionError(f"{name} not in staff")
+
+    def test_joiner_not_scheduled_before_start_date(self):
+        inp = inputs(weeks=1)
+        self._set_dates(inp, "Manuel", start=START + timedelta(days=2))  # joins Wed
+        r = build_roster(inp)
+        self.assertEqual(kinds(r, 0, "Manuel")[:2], ["leave", "leave"])
+        self.assertEqual(texts(r, 0, "Manuel")[:2], ["Not yet started", "Not yet started"])
+        self.assertEqual(kinds(r, 0, "Manuel")[2:], ["shift", "shift", "shift"])
+        self.assertEqual(r.breaches, [])
+
+    def test_leaver_not_scheduled_after_end_date(self):
+        inp = inputs(weeks=1)
+        self._set_dates(inp, "Manuel", end=START + timedelta(days=1))  # leaves after Tue
+        r = build_roster(inp)
+        self.assertEqual(kinds(r, 0, "Manuel")[:2], ["shift", "shift"])
+        self.assertEqual(texts(r, 0, "Manuel")[2:], ["Left"] * 3)
+        self.assertEqual(r.breaches, [])
+
+    def test_joiner_mid_roster_across_weeks(self):
+        inp = inputs(weeks=2)
+        self._set_dates(inp, "Manuel", start=START + timedelta(weeks=1))  # starts week 2
+        r = build_roster(inp)
+        self.assertEqual(set(texts(r, 0, "Manuel")), {"Not yet started"})
+        self.assertTrue(all(k == "shift" for k in kinds(r, 1, "Manuel")))
+        self.assertEqual(r.breaches, [])
+
+    def test_static_leaver_shows_left_not_their_hours(self):
+        inp = inputs(weeks=1)
+        self._set_dates(inp, "Sue", end=START)  # only works the Monday
+        r = build_roster(inp)
+        self.assertEqual(texts(r, 0, "Sue")[0], "8:30 – 1:30")
+        self.assertEqual(texts(r, 0, "Sue")[1:], ["Left"] * 4)
+
+    def test_end_before_start_is_a_validation_error(self):
+        inp = inputs(weeks=1)
+        self._set_dates(inp, "Manuel", start=START + timedelta(days=3), end=START)
+        with self.assertRaises(InputError):
+            build_roster(inp)
+
+
 class HardRules(unittest.TestCase):
     def test_ratios_met_for_twelve_weeks(self):
         self.assertEqual(build_roster(inputs(weeks=12)).breaches, [])

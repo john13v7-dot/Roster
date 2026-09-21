@@ -147,9 +147,11 @@ def read_inputs(path) -> Inputs:
     canon: Dict[str, str] = {}
     floor_lookup = {f.lower(): f for f in floors}
     for r, row in _data_rows(sheets["staff"]):
-        name, floor, role, note = (row + (None,) * 10)[:4]
-        day_vals = (row + (None,) * 10)[4:4 + NDAYS]
-        number = _norm((row + (None,) * 10)[9])
+        padded = row + (None,) * 12
+        name, floor, role, note = padded[:4]
+        day_vals = padded[4:4 + NDAYS]
+        number = _norm(padded[9])
+        start_raw, end_raw = padded[10], padded[11]
         name, role = _norm(name), _norm(role).lower()
         floor_in = _norm(floor)
         if role not in ROLES:
@@ -175,7 +177,20 @@ def read_inputs(path) -> Inputs:
         if number and number != "-" and not number.isdigit():
             problems.append(f"Staff row {r}: 'Print no.' must be a number, or - for none.")
             number = ""
-        staff.append(Staff(name, floor_ok, role, note_text, fixed_slot, hours, number))
+        start_date = end_date = None
+        if not is_blank(start_raw):
+            try:
+                start_date = parse_date(start_raw)
+            except ValueError as e:
+                problems.append(f"Staff row {r} ({name}): Start date - {e}")
+        if not is_blank(end_raw):
+            try:
+                end_date = parse_date(end_raw)
+            except ValueError as e:
+                problems.append(f"Staff row {r} ({name}): End date - {e}")
+        if start_date and end_date and end_date < start_date:
+            problems.append(f"Staff row {r} ({name}): End date is before Start date.")
+        staff.append(Staff(name, floor_ok, role, note_text, fixed_slot, hours, number, start_date, end_date))
         if role not in ("vacant", "blank") and name:
             canon[name.lower()] = name
 
@@ -481,15 +496,19 @@ def make_template(path, start: Optional[date] = None) -> Path:
     ws = wb.create_sheet("Staff")
     _style_input_sheet(
         ws,
-        ["Name", "Floor", "Role", "Fixed slot / hours", "Mon", "Tue", "Wed", "Thu", "Fri", "Print no."],
-        [20, 12, 12, 22, 14, 14, 14, 14, 14, 10],
+        ["Name", "Floor", "Role", "Fixed slot / hours", "Mon", "Tue", "Wed", "Thu", "Fri", "Print no.", "Start date", "End date"],
+        [20, 12, 12, 22, 14, 14, 14, 14, 14, 10, 14, 14],
     )
     for r, st in enumerate(inp.staff, start=2):
         vals = [st.name or None, None if (st.role in ("static", "vacant", "blank")) else st.floor, st.role, st.note or None]
         vals += [h or None for h in st.hours]
         vals.append(st.number or None)
+        vals += [st.start_date, st.end_date]
         for c, v in enumerate(vals, start=1):
-            _input_font(ws.cell(r, c, v))
+            cell = ws.cell(r, c, v)
+            _input_font(cell)
+            if c in (11, 12):
+                cell.number_format = "DD/MM/YYYY"
     dv_floor = DataValidation(type="list", formula1='"' + ",".join(s.floors) + '"', allow_blank=True)
     dv_role = DataValidation(type="list", formula1='"' + ",".join(ROLES) + '"', allow_blank=True)
     ws.add_data_validation(dv_floor)
