@@ -632,10 +632,20 @@
 
   async function deleteDoc(collection, id, label){
     if(!db){ return; }
+    if(!id){ toast('Could not remove it — no id for this entry. Refresh and try again.'); return; }
     var ok = await askConfirm('Remove ' + label + '? Claude will rebuild the roster to match.');
     if(!ok) return;
+    var ref = db.collection(collection).doc(id);
     try{
-      await db.collection(collection).doc(id).delete();
+      await ref.delete();
+      // delete() resolving isn't proof it actually removed the document (it's
+      // idempotent, so a stale/wrong id "succeeds" silently too) - read it back
+      // before telling the viewer, or Claude, that it's gone.
+      var check = await ref.get();
+      if(check.exists){
+        toast('Could not remove it — still there. Try again or tell Claude directly.');
+        return;
+      }
       toast('Removed. Notifying Claude to rebuild…');
       await notifyClaude('Remove ' + label + '. Please rebuild the roster without it.');
     } catch(e){
