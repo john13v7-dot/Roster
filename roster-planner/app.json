@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Creche Roster Planner",
+    "slug": "creche-roster-planner",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "owner": "davidjuste",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.davidjuste.rosterplanner",
+      "adaptiveIcon": {
+        "backgroundColor": "#1F4E79",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-sqlite"
+    ]
+  }
+}
