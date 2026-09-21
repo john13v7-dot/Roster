@@ -201,13 +201,34 @@ class FallbackCloser(unittest.TestCase):
         r = build_roster(inputs(leave=leave, weeks=1, settings={"fallback_closer": None}))
         self.assertFalse(any(c.rule == "Closing fallback" for c in r.checks))
 
+    def test_closing_headcount_is_exactly_three_not_four(self):
+        # Priscilla covering closing must take one of the 3 close spots, not
+        # sit on top of a full 3-person rotating close - the actual bug
+        # reported: "why do I see more than 3 staff closing every time".
+        leave = [Leave("Shehnaz", START, START + timedelta(days=4), "Holiday")]
+        over = [Override("Jason", START, START + timedelta(days=4), "early")]
+        r = build_roster(inputs(leave=leave, overrides=over, weeks=1))
+        self.assertEqual(r.breaches, [])
+        week = r.weeks[0]
+        for d in week.days:
+            late_rotating = sum(
+                1 for name in ROTATING
+                if week.cells[(name, d)].kind == "shift" and week.cells[(name, d)].slot == "late"
+            )
+            priscilla_closing = week.cells[("Priscilla", d)].text == "10:00 – 6:00"
+            total = late_rotating + (1 if priscilla_closing else 0)
+            self.assertEqual(total, 3, f"{d}: {late_rotating} rotating + Priscilla={priscilla_closing}")
+
 
 class Overrides(unittest.TestCase):
     def test_solver_plans_around_overrides_without_repairs(self):
         leave = [Leave("Shehnaz", START, START + timedelta(days=13), "Holiday")]
         over = [Override("Jason", START, START + timedelta(days=13), "early")]
         r = build_roster(inputs(leave=leave, overrides=over))
-        self.assertFalse([c for c in r.checks if c.rule == "Cover adjusted"])
+        # No shortfall-driven repairs (the override is planned around cleanly).
+        # A "closing stays at" cap move is a different, intentional
+        # correction - see FallbackCloser - and is fine here.
+        self.assertFalse([c for c in r.checks if c.rule == "Cover adjusted" and "to keep" in c.message])
         self.assertEqual(r.breaches, [])
 
     def test_override_on_a_rotating_person(self):

@@ -348,9 +348,24 @@ def build_roster(inputs: Inputs) -> Roster:
                 for st in floor_people
                 if st.role == "rotating" and present[st.name] and st.name not in manual
             ]
+            # If the pair isn't covering closing this week (both away, or the
+            # one present is pinned elsewhere) and a fallback closer is set for
+            # this floor, plan the base around them taking the pair's spot -
+            # not stacking a full rotating close count on top of them. Any day
+            # the fallback doesn't actually apply (e.g. a shorter day) is still
+            # caught and topped back up by the daily repair pass.
+            min_close = s.min_close[floor]
+            if (
+                s.fallback_closer
+                and pair
+                and by_name.get(s.fallback_closer)
+                and by_name[s.fallback_closer].floor == floor
+                and not any(base.get(p) == "late" for p in pair if by_name.get(p) and by_name[p].floor == floor)
+            ):
+                min_close = max(0, min_close - 1)
             if members:
                 base.update(
-                    _solve_floor(members, pre, s.min_open[floor], s.min_close[floor], cost_fn)
+                    _solve_floor(members, pre, s.min_open[floor], min_close, cost_fn)
                 )
 
         # ---- daily pass --------------------------------------------------
@@ -398,6 +413,7 @@ def build_roster(inputs: Inputs) -> Roster:
 
             for floor in s.floors:
                 need = _needs(floor, s)
+                fallback_covering = False
                 if fb_available and pair and by_name[fb].floor == floor and need.get("late", 0) > 0:
                     covered = any(
                         slot_of.get(p) == "late" for p in pair if by_name.get(p) and by_name[p].floor == floor
@@ -405,6 +421,7 @@ def build_roster(inputs: Inputs) -> Roster:
                     if not covered:
                         need = dict(need)
                         need["late"] = max(0, need["late"] - 1)
+                        fallback_covering = True
                         checks.append(
                             Check(
                                 "INFO",
@@ -415,6 +432,8 @@ def build_roster(inputs: Inputs) -> Roster:
                             )
                         )
                 _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=need)
+                if fallback_covering:
+                    _cap_late_for_fallback(d, floor, slot_of, overridden, by_name, s, need, cost_fn, checks, wi, fb)
                 _check_floor(d, floor, slot_of, by_name, s, checks, wi, need=need)
 
             for name, slot in slot_of.items():
@@ -494,6 +513,40 @@ def _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi
                     wi,
                 )
             )
+
+
+def _cap_late_for_fallback(d, floor, slot_of, overridden, by_name, s, need, cost_fn, checks, wi, fb) -> None:
+    """When the fallback closer is covering (need['late'] was already reduced
+    by one for them), keep the actual late headcount at that reduced number
+    instead of leaving extra rotating staff on it anyway - otherwise the
+    roster shows more people at closing than the rule calls for."""
+    target = need.get("late")
+    if target is None:
+        return
+    floor_names = [n for n in slot_of if by_name[n].floor == floor]
+    other_slots = [sl for sl in SLOTS if sl != "late"]
+    while Counter(slot_of[n] for n in floor_names)["late"] > target:
+        candidates = [
+            n for n in floor_names
+            if slot_of[n] == "late" and by_name[n].role == "rotating" and n not in overridden
+        ]
+        if not candidates:
+            break
+        slot_counts = Counter(slot_of[n] for n in floor_names)
+        move_to = min(other_slots, key=lambda sl: slot_counts.get(sl, 0))
+        n = min(candidates, key=lambda n: cost_fn(n, move_to))
+        old = slot_of[n]
+        slot_of[n] = move_to
+        checks.append(
+            Check(
+                "INFO",
+                "Cover adjusted",
+                f"{n} moved from {t12(s.shifts[old].start)} to {t12(s.shifts[move_to].start)} "
+                f"on {fmt_day(d)} so closing stays at {target + 1} with {fb} covering, not more.",
+                d,
+                wi,
+            )
+        )
 
 
 def _check_floor(d, floor, slot_of, by_name, s, checks, wi, need=None) -> None:
