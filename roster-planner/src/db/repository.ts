@@ -1,7 +1,15 @@
 // © 2026 David Juste. All rights reserved. Proprietary and confidential.
 
 import type { SQLiteDatabase } from 'expo-sqlite';
-import type { LeaveEntry, LeaveType, RosterEntry, RosterEntryType, RosterWeekStatus, Staff, VacantSeat } from '../domain/types';
+import type {
+  LeaveEntry,
+  LeaveType,
+  RoomHistoryEntry,
+  RosterEntry,
+  RosterEntryType,
+  RosterWeekStatus,
+  Staff,
+} from '../domain/types';
 import type { ShiftPatternCode } from '../config/creche.config';
 import { mergeLeaveIntoEntries } from '../domain/leave';
 
@@ -9,7 +17,6 @@ interface StaffRow {
   id: string;
   name: string;
   type: Staff['type'];
-  room_id: string | null;
   payroll_included: number;
   active_from: string | null;
   active_to: string | null;
@@ -22,7 +29,6 @@ function toStaff(row: StaffRow): Staff {
     id: row.id,
     name: row.name,
     type: row.type,
-    roomId: row.room_id,
     payrollIncluded: row.payroll_included === 1,
     activeFrom: row.active_from,
     activeTo: row.active_to,
@@ -36,15 +42,79 @@ export async function getAllStaff(db: SQLiteDatabase): Promise<Staff[]> {
   return rows.map(toStaff);
 }
 
-interface VacantSeatRow {
-  id: string;
-  room_id: string;
-  sort_order: number;
+export async function insertStaff(db: SQLiteDatabase, staff: Staff): Promise<void> {
+  await db.runAsync(
+    `INSERT INTO staff (id, name, type, payroll_included, active_from, active_to, sort_order, numbered)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+    [
+      staff.id,
+      staff.name,
+      staff.type,
+      staff.payrollIncluded ? 1 : 0,
+      staff.activeFrom,
+      staff.activeTo,
+      staff.sortOrder,
+      staff.numbered ? 1 : 0,
+    ],
+  );
 }
 
-export async function getVacantSeats(db: SQLiteDatabase): Promise<VacantSeat[]> {
-  const rows = await db.getAllAsync<VacantSeatRow>('SELECT * FROM vacant_seats ORDER BY sort_order ASC;');
-  return rows.map((r) => ({ id: r.id, roomId: r.room_id, sortOrder: r.sort_order }));
+export async function setStaffActiveTo(db: SQLiteDatabase, staffId: string, activeTo: string): Promise<void> {
+  await db.runAsync('UPDATE staff SET active_to = ? WHERE id = ?;', [activeTo, staffId]);
+}
+
+interface RoomHistoryRow {
+  staff_id: string;
+  room_id: string;
+  from_week: string;
+  to_week: string | null;
+}
+
+function toRoomHistoryEntry(row: RoomHistoryRow): RoomHistoryEntry {
+  return { staffId: row.staff_id, roomId: row.room_id, fromWeek: row.from_week, toWeek: row.to_week };
+}
+
+/** The full room history for every person — a small table; simplest read as one list. */
+export async function getRoomHistory(db: SQLiteDatabase): Promise<RoomHistoryEntry[]> {
+  const rows = await db.getAllAsync<RoomHistoryRow>('SELECT * FROM room_history ORDER BY from_week ASC;');
+  return rows.map(toRoomHistoryEntry);
+}
+
+export async function addRoomHistoryEntry(db: SQLiteDatabase, entry: RoomHistoryEntry): Promise<void> {
+  await db.runAsync('INSERT INTO room_history (staff_id, room_id, from_week, to_week) VALUES (?, ?, ?, ?);', [
+    entry.staffId,
+    entry.roomId,
+    entry.fromWeek,
+    entry.toWeek,
+  ]);
+}
+
+/** Closes a person's current (open-ended) room_history row as of `toWeek`. */
+export async function closeCurrentRoomHistoryEntry(
+  db: SQLiteDatabase,
+  staffId: string,
+  toWeek: string,
+): Promise<void> {
+  await db.runAsync(
+    'UPDATE room_history SET to_week = ? WHERE staff_id = ? AND to_week IS NULL;',
+    [toWeek, staffId],
+  );
+}
+
+/**
+ * Transfer (SPEC.md §7): closes the person's current room assignment as
+ * of `effectiveWeek` and opens a new one in `newRoomId` from that same
+ * week, so earlier weeks keep showing the old room and later weeks show
+ * the new one.
+ */
+export async function transferStaffToRoom(
+  db: SQLiteDatabase,
+  staffId: string,
+  newRoomId: string,
+  effectiveWeek: string,
+): Promise<void> {
+  await closeCurrentRoomHistoryEntry(db, staffId, effectiveWeek);
+  await addRoomHistoryEntry(db, { staffId, roomId: newRoomId, fromWeek: effectiveWeek, toWeek: null });
 }
 
 interface RoomRow {
@@ -69,6 +139,11 @@ export async function getRoomsById(db: SQLiteDatabase): Promise<Record<string, R
     byId[r.id] = { id: r.id, name: r.name, floor: r.floor, seats: r.seats };
   }
   return byId;
+}
+
+export async function getAllRooms(db: SQLiteDatabase): Promise<RoomLookup[]> {
+  const rows = await db.getAllAsync<RoomRow>('SELECT * FROM rooms ORDER BY sort_order ASC;');
+  return rows.map((r) => ({ id: r.id, name: r.name, floor: r.floor, seats: r.seats }));
 }
 
 interface RosterEntryRow {

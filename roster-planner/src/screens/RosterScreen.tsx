@@ -5,10 +5,10 @@ import { ActivityIndicator, Alert, Pressable, SafeAreaView, StyleSheet, Text, Vi
 import { addDays } from 'date-fns';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSQLiteContext } from 'expo-sqlite';
-import { getAllStaff, getVacantSeats, getWeekRosterView } from '../db/repository';
+import { getAllStaff, getRoomHistory, getWeekRosterView } from '../db/repository';
 import { buildRosterRows, type RosterRow } from '../domain/rosterLayout';
 import { formatWeekRange, weekDates, weekStartOf } from '../domain/week';
-import type { RosterEntry, Staff, VacantSeat } from '../domain/types';
+import type { RoomHistoryEntry, RosterEntry, Staff } from '../domain/types';
 import { exportRosterToExcel, exportRosterToPdf } from '../export/exportRoster';
 import { RosterTable } from '../ui/RosterTable';
 
@@ -18,7 +18,7 @@ export function RosterScreen() {
   const db = useSQLiteContext();
   const [weekStart, setWeekStart] = useState(SEED_WEEK_START);
   const [staff, setStaff] = useState<Staff[]>([]);
-  const [vacantSeats, setVacantSeats] = useState<VacantSeat[]>([]);
+  const [roomHistory, setRoomHistory] = useState<RoomHistoryEntry[]>([]);
   const [entriesByKey, setEntriesByKey] = useState<Record<string, RosterEntry>>({});
   const [loading, setLoading] = useState(true);
 
@@ -26,7 +26,7 @@ export function RosterScreen() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [staffRows, vacantRows] = await Promise.all([getAllStaff(db), getVacantSeats(db)]);
+    const [staffRows, roomHistoryRows] = await Promise.all([getAllStaff(db), getRoomHistory(db)]);
     const entries = await getWeekRosterView(
       db,
       weekStart,
@@ -34,7 +34,7 @@ export function RosterScreen() {
       staffRows.map((s) => s.id),
     );
     setStaff(staffRows);
-    setVacantSeats(vacantRows);
+    setRoomHistory(roomHistoryRows);
     setEntriesByKey(entries);
     setLoading(false);
   }, [db, weekStart, dates]);
@@ -47,7 +47,10 @@ export function RosterScreen() {
     }, [load]),
   );
 
-  const rows: RosterRow[] = useMemo(() => buildRosterRows(staff, vacantSeats), [staff, vacantSeats]);
+  const rows: RosterRow[] = useMemo(
+    () => buildRosterRows(staff, roomHistory, weekStart),
+    [staff, roomHistory, weekStart],
+  );
 
   const goToWeek = (deltaWeeks: number) => {
     const current = new Date(`${weekStart}T00:00:00`);

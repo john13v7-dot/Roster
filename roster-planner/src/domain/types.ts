@@ -8,26 +8,32 @@ export interface Staff {
   id: string;
   name: string;
   type: StaffType;
-  /** Current room; null for a floater/manager/static person with no room. */
-  roomId: string | null;
   payrollIncluded: boolean;
   /** ISO Monday date this person's first roster week is/was. Null = always employed. */
   activeFrom: string | null;
-  /** ISO Monday date of this person's last roster week. Null = still employed. */
+  /**
+   * ISO Monday date of this person's LAST roster week (they still appear
+   * that week) — the week after is when their seat shows vacant
+   * (SPEC.md §7 "Remove Staff"). Null = still employed.
+   */
   activeTo: string | null;
-  /** Position within their block, used for row numbering (SPEC.md §7 "Row numbering"). */
+  /**
+   * Tiebreak/ordering key. For a person with no current room (Sue, or the
+   * trailing management group) it also decides lead-vs-trailing position
+   * (SPEC.md §7 "Row numbering"); for a person in a room it only
+   * tiebreaks same-week room_history entries.
+   */
   sortOrder: number;
   /** False for a long-term-leave row that prints without a row number (e.g. maternity, SPEC.md §16). */
   numbered: boolean;
 }
 
-/** A vacant seat: same block position as a Staff row, but no person. */
-export interface VacantSeat {
-  id: string;
-  roomId: string;
-  sortOrder: number;
-}
-
+/**
+ * A person's room over time (SPEC.md §7 "Transfer": "store room history
+ * per person, not just a current room"). Current room = the row with
+ * toWeek null. No row at all = a roomless person (Sue, trailing
+ * management group, or someone like Eirini with nowhere to return to).
+ */
 export interface RoomHistoryEntry {
   staffId: string;
   roomId: string;

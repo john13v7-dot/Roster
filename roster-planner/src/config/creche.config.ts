@@ -112,11 +112,11 @@ export const timezone = 'Europe/Dublin';
 export const spareRowCount = 2;
 
 /**
- * Staff/vacant-seat rows with sortOrder below this print in the room
- * blocks (Toddlers..ECEC2); the spare rows are inserted right after the
- * last of them. Rows at or above it (long-term leave, Megan, Jason,
- * Shehnaz, Priscilla, Laura) print after the spare rows, in their own
- * sortOrder — even when, like Jason, they also carry a roomId for
- * floor-cover purposes (SPEC.md §5, §7).
+ * Splits the roomless staff (nobody currently in room_history) into a
+ * "lead" group that prints before the room blocks (sortOrder below this)
+ * and a "trailing" group that prints after the spare rows (sortOrder at
+ * or above it) — e.g. Sue vs. Megan/Jason/Shehnaz/Priscilla/Laura
+ * (SPEC.md §7). A person's own room block position, when they have one,
+ * comes from room_history instead and ignores this value.
  */
 export const roomBlockSortOrderCeiling = 5000;

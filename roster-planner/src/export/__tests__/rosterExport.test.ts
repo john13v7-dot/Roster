@@ -9,7 +9,6 @@ const hanny: Staff = {
   id: 'hanny',
   name: 'Hanny',
   type: 'rotating',
-  roomId: 'toddlers',
   payrollIncluded: true,
   activeFrom: null,
   activeTo: null,
@@ -19,7 +18,7 @@ const hanny: Staff = {
 
 const rows: RosterRow[] = [
   { kind: 'staff', key: 'staff:hanny', rowNumber: 1, staff: hanny },
-  { kind: 'vacant', key: 'vacant:v1', rowNumber: 2, seat: { id: 'v1', roomId: 'toddlers', sortOrder: 1020 } },
+  { kind: 'vacant', key: 'vacant:v1', rowNumber: 2, roomId: 'toddlers' },
 ];
 
 const dates = ['2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24', '2026-09-25'];

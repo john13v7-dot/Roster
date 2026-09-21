@@ -10,18 +10,11 @@ CREATE TABLE IF NOT EXISTS staff (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('rotating','paired_management','manager','static')),
-  room_id TEXT REFERENCES rooms(id),
   payroll_included INTEGER NOT NULL DEFAULT 1,
   active_from TEXT,
   active_to TEXT,
   sort_order INTEGER NOT NULL,
   numbered INTEGER NOT NULL DEFAULT 1
-);
-
-CREATE TABLE IF NOT EXISTS vacant_seats (
-  id TEXT PRIMARY KEY,
-  room_id TEXT NOT NULL REFERENCES rooms(id),
-  sort_order INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS rooms (

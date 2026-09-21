@@ -6,35 +6,53 @@
 
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { weekDates } from '../domain/week';
-import type { LeaveEntry, RosterEntry, Staff } from '../domain/types';
+import type { LeaveEntry, RoomHistoryEntry, RosterEntry, Staff } from '../domain/types';
 
 const SEED_WEEK_START = '2026-09-21'; // Mon 21 Sep 2026
+
+// "Has always been in this room" as far as the app's data goes — the
+// earliest from_week for every seed room assignment.
+const EPOCH_WEEK = '2000-01-03';
 
 interface SeedStaff extends Staff {}
 
 const seedStaff: SeedStaff[] = [
-  { id: 'sue', name: 'Sue', type: 'static', roomId: null, payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 100, numbered: true },
-  { id: 'hanny', name: 'Hanny', type: 'rotating', roomId: 'toddlers', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 1010, numbered: true },
-  { id: 'manuel', name: 'Manuel', type: 'rotating', roomId: 'preschoolers', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 2010, numbered: true },
-  { id: 'irene', name: 'Irene', type: 'rotating', roomId: 'preschoolers', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 2020, numbered: true },
-  { id: 'deoshree', name: 'Deoshree', type: 'rotating', roomId: 'preschoolers', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 2030, numbered: true },
-  { id: 'sandrine', name: 'Sandrine', type: 'rotating', roomId: 'ecec1', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 3010, numbered: true },
-  { id: 'daniel', name: 'Daniel', type: 'rotating', roomId: 'ecec1', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 3020, numbered: true },
-  { id: 'arantza', name: 'Arantza', type: 'rotating', roomId: 'ecec1', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 3030, numbered: true },
-  { id: 'david', name: 'David', type: 'rotating', roomId: 'ecec2', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 4010, numbered: true },
-  { id: 'usha', name: 'Usha', type: 'rotating', roomId: 'ecec2', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 4020, numbered: true },
+  { id: 'sue', name: 'Sue', type: 'static', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 100, numbered: true },
+  { id: 'hanny', name: 'Hanny', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 1010, numbered: true },
+  { id: 'manuel', name: 'Manuel', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 2010, numbered: true },
+  { id: 'irene', name: 'Irene', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 2020, numbered: true },
+  { id: 'deoshree', name: 'Deoshree', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 2030, numbered: true },
+  { id: 'sandrine', name: 'Sandrine', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 3010, numbered: true },
+  { id: 'daniel', name: 'Daniel', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 3020, numbered: true },
+  { id: 'arantza', name: 'Arantza', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 3030, numbered: true },
+  { id: 'david', name: 'David', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 4010, numbered: true },
+  { id: 'usha', name: 'Usha', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 4020, numbered: true },
   // Long-term leave row: no room while on leave (SPEC.md §18 item 2,
   // confirmed) — her return date and room are both unknown for now.
-  { id: 'eirini', name: 'Eirini', type: 'rotating', roomId: null, payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 6010, numbered: false },
-  { id: 'megan', name: 'Megan', type: 'static', roomId: null, payrollIncluded: false, activeFrom: null, activeTo: null, sortOrder: 7010, numbered: true },
-  // roomId set for floor-cover attribution only (SPEC.md §5) — not a counted seat.
-  { id: 'jason', name: 'Jason', type: 'paired_management', roomId: 'ecec2', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 7020, numbered: true },
-  { id: 'shehnaz', name: 'Shehnaz', type: 'paired_management', roomId: null, payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 7030, numbered: true },
-  { id: 'priscilla', name: 'Priscilla', type: 'manager', roomId: null, payrollIncluded: false, activeFrom: null, activeTo: null, sortOrder: 7040, numbered: true },
-  { id: 'laura', name: 'Laura', type: 'static', roomId: null, payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 7050, numbered: true },
+  { id: 'eirini', name: 'Eirini', type: 'rotating', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 6010, numbered: false },
+  { id: 'megan', name: 'Megan', type: 'static', payrollIncluded: false, activeFrom: null, activeTo: null, sortOrder: 7010, numbered: true },
+  // No room_history row for Jason: he's a fixed extra on ECEC2/1st floor
+  // for cover purposes (SPEC.md §5) but not one of its 2 counted seats —
+  // his floor attachment for the rules engine is Phase 5 work.
+  { id: 'jason', name: 'Jason', type: 'paired_management', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 7020, numbered: true },
+  { id: 'shehnaz', name: 'Shehnaz', type: 'paired_management', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 7030, numbered: true },
+  { id: 'priscilla', name: 'Priscilla', type: 'manager', payrollIncluded: false, activeFrom: null, activeTo: null, sortOrder: 7040, numbered: true },
+  { id: 'laura', name: 'Laura', type: 'static', payrollIncluded: true, activeFrom: null, activeTo: null, sortOrder: 7050, numbered: true },
 ];
 
-const seedVacantSeats = [{ id: 'vacant-toddlers-3', roomId: 'toddlers', sortOrder: 1020 }];
+const seedRoomHistory: RoomHistoryEntry[] = [
+  { staffId: 'hanny', roomId: 'toddlers', fromWeek: EPOCH_WEEK, toWeek: null },
+  { staffId: 'manuel', roomId: 'preschoolers', fromWeek: EPOCH_WEEK, toWeek: null },
+  { staffId: 'irene', roomId: 'preschoolers', fromWeek: EPOCH_WEEK, toWeek: null },
+  { staffId: 'deoshree', roomId: 'preschoolers', fromWeek: EPOCH_WEEK, toWeek: null },
+  { staffId: 'sandrine', roomId: 'ecec1', fromWeek: EPOCH_WEEK, toWeek: null },
+  { staffId: 'daniel', roomId: 'ecec1', fromWeek: EPOCH_WEEK, toWeek: null },
+  { staffId: 'arantza', roomId: 'ecec1', fromWeek: EPOCH_WEEK, toWeek: null },
+  { staffId: 'david', roomId: 'ecec2', fromWeek: EPOCH_WEEK, toWeek: null },
+  { staffId: 'usha', roomId: 'ecec2', fromWeek: EPOCH_WEEK, toWeek: null },
+  // Toddlers' 2nd seat is left with no room_history row at all, which is
+  // exactly what makes it print as a vacant row (SPEC.md §16, §7).
+];
 
 const seedStaticHours: { staffId: string; weekday: 1 | 2 | 3 | 4 | 5; start: string; end: string }[] = [
   ...[1, 2, 3, 4, 5].map((weekday) => ({ staffId: 'sue', weekday: weekday as 1 | 2 | 3 | 4 | 5, start: '08:30', end: '13:30' })),
@@ -73,18 +91,17 @@ export async function seedDevData(db: SQLiteDatabase): Promise<void> {
 
   for (const s of seedStaff) {
     await db.runAsync(
-      `INSERT INTO staff (id, name, type, room_id, payroll_included, active_from, active_to, sort_order, numbered)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-      [s.id, s.name, s.type, s.roomId, s.payrollIncluded ? 1 : 0, s.activeFrom, s.activeTo, s.sortOrder, s.numbered ? 1 : 0],
+      `INSERT INTO staff (id, name, type, payroll_included, active_from, active_to, sort_order, numbered)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+      [s.id, s.name, s.type, s.payrollIncluded ? 1 : 0, s.activeFrom, s.activeTo, s.sortOrder, s.numbered ? 1 : 0],
     );
   }
 
-  for (const v of seedVacantSeats) {
-    await db.runAsync('INSERT INTO vacant_seats (id, room_id, sort_order) VALUES (?, ?, ?);', [
-      v.id,
-      v.roomId,
-      v.sortOrder,
-    ]);
+  for (const h of seedRoomHistory) {
+    await db.runAsync(
+      'INSERT INTO room_history (staff_id, room_id, from_week, to_week) VALUES (?, ?, ?, ?);',
+      [h.staffId, h.roomId, h.fromWeek, h.toWeek],
+    );
   }
 
   for (const h of seedStaticHours) {
