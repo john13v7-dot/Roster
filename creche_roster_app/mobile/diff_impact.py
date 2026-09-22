@@ -23,9 +23,12 @@ from creche_roster.sample import sample_inputs
 
 def people_by_week(db_export: dict, roster_start: date):
     base = sample_inputs(roster_start)
+    # No carried-over history, matching build_preview.py's build(): each
+    # build's own weeks are balanced among themselves, so the diff has to
+    # be computed the same way or it won't match what's actually published.
     inputs = build_inputs_from_db(
         base.settings, db_export["staff"], db_export["leave"], db_export["transfers"],
-        base.history, base.last_slot,
+        {}, {},
     )
     roster = build_roster(inputs)
     out = []
