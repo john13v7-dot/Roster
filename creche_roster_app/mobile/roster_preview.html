@@ -1493,6 +1493,14 @@
   try{ data = JSON.parse($('roster-data').textContent); }
   catch(e){ document.body.insertAdjacentHTML('afterbegin','<p style="color:red">Could not load roster data.</p>'); return; }
 
+  // Anchor the live rebuild's roster window to whatever week this page was
+  // already showing (set the last time it was published), rather than
+  // silently jumping to "the Monday of today" - that would shift which
+  // week is "Week 1" out from under anyone already looking at it, and make
+  // a same-week edit look like it did nothing if it landed on what used to
+  // be Week 2.
+  var rosterStartAnchor = (data.weeks && data.weeks[0] && data.weeks[0].monday) || null;
+
   // ---------- screen navigation ----------
   function showScreen(id){
     document.querySelectorAll('.screen').forEach(function(s){ s.classList.toggle('active', s.id === id); });
@@ -1749,7 +1757,7 @@
   var buildErrorEl = $('buildError');
 
   function computeBuild(){
-    var rosterStart = RosterEngine.mondayOfWeek(todayISO());
+    var rosterStart = rosterStartAnchor || RosterEngine.mondayOfWeek(todayISO());
     return RosterEngine.build(staffDocs, leaveDocs, transferDocs, rosterStart);
   }
   function applyBuild(out){
