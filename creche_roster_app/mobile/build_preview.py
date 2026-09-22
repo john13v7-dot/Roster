@@ -153,7 +153,7 @@ def main() -> None:
     write_workbook(xlsx, roster, xlsx, backup=False)
     write_pdf(roster, pdf)
 
-    duty_weeks = build_duty_roster(inputs)
+    duty_weeks = build_duty_roster(inputs, roster)
     summary = summary_json(inputs, roster)
     summary["duties"] = duties_json(inputs, duty_weeks)
     summary["fairness"] = fairness_json(inputs, roster, duty_weeks)
