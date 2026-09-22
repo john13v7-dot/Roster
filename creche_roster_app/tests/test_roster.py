@@ -172,8 +172,10 @@ class FallbackCloser(unittest.TestCase):
         # Priscilla's own typed Monday hours (10:00 - 2:00) are shorter than
         # the rest of her week (10:00 - 6:00), but covering closing means
         # working later than usual that day - it isn't conditional on her
-        # normal hours happening to already reach it. She still covers, and
-        # her displayed hours for that day reflect it.
+        # normal hours happening to already reach it. She still covers (it
+        # counts toward the 3-person minimum, so nobody else gets pulled in
+        # to close instead), and her displayed hours stay exactly as typed -
+        # she types her own hours differently herself if she wants that shown.
         leave = [
             Leave("Jason", START, START + timedelta(days=4), "Holiday"),
             Leave("Shehnaz", START, START + timedelta(days=4), "Holiday"),
@@ -184,7 +186,7 @@ class FallbackCloser(unittest.TestCase):
             if c.rule == "Closing fallback" and c.day == START
         ]
         self.assertEqual(len(monday_fallback), 1)
-        self.assertEqual(texts(r, 0, "Priscilla")[0], "10:00 – 6:00")
+        self.assertEqual(texts(r, 0, "Priscilla")[0], "10:00 – 2:00")
         self.assertEqual(r.breaches, [])
 
     def test_both_away_warns_of_policy(self):
@@ -217,12 +219,13 @@ class FallbackCloser(unittest.TestCase):
         r = build_roster(inputs(leave=leave, overrides=over, weeks=1))
         self.assertEqual(r.breaches, [])
         week = r.weeks[0]
+        fallback_days = {c.day for c in r.checks if c.rule == "Closing fallback"}
         for d in week.days:
             late_rotating = sum(
                 1 for name in ROTATING
                 if week.cells[(name, d)].kind == "shift" and week.cells[(name, d)].slot == "late"
             )
-            priscilla_closing = week.cells[("Priscilla", d)].text == "10:00 – 6:00"
+            priscilla_closing = d in fallback_days
             total = late_rotating + (1 if priscilla_closing else 0)
             self.assertEqual(total, 3, f"{d}: {late_rotating} rotating + Priscilla={priscilla_closing}")
 

@@ -30,9 +30,8 @@ How it works
 
 from __future__ import annotations
 
-import re
 from collections import Counter
-from datetime import date, time, timedelta
+from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from .models import (
@@ -49,7 +48,7 @@ from .models import (
     Staff,
     WeekRoster,
 )
-from .parsing import fmt_day, fmt_days, is_off, parse_time
+from .parsing import fmt_day, fmt_days, is_off
 
 W_FAIR = 10.0
 W_RECENT = 3.0
@@ -366,24 +365,6 @@ def _choose_pair(
     return {who: "early"}
 
 
-def _covers_closing(hours_text: str, late_end) -> bool:
-    """Whether a static person's own hours (e.g. '10:00 - 6:00') reach the
-    late shift's end time. Hours are typed 12-hour with no AM/PM, so an end
-    time at or before the start is read as afternoon/evening (a childcare
-    day never runs past midnight)."""
-    parts = [p.strip() for p in re.split(r"[-–—]", hours_text) if p.strip()]
-    if len(parts) < 2:
-        return False
-    try:
-        start = parse_time(parts[0])
-        end = parse_time(parts[-1])
-    except ValueError:
-        return False
-    if end <= start:
-        end = time((end.hour + 12) % 24, end.minute)
-    return end >= late_end
-
-
 def _most_common_slot(slots: List[str]) -> str:
     c = Counter(slots)
     return max(c, key=lambda sl: (c[sl], SLOTS.index(sl)))
@@ -593,16 +574,11 @@ def build_roster(inputs: Inputs) -> Roster:
                                 wi,
                             )
                         )
-                        # A manual override on the fallback closer's own day is
-                        # the manager's explicit instruction for that day (e.g.
-                        # a genuinely shorter one-off) and wins as-is - only
-                        # their ordinary, un-overridden hours get extended.
-                        if not override_text(fb, d) and not _covers_closing(fb_assignment.text, s.shifts["late"].end):
-                            start_part = [p.strip() for p in re.split(r"[-–—]", fb_assignment.text) if p.strip()]
-                            start_part = start_part[0] if start_part else fb_assignment.text
-                            cells[(fb, d)] = Assignment(
-                                "static", text=f"{start_part} – {t12(s.shifts['late'].end)}"
-                            )
+                        # Their displayed hours stay exactly as typed - covering
+                        # closing doesn't rewrite the roster sheet on their
+                        # behalf. If the manager wants their hours to actually
+                        # show as later that day, that's a manual override she
+                        # types in herself, same as any other change.
                 _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=need, room_of=room_of)
                 if fallback_covering:
                     _cap_late_for_fallback(d, floor, slot_of, overridden, by_name, s, need, cost_fn, checks, wi, fb, room_of=room_of)

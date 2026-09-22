@@ -353,7 +353,7 @@
       <li>Four shifts: 07:30–16:30, 08:00–17:00, 08:30–17:30, 09:00–18:00. Each rotating person steps to the next shift week over week; fairness wins when that clashes with the simple rotation.</li>
       <li>Jason and Shehnaz are always complementary — one on 07:30 means the other on 09:00 — and never away at the same time.</li>
       <li>Opening cover: Jason-or-Shehnaz plus 2 more staff, 3 in total, every day.</li>
-      <li>Closing cover: Jason-or-Shehnaz plus 2 more staff, 3 in total. If neither is closing, Priscilla covers it automatically every day this applies, whatever her own hours that day would otherwise be.</li>
+      <li>Closing cover: Jason-or-Shehnaz plus 2 more staff, 3 in total. If neither is closing, Priscilla covers it automatically every day this applies (her displayed hours stay as typed - she updates them herself if she wants that shown).</li>
       <li>Sue, Laura, Megan and Priscilla keep their own manually-set hours.</li>
       <li>The vacant seat (row 3) shows with no shift and isn't counted toward cover.</li>
       <li>Holiday and Maternity Leave are picked up automatically for the dates you give them.</li>
@@ -503,26 +503,6 @@
     return h + ':' + String(m).padStart(2, '0');
   }
   function shiftLabel(shift) { return t12(shift.start) + ' – ' + t12(shift.end); }
-  var TIME_RE = /^\s*(\d{1,2})\s*[:.hH ]?\s*(\d{2})\s*$/;
-  function parseTimeLoose(s) {
-    var m = TIME_RE.exec(s);
-    if (m) {
-      var h = parseInt(m[1], 10), mi = parseInt(m[2], 10);
-      if (h >= 0 && h <= 23 && mi >= 0 && mi <= 59) return h * 60 + mi;
-    }
-    throw new Error("'" + s + "' is not a time");
-  }
-  function coversClosing(hoursText, lateEndMinutes) {
-    var parts = String(hoursText).split(/[-–—]/).map(function (p) { return p.trim(); }).filter(Boolean);
-    if (parts.length < 2) return false;
-    var start, end;
-    try {
-      start = parseTimeLoose(parts[0]);
-      end = parseTimeLoose(parts[parts.length - 1]);
-    } catch (e) { return false; }
-    if (end <= start) end = ((Math.floor(end / 60) + 12) % 24) * 60 + (end % 60);
-    return end >= lateEndMinutes;
-  }
   function mostCommonSlot(slots) {
     var c = {};
     slots.forEach(function (sl) { c[sl] = (c[sl] || 0) + 1; });
@@ -1157,14 +1137,10 @@
                 message: fb + ' covers closing on ' + fmtDay(d) + ' because neither ' + pair[0] + ' nor ' + pair[1] + ' is closing.',
                 day: d, week: wi,
               });
-              // A manual override on the fallback closer's own day is the
-              // manager's explicit instruction and wins as-is - only their
-              // ordinary, un-overridden hours get extended.
-              if (!overrideText(fb, d) && !coversClosing(fbAssignment.text, s.shifts.late.end)) {
-                var startParts = fbAssignment.text.split(/[-–—]/).map(function (p) { return p.trim(); }).filter(Boolean);
-                var startPart = startParts.length ? startParts[0] : fbAssignment.text;
-                cells.set(cellKey(fb, d), { kind: 'static', text: startPart + ' – ' + t12(s.shifts.late.end) });
-              }
+              // Their displayed hours stay exactly as typed - covering closing
+              // doesn't rewrite the roster sheet on their behalf. If the
+              // manager wants their hours to actually show as later that day,
+              // that's a manual override she types in herself.
             }
           }
           repairFloor(d, floor, slotOf, overridden, byName, s, costFn, checks, wi, need, roomOf);
