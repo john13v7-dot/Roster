@@ -1425,20 +1425,25 @@
       return people;
     });
   }
+  // Per week, not a flat list across all 4 - the least-done-first fairness
+  // rebalancing can genuinely ripple into later weeks the viewer isn't
+  // currently looking at, and flattening that hid which week each change
+  // was actually in (looked like everyone changed "now" when only this
+  // week's person actually did).
   function diffRosters(beforeRoster, afterRoster, changedName) {
     if (!beforeRoster) return [];
     var beforeWeeks = peopleByWeek(beforeRoster);
     var afterWeeks = peopleByWeek(afterRoster);
-    var changed = new Set();
-    afterWeeks.forEach(function (ap, wi) {
+    return afterWeeks.map(function (ap, wi) {
       var bp = beforeWeeks[wi] || {};
+      var changed = [];
       for (var name in ap) {
         if (name === changedName) continue;
         var b = bp[name], a = ap[name];
-        if (!b || a.join('|') !== b.join('|')) changed.add(name);
+        if (!b || a.join('|') !== b.join('|')) changed.push(name);
       }
+      return changed;
     });
-    return Array.from(changed);
   }
 
   global.RosterEngine = {
@@ -1797,9 +1802,13 @@
   // own duplicate entry for the same edit.
   async function logChange(requestText, changedName, beforeRoster){
     if(!db || !lastBuildOut) return;
-    var changed = RosterEngine.diffRosters(beforeRoster || null, lastBuildOut.roster, changedName || null);
+    var perWeek = RosterEngine.diffRosters(beforeRoster || null, lastBuildOut.roster, changedName || null);
     var breaches = lastBuildOut.summary.weeks.reduce(function(n,w){ return n + w.breaches.length; }, 0);
-    var impact = changed.length ? (changed.join(', ') + '’s ' + (changed.length>1 ? 'shifts changed.' : 'shift changed.')) : 'No one else’s shift changed.';
+    var parts = [];
+    perWeek.forEach(function(names, wi){
+      if(names.length) parts.push('Week ' + (wi+1) + ': ' + names.join(', ') + '’s ' + (names.length>1 ? 'shifts changed' : 'shift changed'));
+    });
+    var impact = parts.length ? (parts.join('; ') + '.') : 'No one else’s shift changed.';
     try{
       await db.collection('changelog').add({
         request: requestText, createdAt: new Date().toISOString(), breaches: breaches, impact: impact,

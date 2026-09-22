@@ -1032,20 +1032,25 @@
       return people;
     });
   }
+  // Per week, not a flat list across all 4 - the least-done-first fairness
+  // rebalancing can genuinely ripple into later weeks the viewer isn't
+  // currently looking at, and flattening that hid which week each change
+  // was actually in (looked like everyone changed "now" when only this
+  // week's person actually did).
   function diffRosters(beforeRoster, afterRoster, changedName) {
     if (!beforeRoster) return [];
     var beforeWeeks = peopleByWeek(beforeRoster);
     var afterWeeks = peopleByWeek(afterRoster);
-    var changed = new Set();
-    afterWeeks.forEach(function (ap, wi) {
+    return afterWeeks.map(function (ap, wi) {
       var bp = beforeWeeks[wi] || {};
+      var changed = [];
       for (var name in ap) {
         if (name === changedName) continue;
         var b = bp[name], a = ap[name];
-        if (!b || a.join('|') !== b.join('|')) changed.add(name);
+        if (!b || a.join('|') !== b.join('|')) changed.push(name);
       }
+      return changed;
     });
-    return Array.from(changed);
   }
 
   global.RosterEngine = {
