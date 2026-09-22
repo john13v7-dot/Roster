@@ -91,7 +91,7 @@ def _rebuild() -> None:
         "createdAt": firestore.SERVER_TIMESTAMP,
         "breaches": breaches,
         "impact": (
-            ", ".join(changed) + "'s shift changed." if changed
+            ", ".join(changed) + "'s " + ("shifts changed." if len(changed) > 1 else "shift changed.") if changed
             else "No one's shift changed."
         ) if old_summary is not None else "First build.",
     })

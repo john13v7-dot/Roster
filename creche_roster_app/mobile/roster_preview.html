@@ -1756,8 +1756,10 @@
     var rosterStart = rosterStartAnchor || RosterEngine.mondayOfWeek(todayISO());
     return RosterEngine.build(staffDocs, leaveDocs, transferDocs, rosterStart);
   }
+  var lastBuildErrorMessage = null;
   function applyBuild(out){
     lastBuildOut = out;
+    lastBuildErrorMessage = null;
     data = out.summary;
     buildErrorEl.style.display = 'none';
     renderRoster(data);
@@ -1766,6 +1768,7 @@
   }
   function showBuildError(e){
     var msg = (e && e.problems) ? e.problems.join(' ') : (e && e.message) || 'Unknown error.';
+    lastBuildErrorMessage = msg;
     buildErrorEl.textContent = 'Could not rebuild the roster: ' + msg;
     buildErrorEl.style.display = '';
   }
@@ -1788,7 +1791,7 @@
     if(!db || !lastBuildOut) return;
     var changed = RosterEngine.diffRosters(beforeRoster || null, lastBuildOut.roster, changedName || null);
     var breaches = lastBuildOut.summary.weeks.reduce(function(n,w){ return n + w.breaches.length; }, 0);
-    var impact = changed.length ? (changed.join(', ') + (changed.length>1 ? '’ shifts changed.' : '’s shift changed.')) : 'No one else’s shift changed.';
+    var impact = changed.length ? (changed.join(', ') + '’s ' + (changed.length>1 ? 'shifts changed.' : 'shift changed.')) : 'No one else’s shift changed.';
     try{
       await db.collection('changelog').add({
         request: requestText, createdAt: new Date().toISOString(), breaches: breaches, impact: impact,
@@ -2099,7 +2102,14 @@
         var beforeRoster1 = lastBuildOut ? lastBuildOut.roster : null;
         await db.collection('staff').doc(id).set(staffDoc);
         staffDocs = staffDocs.filter(function(s){ return s._id !== id; }).concat([Object.assign({_id:id}, staffDoc)]);
-        recompute();
+        if(!recompute()){
+          await db.collection('staff').doc(id).delete();
+          staffDocs = staffDocs.filter(function(s){ return s._id !== id; });
+          recompute();
+          formErr.textContent = 'Could not add ' + name + ': ' + lastBuildErrorMessage;
+          formSave.disabled = false;
+          return;
+        }
         var summary = 'Add staff: ' + name + ', floor ' + floor + ', role ' + role +
           (room ? ', room ' + room : '') + ', starting ' + start + '.';
         await logChange(summary, name, beforeRoster1);
@@ -2110,8 +2120,16 @@
         var transferDoc = { name: staff, newFloor: floor2, start: start2, end: null, createdAt: todayISO() };
         var beforeRoster2 = lastBuildOut ? lastBuildOut.roster : null;
         var tref = await db.collection('transfers').add(transferDoc);
-        transferDocs = transferDocs.concat([Object.assign({_id: tref && tref.id}, transferDoc)]);
-        recompute();
+        var transferId = tref && tref.id;
+        transferDocs = transferDocs.concat([Object.assign({_id: transferId}, transferDoc)]);
+        if(!recompute()){
+          if(transferId) await db.collection('transfers').doc(transferId).delete();
+          transferDocs = transferDocs.filter(function(t){ return t._id !== transferId; });
+          recompute();
+          formErr.textContent = 'Could not record that transfer: ' + lastBuildErrorMessage;
+          formSave.disabled = false;
+          return;
+        }
         var summary2 = 'Transfer: ' + staff + ' to ' + floor2 + ', from ' + start2 + ' onward (past weeks unchanged).';
         await logChange(summary2, staff, beforeRoster2);
         toast('Transfer recorded for ' + staff + '.');
@@ -2119,6 +2137,11 @@
         var kindWord = currentAction === 'add-holiday' ? 'Holiday' : 'Maternity Leave';
         var staff3 = $('f_staff').value, start3 = $('f_start').value, end3 = $('f_end').value || null;
         if(!staff3){ formErr.textContent = 'Pick a staff member.'; formSave.disabled=false; return; }
+        if(end3 && end3 < start3){
+          formErr.textContent = 'The end date is before the start date.';
+          formSave.disabled = false;
+          return;
+        }
         var clash = overlapsPartnerLeave(staff3, start3, end3);
         if(clash){
           formErr.textContent = 'Policy: ' + staff3 + ' and ' + clash + ' can’t both be away at the same time — check ' + clash + '’s leave first.';
@@ -2128,8 +2151,16 @@
         var leaveDoc = { name: staff3, kind: kindWord, start: start3, end: end3, createdAt: todayISO() };
         var beforeRoster3 = lastBuildOut ? lastBuildOut.roster : null;
         var lref = await db.collection('leave').add(leaveDoc);
-        leaveDocs = leaveDocs.concat([Object.assign({_id: lref && lref.id}, leaveDoc)]);
-        recompute();
+        var leaveId = lref && lref.id;
+        leaveDocs = leaveDocs.concat([Object.assign({_id: leaveId}, leaveDoc)]);
+        if(!recompute()){
+          if(leaveId) await db.collection('leave').doc(leaveId).delete();
+          leaveDocs = leaveDocs.filter(function(l){ return l._id !== leaveId; });
+          recompute();
+          formErr.textContent = 'Could not record that ' + kindWord.toLowerCase() + ': ' + lastBuildErrorMessage;
+          formSave.disabled = false;
+          return;
+        }
         var summary3 = 'Add ' + kindWord + ': ' + staff3 + ', from ' + start3 + (end3 ? (' to ' + end3) : ' (open-ended, until back)') + '.';
         await logChange(summary3, staff3, beforeRoster3);
         toast(kindWord + ' recorded for ' + staff3 + '. Roster updated.');
