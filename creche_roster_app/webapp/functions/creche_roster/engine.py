@@ -557,12 +557,18 @@ def build_roster(inputs: Inputs) -> Roster:
 
             fb = s.fallback_closer
             fb_assignment = cells.get((fb, d)) if fb else None
+            # The fallback closer covers whenever they're actually working that
+            # day (not on leave/OFF) - their own typed hours don't gate it, since
+            # covering closing IS them working later than usual that day, not a
+            # condition they either happen to meet or don't. Their displayed
+            # hours are extended below to say so, rather than leave the roster
+            # showing their normal (shorter) hours while they're relied on to
+            # close.
             fb_available = (
                 fb is not None
                 and fb in by_name
                 and fb_assignment is not None
                 and fb_assignment.kind == "static"
-                and _covers_closing(fb_assignment.text, s.shifts["late"].end)
             )
 
             for floor in s.floors:
@@ -585,6 +591,16 @@ def build_roster(inputs: Inputs) -> Roster:
                                 wi,
                             )
                         )
+                        # A manual override on the fallback closer's own day is
+                        # the manager's explicit instruction for that day (e.g.
+                        # a genuinely shorter one-off) and wins as-is - only
+                        # their ordinary, un-overridden hours get extended.
+                        if not override_text(fb, d) and not _covers_closing(fb_assignment.text, s.shifts["late"].end):
+                            start_part = [p.strip() for p in re.split(r"[-–—]", fb_assignment.text) if p.strip()]
+                            start_part = start_part[0] if start_part else fb_assignment.text
+                            cells[(fb, d)] = Assignment(
+                                "static", text=f"{start_part} – {t12(s.shifts['late'].end)}"
+                            )
                 _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=need, room_of=room_of)
                 if fallback_covering:
                     _cap_late_for_fallback(d, floor, slot_of, overridden, by_name, s, need, cost_fn, checks, wi, fb, room_of=room_of)

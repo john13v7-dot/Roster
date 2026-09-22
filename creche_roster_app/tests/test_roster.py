@@ -164,10 +164,12 @@ class FallbackCloser(unittest.TestCase):
             any(c.rule == "Closing fallback" and "Priscilla" in c.message for c in r.checks)
         )
 
-    def test_priscillas_shorter_monday_does_not_count(self):
-        # Priscilla's own Monday hours (10:00 - 2:00) don't reach closing (6:00),
-        # unlike the rest of her week (10:00 - 6:00) - only Tue-Fri may use her
-        # as the fallback closer.
+    def test_priscilla_closes_even_on_her_shorter_monday(self):
+        # Priscilla's own typed Monday hours (10:00 - 2:00) are shorter than
+        # the rest of her week (10:00 - 6:00), but covering closing means
+        # working later than usual that day - it isn't conditional on her
+        # normal hours happening to already reach it. She still covers, and
+        # her displayed hours for that day reflect it.
         leave = [
             Leave("Jason", START, START + timedelta(days=4), "Holiday"),
             Leave("Shehnaz", START, START + timedelta(days=4), "Holiday"),
@@ -177,8 +179,9 @@ class FallbackCloser(unittest.TestCase):
             c for c in r.checks
             if c.rule == "Closing fallback" and c.day == START
         ]
-        self.assertEqual(monday_fallback, [])
-        self.assertEqual(r.breaches, [])  # still met, by rotating staff instead
+        self.assertEqual(len(monday_fallback), 1)
+        self.assertEqual(texts(r, 0, "Priscilla")[0], "10:00 – 6:00")
+        self.assertEqual(r.breaches, [])
 
     def test_both_away_warns_of_policy(self):
         # Policy: Jason and Shehnaz are never away at the same time. If it

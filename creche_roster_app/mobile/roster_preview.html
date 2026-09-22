@@ -1128,8 +1128,12 @@
 
         var fb = s.fallback_closer;
         var fbAssignment = fb ? cells.get(cellKey(fb, d)) : null;
-        var fbAvailable = !!(fb && byName[fb] && fbAssignment && fbAssignment.kind === 'static' &&
-          coversClosing(fbAssignment.text, s.shifts.late.end));
+        // The fallback closer covers whenever they're actually working that day
+        // (not on leave/OFF) - their own typed hours don't gate it, since
+        // covering closing IS them working later than usual, not a condition
+        // they either happen to meet or don't. Their displayed hours are
+        // extended below (unless overridden) to say so.
+        var fbAvailable = !!(fb && byName[fb] && fbAssignment && fbAssignment.kind === 'static');
 
         s.floors.forEach(function (floor) {
           var need = needs(floor, s);
@@ -1145,6 +1149,14 @@
                 message: fb + ' covers closing on ' + fmtDay(d) + ' because neither ' + pair[0] + ' nor ' + pair[1] + ' is closing.',
                 day: d, week: wi,
               });
+              // A manual override on the fallback closer's own day is the
+              // manager's explicit instruction and wins as-is - only their
+              // ordinary, un-overridden hours get extended.
+              if (!overrideText(fb, d) && !coversClosing(fbAssignment.text, s.shifts.late.end)) {
+                var startParts = fbAssignment.text.split(/[-–—]/).map(function (p) { return p.trim(); }).filter(Boolean);
+                var startPart = startParts.length ? startParts[0] : fbAssignment.text;
+                cells.set(cellKey(fb, d), { kind: 'static', text: startPart + ' – ' + t12(s.shifts.late.end) });
+              }
             }
           }
           repairFloor(d, floor, slotOf, overridden, byName, s, costFn, checks, wi, need, roomOf);
