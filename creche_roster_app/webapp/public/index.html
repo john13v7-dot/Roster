@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Creche Roster</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#e04a32">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Roster">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<style>
+  :root{
+    --ink:#211c1a; --ink-dim:#6b625c; --paper:#fbf8f4; --card:#ffffff;
+    --line:#e7ddd4; --accent:#e04a32; --accent-dim:#f4d8d2;
+    --ok-bg:#eaf4e6; --ok-ink:#2f6b2f;
+    --warn-bg:#fdf2d6; --warn-ink:#8a6a12;
+    --bad-bg:#fbdede; --bad-ink:#9c1f13;
+    --chip-bg:#f1e9df;
+    --holiday-bg:#C65B35; --holiday-ink:#fdece3;
+    --maternity-bg:#2E9E57; --maternity-ink:#e7f7ee;
+    --off-bg:#A9D18E; --off-ink:#2c4a1e;
+    --duties-btn:#3f6b52; --requests-btn:#3a6ea5; --fairness-btn:#7d5ba6;
+    --info-bg:#e4eef8; --info-ink:#2c567e; --info-line:#c5dcef;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ink:#f1ece6; --ink-dim:#b8afa7; --paper:#1c1815; --card:#241f1b;
+      --line:#3a332c; --accent:#ff7a5c; --accent-dim:#402420;
+      --ok-bg:#1e3320; --ok-ink:#9fd79a;
+      --warn-bg:#3a3013; --warn-ink:#f0cf6e;
+      --bad-bg:#3d1e19; --bad-ink:#ff9c8c;
+      --chip-bg:#2c2721;
+      --duties-btn:#5c9877; --requests-btn:#6ba0d8; --fairness-btn:#a888d1;
+      --info-bg:#1c2e3f; --info-ink:#8fc0ec; --info-line:#2c455c;
+    }
+  }
+  *{box-sizing:border-box;}
+  html{scroll-padding-top:env(safe-area-inset-top,0px);}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    padding:0 16px; padding-block:14px 40px;
+  }
+  h1,h2,h3{text-wrap:balance; margin:0;}
+  .hidden{display:none!important;}
+  .screen{display:none;}
+  .screen.active{display:block;}
+
+  .topbar{
+    position:sticky; top:env(safe-area-inset-top,0px);
+    background:var(--paper); z-index:10; padding-block:6px 10px;
+    margin:0 -16px; padding-inline:16px; border-bottom:1px solid var(--line);
+  }
+  .eyebrow{font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-dim); font-weight:600; margin-bottom:2px;}
+  .pagetitle{font-size:19px; font-weight:800; margin-bottom:10px;}
+  .topbtns{display:flex; gap:8px; width:100%;}
+  .topbtns button{
+    flex:1 1 0; min-width:0; font-size:12px; font-weight:800; border:none; border-radius:11px;
+    padding:9px 6px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:4px;
+    color:#fff; white-space:nowrap;
+  }
+  .topbtns button svg{width:14px; height:14px; flex:none;}
+  #printBtn{background:var(--accent);}
+  #printBtn:disabled{background:var(--chip-bg); color:var(--ink-dim);}
+  #dutiesTopBtn{background:var(--duties-btn);}
+  #requestsTopBtn{background:var(--requests-btn);}
+  #fairnessTopBtn{background:var(--fairness-btn);}
+  .backbtn{
+    display:inline-flex; align-items:center; gap:5px; background:none; border:none;
+    color:var(--accent); font-size:14px; font-weight:700; padding:6px 0; cursor:pointer;
+  }
+  .tabs{display:flex; gap:6px; overflow-x:auto; margin-top:10px; padding-bottom:2px; -webkit-overflow-scrolling:touch;}
+  .tab{
+    flex:none; font-size:12.5px; font-weight:600; color:var(--ink-dim);
+    background:var(--chip-bg); border:1px solid var(--line); border-radius:999px;
+    padding:7px 13px; white-space:nowrap; cursor:pointer;
+  }
+  .tab.active{background:var(--accent); color:#fff; border-color:var(--accent);}
+
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:14px;
+    margin-top:16px; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.04);
+    padding:14px 16px;
+  }
+  .card h2{font-size:13px; letter-spacing:.03em; margin-bottom:10px;}
+  .week{display:none;}
+  .week.active{display:block;}
+
+  .status-row{display:flex; align-items:center; gap:8px; padding:10px 12px; font-size:12.5px; font-weight:600; border-radius:10px; margin-bottom:12px;}
+  .status-ok{background:var(--ok-bg); color:var(--ok-ink);}
+  .status-bad{background:var(--bad-bg); color:var(--bad-ink);}
+  .status-warn{background:var(--warn-bg); color:var(--warn-ink);}
+  .msg-line{font-size:12px; line-height:1.5; padding:4px 2px; border-bottom:1px solid var(--line);}
+  .msg-line:last-child{border-bottom:none;}
+  .msg-bad{color:var(--bad-ink);}
+  .msg-warn{color:var(--warn-ink);}
+
+  .personrow{padding:10px 0; border-bottom:1px solid var(--line);}
+  .personrow:last-child{border-bottom:none;}
+  .personhead{display:flex; align-items:baseline; gap:7px; margin-bottom:7px;}
+  .personname{font-size:13.5px; font-weight:700;}
+  .personrole{font-size:10px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.04em;}
+  .daypills{display:grid; grid-template-columns:repeat(5,1fr); gap:5px;}
+  .daypill{min-width:0; border-radius:9px; padding:5px 3px; text-align:center; background:var(--chip-bg); border:1px solid var(--line);}
+  .daypill .dlabel{font-size:9px; font-weight:700; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.03em;}
+  .daypill .dtext{font-size:10.5px; font-weight:600; margin-top:2px; line-height:1.25; word-break:break-word;}
+  .daypill-off{background:var(--off-bg); border-color:var(--off-bg);}
+  .daypill-off .dtext, .daypill-off .dlabel{color:var(--off-ink);}
+  .daypill-holiday{background:var(--holiday-bg); border-color:var(--holiday-bg);}
+  .daypill-holiday .dtext, .daypill-holiday .dlabel{color:var(--holiday-ink);}
+  .daypill-maternity{background:var(--maternity-bg); border-color:var(--maternity-bg);}
+  .daypill-maternity .dtext, .daypill-maternity .dlabel{color:var(--maternity-ink);}
+  .daypill-vacant{background:transparent; border-style:dashed;}
+  .daypill-vacant .dtext{color:var(--ink-dim); font-style:italic;}
+
+  .panel summary{cursor:pointer; font-size:13px; font-weight:700; list-style:none;}
+  .panel summary::-webkit-details-marker{display:none;}
+  .panel summary::after{content:"›"; float:right; transform:rotate(90deg); transition:transform .15s;}
+  details[open] summary::after{transform:rotate(-90deg);}
+  .rule-list{margin:10px 0 0; padding:0; list-style:none; display:flex; flex-direction:column; gap:8px;}
+  .rule-list li{font-size:12.5px; line-height:1.45; padding-left:16px; position:relative; color:var(--ink);}
+  .rule-list li::before{content:"✓"; position:absolute; left:0; color:var(--ok-ink); font-weight:800;}
+  .open-list li::before{content:"?"; color:var(--warn-ink);}
+  .note{font-size:12px; color:var(--ink-dim); line-height:1.5; margin-top:10px;}
+
+  .syncline{display:flex; align-items:center; gap:7px; font-size:11.5px; color:var(--ink-dim); margin-bottom:12px;}
+  .dot{width:7px; height:7px; border-radius:50%; background:var(--ink-dim); flex:none;}
+  .dot.on{background:var(--ok-ink);}
+  .dot.off{background:var(--bad-ink);}
+  .btnrow{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
+  .actionbtn{
+    font-size:12.5px; font-weight:700; color:#fff; background:var(--accent);
+    border:none; border-radius:10px; padding:10px 13px; cursor:pointer;
+    flex:1 1 auto; min-width:120px;
+  }
+  .actionbtn:disabled{background:var(--chip-bg); color:var(--ink-dim); cursor:not-allowed;}
+  .rowlist{display:flex; flex-direction:column; gap:0;}
+  .rowlist .item{display:flex; justify-content:space-between; align-items:center; gap:10px; padding:9px 2px; border-bottom:1px solid var(--line); font-size:12.5px;}
+  .rowlist .item:last-child{border-bottom:none;}
+  .item .meta{color:var(--ink-dim); font-size:11px;}
+  .item .name{font-weight:600;}
+  .pill{font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:999px; background:var(--chip-bg); color:var(--ink-dim);}
+  .pill.leave{background:var(--bad-bg); color:var(--bad-ink);}
+  .pill.transfer{background:var(--warn-bg); color:var(--warn-ink);}
+  .xbtn{background:none; border:none; color:var(--ink-dim); font-size:15px; line-height:1; cursor:pointer; padding:4px 6px;}
+  .grouptitle{font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-dim); font-weight:700; margin:14px 0 4px;}
+  .grouptitle:first-child{margin-top:0;}
+  .empty{font-size:12px; color:var(--ink-dim); font-style:italic; padding:6px 2px;}
+
+  .fairtable{width:100%; border-collapse:collapse; font-size:12px; margin-top:4px;}
+  .fairtable th, .fairtable td{padding:7px 4px; text-align:center; border-bottom:1px solid var(--line);}
+  .fairtable th{font-size:9.5px; text-transform:uppercase; letter-spacing:.03em; color:var(--ink-dim); font-weight:700;}
+  .fairtable td:first-child, .fairtable th:first-child{text-align:left; font-weight:600; padding-left:0;}
+  .fairtable tr:last-child td{border-bottom:none;}
+
+  .dutyrow{display:flex; justify-content:space-between; align-items:center; gap:10px; padding:9px 2px; border-bottom:1px solid var(--line); font-size:12.5px;}
+  .dutyrow:last-child{border-bottom:none;}
+  .dutyrow .dname{font-weight:600;}
+  .dutyrow .dpeople{color:var(--ink-dim); font-size:12px; text-align:right;}
+  .dutyrow.fixed .dpeople{color:var(--warn-ink); font-weight:600;}
+  .dutyrow.context .dpeople{font-style:italic;}
+  .dutyrow.unfilled .dpeople{color:var(--bad-ink); font-weight:600;}
+
+  .logentry{padding:10px 2px; border-bottom:1px solid var(--line);}
+  .logentry:last-child{border-bottom:none;}
+  .logrequest{font-size:12.5px; font-weight:600;}
+  .logwhen{font-size:10.5px; color:var(--ink-dim); margin-top:1px;}
+  .logimpact{font-size:12px; margin-top:5px; padding:7px 9px; border-radius:8px;}
+  .logimpact.none{background:var(--ok-bg); color:var(--ok-ink);}
+  .logimpact.some{background:var(--info-bg); color:var(--info-ink);}
+
+  dialog#formDialog, dialog#confirmDialog{border:none; border-radius:16px; padding:0; width:min(92vw,420px); background:var(--card); color:var(--ink);}
+  dialog#formDialog::backdrop, dialog#confirmDialog::backdrop{background:rgba(0,0,0,.4);}
+  .formhead{padding:16px 18px 4px; font-size:15px; font-weight:800;}
+  .formbody{padding:10px 18px 18px; display:flex; flex-direction:column; gap:12px;}
+  .confirmbody{padding:16px 18px; font-size:13px; line-height:1.5; color:var(--ink);}
+  .field label{display:block; font-size:11.5px; font-weight:700; color:var(--ink-dim); margin-bottom:5px;}
+  .field input, .field select{width:100%; font-size:14px; padding:9px 10px; border-radius:9px; border:1px solid var(--line); background:var(--paper); color:var(--ink);}
+  .formfoot{display:flex; gap:8px; padding:2px 18px 18px;}
+  .formfoot button{flex:1; padding:11px; border-radius:10px; font-size:13.5px; font-weight:700; border:none; cursor:pointer;}
+  .formfoot .cancel{background:var(--chip-bg); color:var(--ink);}
+  .formfoot .save{background:var(--accent); color:#fff;}
+  .formerr{font-size:11.5px; color:var(--bad-ink); min-height:14px;}
+
+  #toast{
+    position:fixed; left:16px; right:16px; bottom:calc(16px + env(safe-area-inset-bottom,0px));
+    background:var(--ink); color:var(--paper); padding:12px 15px; border-radius:12px;
+    font-size:12.5px; line-height:1.4; box-shadow:0 4px 18px rgba(0,0,0,.25);
+    transform:translateY(120%); transition:transform .25s ease; z-index:50;
+  }
+  #toast.show{transform:translateY(0);}
+
+  #refreshBtn{
+    position:fixed; top:calc(env(safe-area-inset-top,0px) + 8px); right:16px; z-index:20;
+    width:34px; height:34px; border-radius:50%; border:1px solid var(--line);
+    background:var(--card); color:var(--ink-dim); display:flex; align-items:center; justify-content:center;
+    cursor:pointer; box-shadow:0 1px 4px rgba(0,0,0,.12);
+  }
+  #refreshBtn svg{width:17px; height:17px;}
+  #refreshBtn.spin svg{animation:refreshspin .6s linear;}
+  @keyframes refreshspin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+
+  /* --- sign-in screen --- */
+  #signInScreen{
+    min-height:80vh; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; gap:16px; padding:20px;
+  }
+  #signInScreen .logo{width:72px; height:72px; border-radius:18px;}
+  #signInScreen h1{font-size:20px;}
+  #signInScreen p{color:var(--ink-dim); font-size:13px; max-width:320px; line-height:1.5;}
+  #signInBtn{
+    display:flex; align-items:center; gap:10px; background:var(--card); color:var(--ink);
+    border:1px solid var(--line); border-radius:12px; padding:12px 20px; font-size:14px; font-weight:700;
+    cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,.08);
+  }
+  #signInBtn svg{width:18px; height:18px;}
+  #signOutBtn{background:none; border:none; color:var(--ink-dim); font-size:11.5px; text-decoration:underline; cursor:pointer; padding:4px 0;}
+
+  .rebuild-banner{
+    display:flex; align-items:center; gap:8px; background:var(--info-bg); color:var(--info-ink);
+    font-size:12px; font-weight:600; padding:9px 12px; border-radius:10px; margin-bottom:12px;
+  }
+  .spinner{width:13px; height:13px; border-radius:50%; border:2px solid currentColor; border-top-color:transparent; animation:refreshspin .7s linear infinite; flex:none;}
+</style>
+</head>
+<body>
+
+<div id="signInScreen">
+  <img class="logo" src="/icons/icon-192.png" alt="">
+  <h1>Creche Roster</h1>
+  <p>Sign in with the Google account your roster owner gave access to.</p>
+  <button id="signInBtn">
+    <svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59A14.5 14.5 0 0 1 9.5 24c0-1.59.27-3.13.76-4.59l-7.98-6.19A24 24 0 0 0 0 24c0 3.87.92 7.53 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.97 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+    Sign in with Google
+  </button>
+  <p id="signInErr" style="color:var(--bad-ink);"></p>
+</div>
+
+<div id="appRoot" class="hidden">
+
+<button id="refreshBtn" title="Refresh">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+</button>
+
+<!-- ============================== HOME SCREEN ============================== -->
+<div class="screen active" id="homeScreen">
+  <div class="topbar">
+    <div class="eyebrow">Creche roster · live</div>
+    <div class="pagetitle">Weekly Staff Roster</div>
+    <div class="topbtns">
+      <button id="requestsTopBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Staff
+      </button>
+      <button id="dutiesTopBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z"/><rect x="5" y="4" width="14" height="18" rx="2"/><path d="M9 11h6M9 15h6"/></svg>
+        Duties
+      </button>
+      <button id="printBtn" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>
+        Print
+      </button>
+      <button id="fairnessTopBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-6 4 3 5-8"/></svg>
+        Fair
+      </button>
+    </div>
+    <div class="tabs" id="tabs"></div>
+  </div>
+
+  <div id="rosterStatus"></div>
+  <div id="weeks"></div>
+</div>
+
+<!-- ============================== DUTIES SCREEN ============================== -->
+<div class="screen" id="dutiesScreen">
+  <div class="topbar">
+    <button class="backbtn" data-back="homeScreen">‹ Roster</button>
+    <div class="pagetitle" style="margin-top:2px;">Duties</div>
+  </div>
+  <div class="card panel">
+    <h2>Cleaning duties</h2>
+    <p class="note" style="margin-top:0;">Auto-generated each rebuild: Dusting and Laundry stay fixed to the same people, Cot Room and Changing Area go to whoever's already working that room. The longer jobs (Kitchen, Hallway downstairs, Children's Toilets) go to whoever finishes at 17:30 or 18:00 that week; the quick ones (Bins, Staff Toilets) go to the 16:30 finishers; everything else goes to the 17:00 finishers — picked fairly within each group so nobody repeats a duty before everyone else has had a turn.</p>
+    <div class="tabs" id="dutyTabs" style="margin-top:0;"></div>
+    <div id="dutiesList" style="margin-top:12px;"></div>
+  </div>
+</div>
+
+<!-- ============================== FAIRNESS SCREEN ============================== -->
+<div class="screen" id="fairnessScreen">
+  <div class="topbar">
+    <button class="backbtn" data-back="homeScreen">‹ Roster</button>
+    <div class="pagetitle" style="margin-top:2px;">Fairness</div>
+  </div>
+  <div class="card panel">
+    <h2>Shift fairness · next 4 weeks</h2>
+    <p class="note" style="margin-top:0;">How many opening (7:30), 8:00, 8:30 and closing (9:00) shifts each rotating staff member is doing across these 4 forthcoming weeks. Management, Priscilla, the cook and Sue aren't part of this rotation, so they're not counted here.</p>
+    <div id="shiftFairTable"></div>
+  </div>
+  <div class="card panel">
+    <h2>Duties fairness · last 4 weeks</h2>
+    <p class="note" style="margin-top:0;">How many rotating cleaning duties each person has done. Jason takes a turn here even though his shift itself follows the separate pairing rota; Sue and Shehnaz/Priscilla are fixed to their own duty every week, so they're not counted here.</p>
+    <div id="dutyFairTable"></div>
+  </div>
+</div>
+
+<!-- ============================== REQUESTS SCREEN ============================== -->
+<div class="screen" id="requestsScreen">
+  <div class="topbar">
+    <button class="backbtn" data-back="homeScreen">‹ Roster</button>
+    <div class="pagetitle" style="margin-top:2px;">Staff & Requests</div>
+  </div>
+
+  <div class="card panel" id="requestsPanel">
+    <div class="syncline"><span class="dot" id="syncDot"></span><span id="syncText">Connecting…</span></div>
+    <div class="syncline" style="justify-content:space-between;">
+      <span style="color:var(--ink-dim);">Stuck? <button id="rebuildNowBtn" class="lognotebtn" style="background:none; border:none; padding:0; font-size:11.5px;">Rebuild now</button></span>
+      <button id="signOutBtn" style="margin:0;">Sign out</button>
+    </div>
+
+    <div class="btnrow">
+      <button class="actionbtn" data-action="add-staff" disabled>+ Add Staff</button>
+      <button class="actionbtn" data-action="transfer" disabled>Transfer</button>
+      <button class="actionbtn" data-action="add-holiday" disabled>+ Add Holiday</button>
+      <button class="actionbtn" data-action="add-maternity" disabled>+ Add Maternity Leave</button>
+    </div>
+
+    <div class="grouptitle">Current staff</div>
+    <div class="rowlist" id="staffList"><div class="empty">Loading…</div></div>
+
+    <div class="grouptitle">Leave &amp; transfers</div>
+    <div class="rowlist" id="eventList"><div class="empty">Loading…</div></div>
+
+    <p class="note">Changes save straight away and the roster rebuilds itself automatically, usually within a few seconds — no need to ask anyone. Jason and Shehnaz are never scheduled away at the same time; this is blocked here and flagged on the roster if it ever slips through elsewhere.</p>
+  </div>
+
+  <div class="card panel">
+    <h2>Change log</h2>
+    <p class="note" style="margin-top:0;">Every rebuild, and exactly who else's shift changed because of it — logged automatically.</p>
+    <div class="rowlist" id="changeLogList"><div class="empty">Loading…</div></div>
+  </div>
+
+  <div class="card panel">
+    <h2>Rules this build enforces</h2>
+    <ul class="rule-list">
+      <li>Mon–Fri layout, matching your paper roster exactly.</li>
+      <li>Four shifts: 07:30–16:30, 08:00–17:00, 08:30–17:30, 09:00–18:00. Each rotating person steps to the next shift week over week; fairness wins when that clashes with the simple rotation.</li>
+      <li>Jason and Shehnaz are always complementary — one on 07:30 means the other on 09:00 — and never away at the same time.</li>
+      <li>Opening cover: Jason-or-Shehnaz plus 2 more staff, 3 in total, every day.</li>
+      <li>Closing cover: Jason-or-Shehnaz plus 2 more staff, 3 in total. If neither is closing, Priscilla covers it automatically on the days her own hours reach closing time.</li>
+      <li>Sue, Laura, Megan and Priscilla keep their own manually-set hours.</li>
+      <li>The vacant seat (row 3) shows with no shift and isn't counted toward cover.</li>
+      <li>Holiday and Maternity Leave are picked up automatically for the dates you give them.</li>
+      <li>Joiners and leavers: a new staff member's Start date (set when you Add Staff) means they're not scheduled before it; an End date works the same way for someone leaving.</li>
+      <li>Same room, same shift is never allowed: Toddlers Room, Preschoolers Room, ECEC 1 and ECEC 2 each keep their staff on different start times from each other, every day.</li>
+      <li>The roster window is always the current week onward (4 weeks), and rebuilds itself daily so it never goes stale.</li>
+    </ul>
+    <ul class="rule-list open-list" style="margin-top:14px;">
+      <li><strong>Floor balance</strong> — everyone's on one list for now (no ground floor / 1st floor split yet). The Transfer form records a floor move, but it won't change the schedule until floors are split.</li>
+      <li><strong>Eirini's room</strong> — not placed yet, so she isn't part of the same-room rule until she is.</li>
+    </ul>
+    <p class="note">Everything here is generated straight from the real Python scheduling engine — press Print on the Roster screen for the actual Excel and PDF.</p>
+  </div>
+</div>
+
+<dialog id="formDialog">
+  <div class="formhead" id="formTitle">Add Staff</div>
+  <div class="formbody" id="formBody"></div>
+  <div class="formerr" id="formErr" style="padding:0 18px;"></div>
+  <div class="formfoot">
+    <button type="button" class="cancel" id="formCancel">Cancel</button>
+    <button type="button" class="save" id="formSave">Save</button>
+  </div>
+</dialog>
+
+<dialog id="confirmDialog">
+  <div class="formhead" id="confirmTitle">Remove this?</div>
+  <div class="confirmbody" id="confirmBody"></div>
+  <div class="formfoot">
+    <button type="button" class="cancel" id="confirmCancel">Cancel</button>
+    <button type="button" class="save" id="confirmOk" style="background:var(--bad-ink);">Remove</button>
+  </div>
+</dialog>
+
+</div><!-- #appRoot -->
+
+<div id="toast"></div>
+
+<script type="module" src="/app.js"></script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js"));
+  }
+</script>
+</body>
+</html>

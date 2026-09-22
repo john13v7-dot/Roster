@@ -1,0 +1,6 @@
+.firebaserc
+.firebase/
+node_modules/
+functions/__pycache__/
+functions/creche_roster/__pycache__/
+*.pyc

@@ -1,0 +1,31 @@
+rules_version = '2';
+
+// Only signed-in, allow-listed emails can read or write anything - this
+// app holds real staff names, leave dates and schedules, so it's never
+// left open to the public internet. Add a manager's Google account email
+// here to give them access; the Cloud Function itself always writes as
+// an admin (the Admin SDK bypasses these rules entirely), so it never
+// needs to be listed.
+function isAllowed() {
+  return request.auth != null && request.auth.token.email in [
+    "john13v7@gmail.com"
+    // "another-manager@gmail.com",
+  ];
+}
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /staff/{docId} { allow read, write: if isAllowed(); }
+    match /leave/{docId} { allow read, write: if isAllowed(); }
+    match /transfers/{docId} { allow read, write: if isAllowed(); }
+    match /changelog/{docId} { allow read, write: if isAllowed(); }
+
+    // roster/current is only ever written by the Cloud Function (the
+    // Admin SDK, which isn't subject to these rules) - clients can read
+    // the built roster, never write it directly.
+    match /roster/{docId} {
+      allow read: if isAllowed();
+      allow write: if false;
+    }
+  }
+}

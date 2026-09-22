@@ -1,0 +1,16 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Same allow-list as firestore.rules - keep the two in sync. Only the
+    // Cloud Function (Admin SDK) ever writes these files; clients can only
+    // read them, to download the printed Excel/PDF.
+    match /roster/{fileName} {
+      allow read: if request.auth != null && request.auth.token.email in [
+        "john13v7@gmail.com"
+        // "another-manager@gmail.com",
+      ];
+      allow write: if false;
+    }
+  }
+}
