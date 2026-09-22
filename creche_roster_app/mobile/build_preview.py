@@ -32,7 +32,7 @@ from creche_roster.duties import build_duty_roster, duty_fairness, duty_pool
 from creche_roster.engine import build_roster
 from creche_roster.excel_io import write_roster_only
 from creche_roster.models import NDAYS, SLOTS
-from creche_roster.pdf_out import write_pdf
+from creche_roster.pdf_out import write_duties_pdf, write_pdf
 from creche_roster.sample import sample_inputs
 
 HERE = Path(__file__).parent
@@ -154,18 +154,24 @@ def main() -> None:
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    xlsx, pdf, html = out_dir / "Roster_Planner.xlsx", out_dir / "Roster_Planner.pdf", out_dir / "roster_preview.html"
+    xlsx = out_dir / "Roster_Planner.xlsx"
+    pdf = out_dir / "Roster_Planner.pdf"
+    duties_pdf = out_dir / "Duty_Rota.pdf"
+    html = out_dir / "roster_preview.html"
 
     write_roster_only(roster, xlsx)
     write_pdf(roster, pdf)
 
     duty_weeks = build_duty_roster(inputs, roster)
+    write_duties_pdf(inputs, duty_weeks, duties_pdf)
+
     summary = summary_json(inputs, roster)
     summary["duties"] = duties_json(inputs, duty_weeks)
     summary["fairness"] = fairness_json(inputs, roster, duty_weeks)
     summary["files"] = {
         "xlsx": {"filename": xlsx.name, "b64": base64.b64encode(xlsx.read_bytes()).decode("ascii")},
         "pdf": {"filename": pdf.name, "b64": base64.b64encode(pdf.read_bytes()).decode("ascii")},
+        "dutiesPdf": {"filename": duties_pdf.name, "b64": base64.b64encode(duties_pdf.read_bytes()).decode("ascii")},
     }
     template = (HERE / "roster_preview.html").read_text(encoding="utf-8")
     html.write_text(template.replace("__ROSTER_JSON__", json.dumps(summary)), encoding="utf-8")

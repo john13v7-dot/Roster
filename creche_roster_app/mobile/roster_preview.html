@@ -75,6 +75,13 @@
     display:inline-flex; align-items:center; gap:5px; background:none; border:none;
     color:var(--accent); font-size:14px; font-weight:700; padding:6px 0; cursor:pointer;
   }
+  .topbar-row{display:flex; align-items:center; justify-content:space-between; gap:8px;}
+  .smallbtn{
+    display:inline-flex; align-items:center; gap:5px; background:var(--accent); color:#fff;
+    border:none; border-radius:9px; padding:7px 11px; font-size:12px; font-weight:700; cursor:pointer;
+  }
+  .smallbtn:disabled{background:var(--chip-bg); color:var(--ink-dim);}
+  .smallbtn svg{width:13px; height:13px; flex:none;}
   .tabs{
     display:flex; gap:6px; overflow-x:auto; margin-top:10px; padding-bottom:2px;
     -webkit-overflow-scrolling:touch;
@@ -285,7 +292,13 @@
 <!-- ============================== DUTIES SCREEN ============================== -->
 <div class="screen" id="dutiesScreen">
   <div class="topbar">
-    <button class="backbtn" data-back="homeScreen">‹ Roster</button>
+    <div class="topbar-row">
+      <button class="backbtn" data-back="homeScreen">‹ Roster</button>
+      <button class="smallbtn" id="dutiesPrintBtn" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>
+        Print
+      </button>
+    </div>
     <div class="pagetitle" style="margin-top:2px;">Duties</div>
   </div>
 
@@ -1632,6 +1645,18 @@
     return current !== printFilesSnapshot;
   }
 
+  // Same idea, for the Duties screen's own Print button and its baked PDF.
+  var dutiesPrintFile = (data.files && data.files.dutiesPdf) || null;
+  function dutiesSnapshotText(){
+    return (data.duties || []).map(function(w){
+      return (w.assignments || []).map(function(a){ return a.duty + '=' + a.people.join('/'); }).join(';');
+    }).join('||');
+  }
+  var dutiesPrintSnapshot = dutiesSnapshotText();
+  function dutiesFileIsStale(){
+    return dutiesSnapshotText() !== dutiesPrintSnapshot;
+  }
+
   // ---------- screen navigation ----------
   function showScreen(id){
     document.querySelectorAll('.screen').forEach(function(s){ s.classList.toggle('active', s.id === id); });
@@ -1889,6 +1914,28 @@
   $('printXlsxBtn').onclick = function(){ saveOne('xlsx'); };
   $('printPdfBtn').onclick = function(){ saveOne('pdf'); };
 
+  // ---------- print (duties screen, PDF only) ----------
+  var dutiesPrintBtn = $('dutiesPrintBtn');
+  async function doDutiesPrint(){
+    if(!downloadsCap){ toast('Printing isn’t available in this view.'); return; }
+    if(!dutiesPrintFile){ toast('No duty rota PDF yet - ask Claude to publish one.'); return; }
+    if(dutiesFileIsStale()){
+      var ok = await askConfirm('This file doesn’t include duty changes made since it was last generated. Save the older version anyway?');
+      if(!ok) return;
+    }
+    dutiesPrintBtn.disabled = true;
+    try{
+      await downloadsCap.save({filename: dutiesPrintFile.filename, data: b64ToBlob(dutiesPrintFile.b64, 'application/pdf')});
+      toast('Saved ' + dutiesPrintFile.filename + '.');
+    } catch(e){
+      var code = e && e.code;
+      if(code === 'declined'){ toast('Not saved.'); }
+      else { toast('Could not save: ' + (e && e.message ? e.message : 'try again.')); }
+    }
+    dutiesPrintBtn.disabled = false;
+  }
+  dutiesPrintBtn.onclick = doDutiesPrint;
+
   // ---------- staff & requests: db / comments ----------
   var dialog = $('formDialog');
   var formTitle = $('formTitle');
@@ -2123,8 +2170,8 @@
     }
     db = await window.claude.use('db');
     downloadsCap = await window.claude.use('downloads');
-    if(downloadsCap){ printBtn.disabled = false; }
-    else { printBtn.title = 'Printing isn’t available in this view.'; }
+    if(downloadsCap){ printBtn.disabled = false; dutiesPrintBtn.disabled = false; }
+    else { printBtn.title = 'Printing isn’t available in this view.'; dutiesPrintBtn.title = printBtn.title; }
 
     if(!db){
       $('syncDot').className = 'dot off';

@@ -9,8 +9,8 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Table, TableStyle
 
-from .layout import COL_WIDTHS_CHARS, NCOLS, STYLES, ordinal_runs, week_grid
-from .models import Roster
+from .layout import COL_WIDTHS_CHARS, DUTY_COL_WIDTHS_CHARS, DUTY_NCOLS, NCOLS, STYLES, duties_grid, ordinal_runs, week_grid
+from .models import Inputs, Roster
 
 MARGIN = 30
 BASE_ROW = 20.0
@@ -92,6 +92,78 @@ def _week_table(roster: Roster, wi: int, avail_w: float, avail_h: float) -> Tabl
 
     unit = avail_w / sum(COL_WIDTHS_CHARS)
     return Table(data, colWidths=[w * unit for w in COL_WIDTHS_CHARS], rowHeights=heights, style=TableStyle(cmds))
+
+
+def _duties_table(inputs: Inputs, duty_week: dict, avail_w: float, avail_h: float) -> Table:
+    rows = duties_grid(inputs, duty_week)
+    total = sum(BASE_ROW * r.height for r in rows)
+    scale = min(1.0, avail_h / total * 0.97)
+    heights = [BASE_ROW * r.height * scale for r in rows]
+
+    data = []
+    cmds = [
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+    ]
+    for ri, row in enumerate(rows):
+        if row.merged:
+            lc = row.cells[0]
+            spec = STYLES[lc.style]
+            size = _size(spec)
+            para = ParagraphStyle(
+                "p", fontName=_font_name(spec), fontSize=size, leading=size + 2,
+                textColor=_hex(spec["color"]), alignment={"left": 0, "center": 1}[spec["align"]],
+            )
+            data.append([Paragraph(_markup(lc), para)] + [""] * (DUTY_NCOLS - 1))
+            cmds.append(("SPAN", (0, ri), (DUTY_NCOLS - 1, ri)))
+            if spec["fill"]:
+                cmds.append(("BACKGROUND", (0, ri), (DUTY_NCOLS - 1, ri), _hex(spec["fill"])))
+            if spec["border"]:
+                cmds.append(("BOX", (0, ri), (DUTY_NCOLS - 1, ri), 0.5, GRID))
+        else:
+            # Every cell (not just titles) wraps here - duty names and
+            # multi-person "A / B" lists both run long enough to need it,
+            # unlike the roster grid's short, fixed-format times.
+            cells = []
+            for ci, lc in enumerate(row.cells):
+                spec = STYLES[lc.style]
+                size = _size(spec)
+                para = ParagraphStyle(
+                    "p", fontName=_font_name(spec), fontSize=size, leading=size + 2,
+                    textColor=_hex(spec["color"]), alignment={"left": 0, "center": 1}[spec["align"]],
+                )
+                cells.append(Paragraph(_markup(lc), para))
+                if spec["fill"]:
+                    cmds.append(("BACKGROUND", (ci, ri), (ci, ri), _hex(spec["fill"])))
+                if spec["border"]:
+                    cmds.append(("BOX", (ci, ri), (ci, ri), 0.5, GRID))
+            data.append(cells)
+
+    unit = avail_w / sum(DUTY_COL_WIDTHS_CHARS)
+    return Table(data, colWidths=[w * unit for w in DUTY_COL_WIDTHS_CHARS], rowHeights=heights, style=TableStyle(cmds))
+
+
+def write_duties_pdf(inputs: Inputs, duty_weeks: list, path) -> None:
+    page = A4
+    avail_w = page[0] - 2 * MARGIN
+    avail_h = page[1] - 2 * MARGIN
+    doc = SimpleDocTemplate(
+        str(path),
+        pagesize=page,
+        leftMargin=MARGIN,
+        rightMargin=MARGIN,
+        topMargin=MARGIN,
+        bottomMargin=MARGIN,
+        title=inputs.settings.title + " - Cleaning Duties",
+    )
+    story = []
+    n = len(duty_weeks)
+    for wi, dw in enumerate(duty_weeks):
+        story.append(_duties_table(inputs, dw, avail_w, avail_h))
+        if wi < n - 1:
+            story.append(PageBreak())
+    doc.build(story)
 
 
 def write_pdf(roster: Roster, path) -> None:

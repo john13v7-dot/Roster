@@ -20,7 +20,10 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
-from .models import DAY_NAMES, NDAYS, Roster
+from datetime import date, timedelta
+
+from .duties import CONTEXT_ROWS
+from .models import DAY_NAMES, NDAYS, Inputs, Roster
 
 NCOLS = 2 + NDAYS + 2  # No, Name, Mon..Fri, break, empty
 COL_WIDTHS_CHARS = [5, 18] + [16] * NDAYS + [10, 10]  # Excel column widths
@@ -175,4 +178,36 @@ def week_grid(roster: Roster, wi: int) -> List[Row]:
         rows.append(_merged(text, "note_bad", _note_height(text)))
     if len(bad) > MAX_NOTES:
         rows.append(_merged(f"+ {len(bad) - MAX_NOTES} more (see the Checks tab)", "note_bad"))
+    return rows
+
+
+DUTY_NCOLS = 2
+DUTY_COL_WIDTHS_CHARS = [34, 34]
+
+
+def duties_grid(inputs: Inputs, duty_week: dict) -> List[Row]:
+    """One printable page for a single week's duty rota: Duty | Assigned to,
+    in the same reading order and wording as the app's own Duties screen
+    (context rows say who's covering by room, an unfilled duty says so
+    plainly, fixed duties always show their pinned person)."""
+    monday: date = duty_week["monday"]
+    days = [monday + timedelta(days=i) for i in range(NDAYS)]
+    unfilled = set(duty_week["unfilled"])
+
+    rows: List[Row] = [
+        _merged(f"{inputs.settings.title} – Cleaning Duties", "title", 1.6),
+        _merged(date_range_text(days[0], days[-1]), "subtitle", 1.3),
+        _merged("", "blank", 0.5),
+        Row([LCell("Duty", "header"), LCell("Assigned to", "header")], height=1.25),
+    ]
+    for a in duty_week["assignments"]:
+        duty = a["duty"]
+        if duty in CONTEXT_ROWS:
+            text = "Staff working in the room"
+        elif duty in unfilled:
+            text = "Nobody free this week"
+        else:
+            text = " / ".join(a["people"]) or "—"
+        style = "plain"
+        rows.append(Row([LCell(duty, style), LCell(text, style)], height=1.4))
     return rows

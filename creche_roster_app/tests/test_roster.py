@@ -9,12 +9,13 @@ from pathlib import Path
 from openpyxl import load_workbook
 from pypdf import PdfReader
 
+from creche_roster.duties import DUTY_SLOTS, FIXED_DUTIES, build_duty_roster
 from creche_roster.engine import build_roster
 from creche_roster.excel_io import make_template, read_inputs, write_roster_only, write_workbook
 from creche_roster.layout import NCOLS, date_range_text, week_grid
 from creche_roster.models import InputError, Leave, Override, Shift, t12
 from creche_roster.parsing import norm_hours, parse_date, parse_time
-from creche_roster.pdf_out import write_pdf
+from creche_roster.pdf_out import write_duties_pdf, write_pdf
 from creche_roster.sample import sample_inputs
 
 START = date(2026, 9, 28)  # a Monday
@@ -675,6 +676,22 @@ class Files(unittest.TestCase):
         write_roster_only(roster, out)
         names = load_workbook(out).sheetnames
         self.assertEqual(names, ["Week 1", "Week 2", "Week 3", "Week 4"])
+
+    def test_duties_pdf_has_one_page_per_week_with_every_duty(self):
+        inp = sample_inputs(START)
+        roster = build_roster(inp)
+        duty_weeks = build_duty_roster(inp, roster)
+        out = self.dir / "duties.pdf"
+        write_duties_pdf(inp, duty_weeks, out)
+        reader = PdfReader(str(out))
+        self.assertEqual(len(reader.pages), len(duty_weeks))
+        text = reader.pages[0].extract_text()
+        self.assertIn("Cleaning Duties", text)
+        for duty in DUTY_SLOTS:
+            self.assertIn(duty, text)
+        for duty, names in FIXED_DUTIES:
+            self.assertIn(duty, text)
+            self.assertIn("Priscilla", text)  # the one fixed-duty name always present in the sample data
 
     def test_running_twice_does_not_duplicate_sheets(self):
         self.build()
