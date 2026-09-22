@@ -275,6 +275,7 @@
     <div class="tabs" id="tabs"></div>
   </div>
 
+  <div id="buildError" class="status-row status-bad" style="display:none; margin-top:16px;"></div>
   <div id="weeks"></div>
 </div>
 
@@ -336,12 +337,12 @@
     <div class="grouptitle">Leave &amp; transfers</div>
     <div class="rowlist" id="eventList"><div class="empty">Loading…</div></div>
 
-    <p class="note">Changes save straight away and — once you allow it on first use — notify Claude in this chat, who reruns the real scheduling engine and updates the Print files. Jason and Shehnaz are never scheduled away at the same time; this is blocked here and flagged on the roster if it ever slips through elsewhere.</p>
+    <p class="note">Changes save and the whole roster rebuilds itself instantly, right here — no need to wait on Claude. Jason and Shehnaz are never scheduled away at the same time; this is blocked here and flagged on the roster if it ever slips through elsewhere.</p>
   </div>
 
   <div class="card panel">
     <h2>Change log</h2>
-    <p class="note" style="margin-top:0;">Every request, and exactly who else's shift changed because of it — logged automatically each time Claude rebuilds the roster, so it's here without having to ask.</p>
+    <p class="note" style="margin-top:0;">Every request, and exactly who else's shift changed because of it — logged automatically the instant it happens, so it's here without having to ask.</p>
     <div class="rowlist" id="changeLogList"><div class="empty">Loading…</div></div>
   </div>
 
@@ -363,7 +364,7 @@
       <li><strong>Floor balance</strong> — everyone's on one list for now (no ground floor / 1st floor split yet). The Transfer form records a floor move, but it won't change the schedule until floors are split.</li>
       <li><strong>Eirini's room</strong> — not placed yet, so she isn't part of the same-room rule until she is.</li>
     </ul>
-    <p class="note">Everything here is generated straight from the real Python scheduling engine — press Print on the Roster screen for the actual Excel and PDF.</p>
+    <p class="note">The Roster, Duties and Fairness screens rebuild instantly in your browser using the same rules as the real Python scheduling engine, so they're always current. The Print button's Excel/PDF are only as current as the last time Claude regenerated them — ask Claude to refresh them before printing if you've made changes since.</p>
   </div>
 </div>
 
@@ -390,6 +391,1077 @@
 
 <script id="roster-data" type="application/json">__ROSTER_JSON__</script>
 <script>
+/* Client-side port of the creche_roster Python engine (engine.py, duties.py,
+ * db_import.py, sample.py's Settings, parsing.py) so the Claude Artifact can
+ * recompute the roster instantly in the browser on every staff/leave/transfer
+ * change, instead of waiting for a Claude turn to rerun build_preview.py and
+ * republish. Kept as a faithful, function-for-function translation of the
+ * Python so the two stay in lockstep - see mobile/README.md for the rules
+ * this implements. Dates are plain "YYYY-MM-DD" strings throughout (they
+ * sort/compare correctly as strings, so no Date-object timezone pitfalls).
+ */
+(function (global) {
+  'use strict';
+
+  var SLOTS = ['early', 'mid1', 'mid2', 'late'];
+  var ROLES = ['rotating', 'fixed', 'paired', 'static', 'vacant', 'blank'];
+  var NDAYS = 5;
+  var DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+  var W_FAIR = 10.0;
+  var W_RECENT = 3.0;
+
+  // ---------------------------------------------------------------- utils
+  function g(obj, key) { return (obj && obj[key]) || 0; }
+  function sumAll(obj) {
+    var s = 0;
+    for (var k in obj) if (Object.prototype.hasOwnProperty.call(obj, k)) s += obj[k];
+    return s;
+  }
+  function cmpArrays(a, b) {
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] < b[i]) return -1;
+      if (a[i] > b[i]) return 1;
+    }
+    return 0;
+  }
+  function minByKey(arr, keyFn) {
+    var best = null, bestKey = null;
+    for (var i = 0; i < arr.length; i++) {
+      var x = arr[i], k = keyFn(x);
+      if (best === null || cmpArrays(k, bestKey) < 0) { best = x; bestKey = k; }
+    }
+    return best;
+  }
+  function maxByKey(arr, keyFn) {
+    var best = null, bestKey = null;
+    for (var i = 0; i < arr.length; i++) {
+      var x = arr[i], k = keyFn(x);
+      if (best === null || cmpArrays(k, bestKey) > 0) { best = x; bestKey = k; }
+    }
+    return best;
+  }
+  function sortByKey(arr, keyFn) {
+    return arr.map(function (x) { return [keyFn(x), x]; })
+      .sort(function (a, b) { return cmpArrays(a[0], b[0]); })
+      .map(function (p) { return p[1]; });
+  }
+  function pyRound(x) {
+    var floor = Math.floor(x), diff = x - floor;
+    if (diff < 0.5) return floor;
+    if (diff > 0.5) return floor + 1;
+    return (floor % 2 === 0) ? floor : floor + 1;
+  }
+  function cellKey(key, d) { return key + '@@' + d; }
+
+  // ---------------------------------------------------------------- dates
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  function ymd(iso) {
+    var p = iso.split('-');
+    return { y: +p[0], m: +p[1], d: +p[2] };
+  }
+  function toEpochDay(iso) {
+    var v = ymd(iso);
+    return Math.floor(Date.UTC(v.y, v.m - 1, v.d) / 86400000);
+  }
+  function fromEpochDay(n) {
+    var dt = new Date(n * 86400000);
+    var y = dt.getUTCFullYear(), m = dt.getUTCMonth() + 1, d = dt.getUTCDate();
+    return y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+  }
+  function addDays(iso, n) { return fromEpochDay(toEpochDay(iso) + n); }
+  function weekday(iso) {
+    var v = ymd(iso);
+    var jsDay = new Date(Date.UTC(v.y, v.m - 1, v.d)).getUTCDay();
+    return (jsDay + 6) % 7; // Monday = 0
+  }
+  function mondayOfWeek(iso) { return addDays(iso, -weekday(iso)); }
+  function fmtDay(iso) {
+    var v = ymd(iso);
+    return WD[weekday(iso)] + ' ' + v.d + ' ' + MONTHS[v.m - 1];
+  }
+  function fmtDays(days) {
+    var sorted = days.slice().sort();
+    if (!sorted.length) return '';
+    if (sorted.length <= 3) return sorted.map(fmtDay).join(', ');
+    return fmtDay(sorted[0]) + ' to ' + fmtDay(sorted[sorted.length - 1]) + ', ' + sorted.length + ' days';
+  }
+  function ddMon(iso) {
+    var v = ymd(iso);
+    return String(v.d).padStart(2, '0') + ' ' + MONTHS[v.m - 1];
+  }
+  function weekLabel(days) {
+    var y = ymd(days[days.length - 1]).y;
+    return ddMon(days[0]) + ' – ' + ddMon(days[days.length - 1]) + ' ' + y;
+  }
+  function isOff(text) { return (text || '').trim().toUpperCase() === 'OFF'; }
+
+  // ---------------------------------------------------------------- time
+  function t12(minutes) {
+    var h = Math.floor(minutes / 60) % 12; if (h === 0) h = 12;
+    var m = minutes % 60;
+    return h + ':' + String(m).padStart(2, '0');
+  }
+  function shiftLabel(shift) { return t12(shift.start) + ' – ' + t12(shift.end); }
+  var TIME_RE = /^\s*(\d{1,2})\s*[:.hH ]?\s*(\d{2})\s*$/;
+  function parseTimeLoose(s) {
+    var m = TIME_RE.exec(s);
+    if (m) {
+      var h = parseInt(m[1], 10), mi = parseInt(m[2], 10);
+      if (h >= 0 && h <= 23 && mi >= 0 && mi <= 59) return h * 60 + mi;
+    }
+    throw new Error("'" + s + "' is not a time");
+  }
+  function coversClosing(hoursText, lateEndMinutes) {
+    var parts = String(hoursText).split(/[-–—]/).map(function (p) { return p.trim(); }).filter(Boolean);
+    if (parts.length < 2) return false;
+    var start, end;
+    try {
+      start = parseTimeLoose(parts[0]);
+      end = parseTimeLoose(parts[parts.length - 1]);
+    } catch (e) { return false; }
+    if (end <= start) end = ((Math.floor(end / 60) + 12) % 24) * 60 + (end % 60);
+    return end >= lateEndMinutes;
+  }
+  function mostCommonSlot(slots) {
+    var c = {};
+    slots.forEach(function (sl) { c[sl] = (c[sl] || 0) + 1; });
+    return maxByKey(Object.keys(c), function (sl) { return [c[sl], SLOTS.indexOf(sl)]; });
+  }
+
+  // ---------------------------------------------------------------- settings
+  var SHIFTS = {
+    early: { start: 450, end: 990 },   // 7:30 - 16:30
+    mid1: { start: 480, end: 1020 },  // 8:00 - 17:00
+    mid2: { start: 510, end: 1050 },  // 8:30 - 17:30
+    late: { start: 540, end: 1080 },  // 9:00 - 18:00
+  };
+  function buildSettings(rosterStartIso) {
+    return {
+      title: 'STAFF ROSTER',
+      roster_start: rosterStartIso,
+      weeks: 4,
+      floors: ['All'],
+      shifts: SHIFTS,
+      min_open: { All: 3 },
+      min_close: { All: 3 },
+      break_text: '10 MINS',
+      day_headers: false,
+      fallback_closer: 'Priscilla',
+    };
+  }
+
+  // ---------------------------------------------------------------- validate
+  function validate(inputs) {
+    var p = [];
+    var s = inputs.settings;
+    if (weekday(s.roster_start) !== 0) p.push('Settings: roster_start ' + s.roster_start + ' is not a Monday.');
+    if (!(s.weeks >= 1 && s.weeks <= 12)) p.push('Settings: weeks must be between 1 and 12.');
+    if (!s.floors || !s.floors.length) p.push('Settings: floors is empty.');
+    if (!s.title) p.push('Settings: title is empty.');
+
+    var shiftsOk = SLOTS.every(function (sl) { return !!s.shifts[sl]; });
+    if (!shiftsOk) {
+      p.push('Settings: every slot (early, mid1, mid2, late) needs a start and end time.');
+    } else {
+      SLOTS.forEach(function (sl) {
+        if (s.shifts[sl].start >= s.shifts[sl].end) p.push('Settings: ' + sl + ' start must be before its end.');
+      });
+      var starts = SLOTS.map(function (sl) { return s.shifts[sl].start; });
+      for (var i = 0; i < starts.length - 1; i++) {
+        if (starts[i] >= starts[i + 1]) { p.push('Settings: start times must increase: early < mid1 < mid2 < late.'); break; }
+      }
+    }
+
+    s.floors.forEach(function (f) {
+      [['min_open', s.min_open], ['min_close', s.min_close]].forEach(function (pair) {
+        var label = pair[0], table = pair[1];
+        var v = table[f];
+        if (v === undefined || v === null || v < 0) {
+          p.push('Settings: ' + label + '_' + f.toLowerCase().replace(/ /g, '_') + ' must be a number, 0 or more.');
+        }
+      });
+    });
+
+    var names = new Set();
+    var paired = [];
+    inputs.staff.forEach(function (st) {
+      if (ROLES.indexOf(st.role) === -1) {
+        p.push("Staff: '" + st.name + "' has role '" + st.role + "'. Use one of: " + ROLES.join(', ') + '.');
+        return;
+      }
+      if (s.floors.indexOf(st.floor) === -1) {
+        p.push("Staff: '" + (st.name || st.role) + "' is on floor '" + st.floor + "', which is not in Settings floors (" + s.floors.join(', ') + ').');
+      }
+      if (st.role === 'vacant' || st.role === 'blank') return;
+      if (!st.name) { p.push('Staff: a row has no name.'); return; }
+      if (names.has(st.name.toLowerCase())) p.push("Staff: '" + st.name + "' appears more than once.");
+      names.add(st.name.toLowerCase());
+      if (st.role === 'paired') paired.push(st.name);
+      if (st.role === 'fixed' && SLOTS.indexOf(st.fixed_slot) === -1) {
+        p.push("Staff: '" + st.name + "' is fixed but has no valid slot (use early, mid1, mid2, late or a start time).");
+      }
+      if (st.start_date && st.end_date && st.end_date < st.start_date) {
+        p.push("Staff: '" + st.name + "' has an End date before their Start date.");
+      }
+    });
+    if (!(paired.length === 0 || paired.length === 2)) {
+      p.push("Staff: exactly two people must have role 'paired' (or none). Found " + paired.length + '.');
+    }
+
+    if (s.fallback_closer) {
+      if (!names.has(s.fallback_closer.toLowerCase())) {
+        p.push("Settings: fallback_closer '" + s.fallback_closer + "' is not in the Staff tab.");
+      } else if (paired.indexOf(s.fallback_closer) !== -1) {
+        p.push("Settings: fallback_closer '" + s.fallback_closer + "' can't be one of the two paired staff.");
+      }
+    }
+
+    var exact = {};
+    inputs.staff.forEach(function (st) {
+      if (st.role !== 'vacant' && st.role !== 'blank' && st.name) exact[st.name] = st;
+    });
+    inputs.leave.forEach(function (lv) {
+      if (!(lv.name in exact)) p.push("Leave: '" + lv.name + "' is not in the Staff tab.");
+      if (lv.end != null && lv.end < lv.start) p.push('Leave: ' + lv.name + ' ends before it starts.');
+    });
+    inputs.overrides.forEach(function (ov) {
+      if (!(ov.name in exact)) {
+        p.push("Overrides: '" + ov.name + "' is not in the Staff tab.");
+      } else if (exact[ov.name].role === 'static') {
+        if (!ov.text) p.push('Overrides: ' + ov.name + ' has own hours, so type the hours (e.g. 10:00 - 2:00) or OFF.');
+      } else if (SLOTS.indexOf(ov.slot) === -1) {
+        p.push('Overrides: ' + ov.name + ' has an unknown start time.');
+      }
+      if (ov.end != null && ov.end < ov.start) p.push('Overrides: ' + ov.name + ' ends before it starts.');
+    });
+    return p;
+  }
+
+  // ---------------------------------------------------------------- fairness cost
+  function cost(hist, lastSlot, name, slot) {
+    var h = hist[name] || {};
+    var total = sumAll(h);
+    var c = W_FAIR * g(h, slot) / (total + 1);
+    if (lastSlot[name] === slot) c += W_RECENT;
+    return c;
+  }
+
+  function assignWeeklyBase(members, preCounts, needOpen, needClose, hist, lastSlot, weekIndex, roomOf, takenByRoom) {
+    var remaining = members.slice();
+    var result = {};
+    roomOf = roomOf || {};
+    takenByRoom = takenByRoom || {};
+
+    function priority(n) {
+      var idx = members.indexOf(n);
+      return (((idx - weekIndex) % members.length) + members.length) % members.length;
+    }
+    function clashes(n, slot) {
+      var room = roomOf[n];
+      if (!room) return false;
+      var set = takenByRoom[room];
+      return !!(set && set.has(slot));
+    }
+    function claim(n, slot) {
+      result[n] = slot;
+      var room = roomOf[n];
+      if (room) {
+        if (!takenByRoom[room]) takenByRoom[room] = new Set();
+        takenByRoom[room].add(slot);
+      }
+    }
+    function take(slot, k) {
+      var times = Math.min(k, remaining.length);
+      for (var i = 0; i < times; i++) {
+        var safe = remaining.filter(function (n) { return !clashes(n, slot); });
+        var pool = safe.length ? safe : remaining;
+        var n = minByKey(pool, function (n) {
+          return [
+            g(hist[n], 'early') + g(hist[n], 'late'),
+            g(hist[n], slot),
+            sumAll(hist[n]),
+            lastSlot[n] === slot ? 1 : 0,
+            priority(n),
+          ];
+        });
+        remaining = remaining.filter(function (x) { return x !== n; });
+        claim(n, slot);
+      }
+    }
+
+    var earlyK = Math.max(0, needOpen - g(preCounts, 'early'));
+    var lateK = Math.max(0, needClose - g(preCounts, 'late'));
+    earlyK = Math.min(earlyK, Math.max(0, remaining.length - lateK));
+    take('early', earlyK);
+    take('late', lateK);
+
+    var order = sortByKey(remaining, function (n) {
+      return [g(hist[n], 'mid1') + g(hist[n], 'mid2'), sumAll(hist[n]), priority(n)];
+    });
+    var midCounts = { mid1: 0, mid2: 0 };
+    order.forEach(function (n) {
+      var options = ['mid1', 'mid2'].filter(function (sl) { return !clashes(n, sl); });
+      if (!options.length) options = ['mid1', 'mid2'];
+      var target = minByKey(options, function (sl) {
+        return [g(hist[n], sl), midCounts[sl], lastSlot[n] === sl ? 1 : 0];
+      });
+      claim(n, target);
+      midCounts[target] += 1;
+    });
+
+    resolveRoomClashes(result, roomOf, hist);
+    return result;
+  }
+
+  function roomClashFree(assignment, roomOf) {
+    var seen = new Set();
+    for (var n in assignment) {
+      var slot = assignment[n];
+      var room = roomOf[n];
+      if (!room) continue;
+      var key = room + '|' + slot;
+      if (seen.has(key)) return false;
+      seen.add(key);
+    }
+    return true;
+  }
+
+  function resolveRoomClashes(result, roomOf, hist) {
+    for (var iter = 0; iter < 20; iter++) {
+      var clash = null;
+      var seen = {};
+      for (var n in result) {
+        var slot = result[n];
+        var room = roomOf[n];
+        if (!room) continue;
+        var key = room + '|' + slot;
+        if (key in seen) { clash = [n, seen[key]]; break; }
+        seen[key] = n;
+      }
+      if (!clash) return;
+
+      var best = null;
+      clash.forEach(function (mover) {
+        var cur = result[mover];
+        for (var other in result) {
+          var oslot = result[other];
+          if (other === mover || oslot === cur || roomOf[other] === roomOf[mover]) continue;
+          var trial = Object.assign({}, result);
+          trial[mover] = oslot; trial[other] = cur;
+          if (!roomClashFree(trial, roomOf)) continue;
+          var c = g(hist[mover], oslot) + g(hist[other], cur);
+          if (best === null || c < best[0]) best = [c, mover, other, oslot, cur];
+        }
+      });
+      if (best === null) return;
+      result[best[1]] = best[3];
+      result[best[2]] = best[4];
+    }
+  }
+
+  function choosePair(a, b, presentA, presentB, hist, lastSlot) {
+    function share(name, slot) { return g(hist[name], slot) / (sumAll(hist[name]) + 1); }
+    if (!presentA && !presentB) return {};
+    if (presentA && presentB) {
+      var ea = share(a, 'early'), eb = share(b, 'early');
+      var aEarly;
+      if (Math.abs(ea - eb) > 1e-9) {
+        aEarly = ea < eb;
+      } else {
+        var la = lastSlot[a], lb = lastSlot[b];
+        if (la === 'late' && lb !== 'late') aEarly = true;
+        else if (lb === 'late' && la !== 'late') aEarly = false;
+        else if (la === 'early' && lb !== 'early') aEarly = false;
+        else if (lb === 'early' && la !== 'early') aEarly = true;
+        else aEarly = true;
+      }
+      var out = {};
+      if (aEarly) { out[a] = 'early'; out[b] = 'late'; } else { out[a] = 'late'; out[b] = 'early'; }
+      return out;
+    }
+    var who = presentA ? a : b;
+    var slot = share(who, 'early') <= share(who, 'late') ? 'early' : 'late';
+    var out2 = {}; out2[who] = slot; return out2;
+  }
+
+  // ---------------------------------------------------------------- daily repair/checks
+  function needs(floor, s) { return { early: s.min_open[floor], late: s.min_close[floor] }; }
+
+  function wouldClash(n, targetSlot, slotOf, roomOf) {
+    var room = roomOf ? roomOf[n] : null;
+    if (!room) return false;
+    for (var other in slotOf) {
+      if (other !== n && roomOf[other] === room && slotOf[other] === targetSlot) return true;
+    }
+    return false;
+  }
+
+  function repairFloor(d, floor, slotOf, overridden, byName, s, costFn, checks, wi, need, roomOf) {
+    need = need || needs(floor, s);
+    var floorNames = Object.keys(slotOf).filter(function (n) { return byName[n].floor === floor; });
+    ['early', 'late'].forEach(function (target) {
+      while (true) {
+        var cnt = {};
+        floorNames.forEach(function (n) { cnt[slotOf[n]] = (cnt[slotOf[n]] || 0) + 1; });
+        if ((cnt[target] || 0) >= need[target]) break;
+        var donors = [];
+        floorNames.forEach(function (n) {
+          if (byName[n].role !== 'rotating' || overridden.has(n)) return;
+          var cur = slotOf[n];
+          if (cur === target) return;
+          if ((cur in need) && (cnt[cur] || 0) <= need[cur]) return;
+          donors.push(n);
+        });
+        if (!donors.length) break;
+        var safeDonors = donors.filter(function (n) { return !wouldClash(n, target, slotOf, roomOf); });
+        var pool = safeDonors.length ? safeDonors : donors;
+        pool = sortByKey(pool, function (n) {
+          return [
+            (slotOf[n] === 'mid1' || slotOf[n] === 'mid2') ? 0 : 1,
+            costFn(n, target),
+            floorNames.indexOf(n),
+          ];
+        });
+        var n = pool[0];
+        var old = slotOf[n];
+        slotOf[n] = target;
+        var what = target === 'early' ? 'opening' : 'closing';
+        checks.push({
+          level: 'INFO', rule: 'Cover adjusted',
+          message: n + ' moved from ' + t12(s.shifts[old].start) + ' to ' + t12(s.shifts[target].start) +
+            ' on ' + fmtDay(d) + ' to keep ' + floor + ' ' + what + ' cover.',
+          day: d, week: wi,
+        });
+      }
+    });
+  }
+
+  function capLateForFallback(d, floor, slotOf, overridden, byName, s, need, costFn, checks, wi, fb, roomOf) {
+    var target = need ? need.late : undefined;
+    if (target === undefined || target === null) return;
+    var floorNames = Object.keys(slotOf).filter(function (n) { return byName[n].floor === floor; });
+    var otherSlots = SLOTS.filter(function (sl) { return sl !== 'late'; });
+    while (true) {
+      var cnt = {};
+      floorNames.forEach(function (n) { cnt[slotOf[n]] = (cnt[slotOf[n]] || 0) + 1; });
+      if ((cnt.late || 0) <= target) break;
+      var candidates = floorNames.filter(function (n) {
+        return slotOf[n] === 'late' && byName[n].role === 'rotating' && !overridden.has(n);
+      });
+      if (!candidates.length) break;
+      var slotCounts = {};
+      floorNames.forEach(function (n) { slotCounts[slotOf[n]] = (slotCounts[slotOf[n]] || 0) + 1; });
+      var options = [];
+      candidates.forEach(function (n) {
+        otherSlots.forEach(function (sl) { if (!wouldClash(n, sl, slotOf, roomOf)) options.push([n, sl]); });
+      });
+      if (!options.length) {
+        candidates.forEach(function (n) { otherSlots.forEach(function (sl) { options.push([n, sl]); }); });
+      }
+      var pick = minByKey(options, function (ns) { return [slotCounts[ns[1]] || 0, costFn(ns[0], ns[1])]; });
+      var n = pick[0], moveTo = pick[1];
+      var old = slotOf[n];
+      slotOf[n] = moveTo;
+      checks.push({
+        level: 'INFO', rule: 'Cover adjusted',
+        message: n + ' moved from ' + t12(s.shifts[old].start) + ' to ' + t12(s.shifts[moveTo].start) +
+          ' on ' + fmtDay(d) + ' so closing stays at ' + (target + 1) + ' with ' + fb + ' covering, not more.',
+        day: d, week: wi,
+      });
+    }
+  }
+
+  function checkFloor(d, floor, slotOf, byName, s, checks, wi, need) {
+    need = need || needs(floor, s);
+    var cnt = {};
+    for (var n in slotOf) if (byName[n].floor === floor) cnt[slotOf[n]] = (cnt[slotOf[n]] || 0) + 1;
+    [['early', 'Opening cover', 'opening'], ['late', 'Closing cover', 'closing']].forEach(function (t) {
+      var slot = t[0], rule = t[1], what = t[2];
+      if (need[slot] > 0 && (cnt[slot] || 0) < need[slot]) {
+        checks.push({
+          level: 'BREACH', rule: rule,
+          message: floor + ' ' + what + ': ' + (cnt[slot] || 0) + ' on the ' + t12(s.shifts[slot].start) +
+            ' start, minimum is ' + need[slot] + ' (' + fmtDay(d) + ').',
+          day: d, week: wi,
+        });
+      }
+    });
+  }
+
+  function checkRooms(d, slotOf, roomOf, shifts, checks, wi) {
+    var byRoom = {};
+    for (var name in slotOf) {
+      var slot = slotOf[name];
+      var room = roomOf[name];
+      if (!room) continue;
+      if (!byRoom[room]) byRoom[room] = {};
+      if (!byRoom[room][slot]) byRoom[room][slot] = [];
+      byRoom[room][slot].push(name);
+    }
+    for (var r in byRoom) {
+      for (var sl in byRoom[r]) {
+        var names = byRoom[r][sl];
+        if (names.length > 1) {
+          var sorted = names.slice().sort();
+          checks.push({
+            level: 'BREACH', rule: 'Room clash',
+            message: r + ': ' + sorted.join(', ') + ' are all on the ' + t12(shifts[sl].start) +
+              ' start on ' + fmtDay(d) + " - same-room staff can't share a shift.",
+            day: d, week: wi,
+          });
+        }
+      }
+    }
+  }
+
+  function reportPairing(pair, days, cells, leaveKind, ignoredOverride, checks, wi) {
+    var a = pair[0], b = pair[1];
+    var suspended = {};
+    var bothAway = [];
+    days.forEach(function (d) {
+      var la = leaveKind(a, d), lb = leaveKind(b, d);
+      if (!la && !lb) {
+        var sa = cells.get(cellKey(a, d)).slot, sb = cells.get(cellKey(b, d)).slot;
+        var ok = (sa === 'early' && sb === 'late') || (sa === 'late' && sb === 'early');
+        if (!ok) {
+          checks.push({ level: 'BREACH', rule: 'Pairing rule', message: a + ' and ' + b + ' are not complementary on ' + fmtDay(d) + '.', day: d, week: wi });
+        }
+      } else if (la && !lb) {
+        (suspended[a] = suspended[a] || []).push(d);
+      } else if (lb && !la) {
+        (suspended[b] = suspended[b] || []).push(d);
+      } else {
+        bothAway.push(d);
+      }
+    });
+    if (bothAway.length) {
+      checks.push({
+        level: 'WARNING', rule: 'Pairing policy',
+        message: a + ' and ' + b + ' are both away on ' + fmtDays(bothAway) + ' — policy says they should never be away at the same time. Double-check that leave.',
+        day: null, week: wi,
+      });
+    }
+    for (var absent in suspended) {
+      var ds = suspended[absent];
+      var partner = absent === a ? b : a;
+      var missing = ds.filter(function (d) { return !cells.get(cellKey(partner, d)).overridden; });
+      if (missing.length) {
+        checks.push({
+          level: 'WARNING', rule: 'Pairing suspended',
+          message: absent + ' is away: ' + fmtDays(ds) + '. ' + partner + ' has no manual start time for ' + fmtDays(missing) + ', so the rotation slot is used. Add a row in Overrides to set it yourself.',
+          day: null, week: wi,
+        });
+      } else {
+        checks.push({
+          level: 'INFO', rule: 'Pairing suspended',
+          message: absent + ' is away: ' + fmtDays(ds) + '. ' + partner + "'s start time is set manually in Overrides.",
+          day: null, week: wi,
+        });
+      }
+    }
+    for (var name in ignoredOverride) {
+      var ds2 = ignoredOverride[name];
+      var partner2 = name === a ? b : a;
+      checks.push({
+        level: 'INFO', rule: 'Override ignored',
+        message: 'Override for ' + name + ' ignored on ' + fmtDays(ds2) + ' because ' + partner2 + ' is working: the pairing rule applies. You can delete or end that Overrides row.',
+        day: null, week: wi,
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------- build_roster
+  function buildRoster(inputs) {
+    var problems = validate(inputs);
+    if (problems.length) {
+      var e = new Error(problems.join('\n'));
+      e.problems = problems;
+      e.isInputError = true;
+      throw e;
+    }
+
+    var s = inputs.settings;
+    var staffKeys = [];
+    inputs.staff.forEach(function (st, i) {
+      var key = (st.role !== 'vacant' && st.role !== 'blank') ? st.name : (st.role + '#' + i);
+      staffKeys.push([key, st]);
+    });
+    var working = staffKeys.filter(function (ks) { return ['rotating', 'fixed', 'paired', 'static'].indexOf(ks[1].role) !== -1; });
+    var byName = {};
+    working.forEach(function (ks) { byName[ks[1].name] = ks[1]; });
+    var pair = working.filter(function (ks) { return ks[1].role === 'paired'; }).map(function (ks) { return ks[1].name; });
+
+    var roomOf = {};
+    for (var n in byName) if (byName[n].room) roomOf[n] = byName[n].room;
+
+    var hist = {};
+    for (var n2 in byName) hist[n2] = Object.assign({}, inputs.history[n2] || {});
+    var period = {};
+    for (var n3 in byName) period[n3] = {};
+    var lastSlot = {};
+    for (var n4 in inputs.last_slot) if (n4 in byName) lastSlot[n4] = inputs.last_slot[n4];
+
+    var checks = [];
+    var weeks = [];
+
+    function leaveKind(name, d) {
+      var st = byName[name];
+      if (st) {
+        if (st.start_date && d < st.start_date) return 'Not yet started';
+        if (st.end_date && d > st.end_date) return 'Left';
+      }
+      for (var i = 0; i < inputs.leave.length; i++) {
+        var lv = inputs.leave[i];
+        if (lv.name === name && lv.start <= d && (lv.end == null || d <= lv.end)) return lv.kind;
+      }
+      return null;
+    }
+    function ovCovers(ov, d) { return ov.start <= d && (ov.end == null || d <= ov.end); }
+    function overrideSlot(name, d) {
+      var found = null;
+      inputs.overrides.forEach(function (ov) { if (ov.name === name && ovCovers(ov, d) && ov.slot) found = ov.slot; });
+      return found;
+    }
+    function overrideText(name, d) {
+      var found = null;
+      inputs.overrides.forEach(function (ov) { if (ov.name === name && ovCovers(ov, d) && ov.text) found = ov.text; });
+      return found;
+    }
+    function effectiveOverride(name, d) {
+      var ov = overrideSlot(name, d);
+      if (ov && byName[name].role === 'paired') {
+        var partner = name === pair[0] ? pair[1] : pair[0];
+        if (!leaveKind(partner, d)) return [null, true];
+      }
+      return [ov, false];
+    }
+    function costFn(name, slot) { return cost(hist, lastSlot, name, slot); }
+
+    for (var wi = 0; wi < s.weeks; wi++) {
+      var monday = addDays(s.roster_start, wi * 7);
+      var days = [];
+      for (var i = 0; i < NDAYS; i++) days.push(addDays(monday, i));
+      var present = {};
+      for (var n5 in byName) present[n5] = days.filter(function (d) { return !leaveKind(n5, d); });
+
+      // ---- weekly base ----
+      var manual = {};
+      for (var n6 in byName) {
+        var st6 = byName[n6];
+        if (st6.role === 'static' || !present[n6].length) continue;
+        var ovs = present[n6].map(function (d) { return effectiveOverride(n6, d)[0]; }).filter(Boolean);
+        if (ovs.length) {
+          var c6 = {};
+          ovs.forEach(function (o) { c6[o] = (c6[o] || 0) + 1; });
+          manual[n6] = maxByKey(Object.keys(c6), function (sl) { return [c6[sl], -SLOTS.indexOf(sl)]; });
+        }
+      }
+
+      var base = {};
+      for (var n7 in byName) {
+        var st7 = byName[n7];
+        if (st7.role === 'fixed' && present[n7].length) base[n7] = manual[n7] || st7.fixed_slot || 'early';
+      }
+      if (pair.length) {
+        var a = pair[0], b = pair[1];
+        Object.assign(base, choosePair(a, b, !!present[a].length, !!present[b].length, hist, lastSlot));
+        [[a, b], [b, a]].forEach(function (pr) {
+          var nm = pr[0], partner = pr[1];
+          if (manual[nm] !== undefined && !present[partner].length) base[nm] = manual[nm];
+        });
+      }
+      s.floors.forEach(function (floor) {
+        var floorPeople = [];
+        for (var nn in byName) if (byName[nn].floor === floor) floorPeople.push(byName[nn]);
+        floorPeople.forEach(function (st) {
+          if (st.role === 'rotating' && manual[st.name] !== undefined) base[st.name] = manual[st.name];
+        });
+        var pre = {};
+        floorPeople.forEach(function (st) { if (base[st.name] !== undefined) pre[base[st.name]] = (pre[base[st.name]] || 0) + 1; });
+        var members = floorPeople
+          .filter(function (st) { return st.role === 'rotating' && present[st.name].length && manual[st.name] === undefined; })
+          .map(function (st) { return st.name; });
+
+        var minClose = s.min_close[floor];
+        if (
+          s.fallback_closer && pair.length &&
+          byName[s.fallback_closer] && byName[s.fallback_closer].floor === floor &&
+          !pair.some(function (p) { return byName[p] && byName[p].floor === floor && base[p] === 'late'; })
+        ) {
+          minClose = Math.max(0, minClose - 1);
+        }
+        if (members.length) {
+          var takenByRoom = {};
+          for (var nb in base) {
+            var r = roomOf[nb];
+            if (r) { if (!takenByRoom[r]) takenByRoom[r] = new Set(); takenByRoom[r].add(base[nb]); }
+          }
+          Object.assign(base, assignWeeklyBase(members, pre, s.min_open[floor], minClose, hist, lastSlot, wi, roomOf, takenByRoom));
+        }
+      });
+
+      // ---- daily pass ----
+      var cells = new Map();
+      var ignoredOverride = {};
+      days.forEach(function (d) {
+        var slotOf = {};
+        var overridden = new Set();
+        staffKeys.forEach(function (ks) {
+          var key = ks[0], st = ks[1];
+          if (st.role === 'blank') { cells.set(cellKey(key, d), { kind: 'blank', text: '' }); return; }
+          if (st.role === 'vacant') { cells.set(cellKey(key, d), { kind: 'vacant', text: st.hours[weekday(d)] || st.note }); return; }
+          var lk = leaveKind(st.name, d);
+          if (lk) { cells.set(cellKey(key, d), { kind: 'leave', text: lk }); return; }
+          if (st.role === 'static') {
+            var text = overrideText(st.name, d) || st.hours[weekday(d)] || st.note;
+            if (isOff(text)) cells.set(cellKey(key, d), { kind: 'leave', text: 'OFF' });
+            else cells.set(cellKey(key, d), { kind: 'static', text: text });
+            return;
+          }
+          var eo = effectiveOverride(st.name, d);
+          var ov = eo[0], ignored = eo[1];
+          if (ignored) (ignoredOverride[st.name] = ignoredOverride[st.name] || []).push(d);
+          if (ov) { slotOf[st.name] = ov; overridden.add(st.name); }
+          else { slotOf[st.name] = base[st.name]; }
+        });
+
+        var fb = s.fallback_closer;
+        var fbAssignment = fb ? cells.get(cellKey(fb, d)) : null;
+        var fbAvailable = !!(fb && byName[fb] && fbAssignment && fbAssignment.kind === 'static' &&
+          coversClosing(fbAssignment.text, s.shifts.late.end));
+
+        s.floors.forEach(function (floor) {
+          var need = needs(floor, s);
+          var fallbackCovering = false;
+          if (fbAvailable && pair.length && byName[fb].floor === floor && (need.late || 0) > 0) {
+            var covered = pair.some(function (p) { return byName[p] && byName[p].floor === floor && slotOf[p] === 'late'; });
+            if (!covered) {
+              need = Object.assign({}, need);
+              need.late = Math.max(0, need.late - 1);
+              fallbackCovering = true;
+              checks.push({
+                level: 'INFO', rule: 'Closing fallback',
+                message: fb + ' covers closing on ' + fmtDay(d) + ' because neither ' + pair[0] + ' nor ' + pair[1] + ' is closing.',
+                day: d, week: wi,
+              });
+            }
+          }
+          repairFloor(d, floor, slotOf, overridden, byName, s, costFn, checks, wi, need, roomOf);
+          if (fallbackCovering) capLateForFallback(d, floor, slotOf, overridden, byName, s, need, costFn, checks, wi, fb, roomOf);
+          checkFloor(d, floor, slotOf, byName, s, checks, wi, need);
+        });
+
+        checkRooms(d, slotOf, roomOf, s.shifts, checks, wi);
+
+        for (var name in slotOf) {
+          var slot = slotOf[name];
+          cells.set(cellKey(name, d), { kind: 'shift', slot: slot, text: shiftLabel(s.shifts[slot]), overridden: overridden.has(name) });
+        }
+      });
+
+      if (pair.length) reportPairing(pair, days, cells, leaveKind, ignoredOverride, checks, wi);
+
+      weeks.push({ monday: monday, days: days, cells: cells });
+
+      for (var n8 in byName) {
+        var slots = days.map(function (d) { return cells.get(cellKey(n8, d)); })
+          .filter(function (c) { return c && c.kind === 'shift'; })
+          .map(function (c) { return c.slot; });
+        slots.forEach(function (sl) { hist[n8][sl] = (hist[n8][sl] || 0) + 1; period[n8][sl] = (period[n8][sl] || 0) + 1; });
+        if (slots.length) lastSlot[n8] = mostCommonSlot(slots);
+      }
+    }
+
+    return {
+      inputs: inputs, staff_keys: staffKeys, weeks: weeks, checks: checks,
+      period_counts: period, cumulative_counts: hist, last_slot: lastSlot,
+    };
+  }
+
+  // ---------------------------------------------------------------- duties.js port
+  var DUTY_SLOTS = [
+    'Hallway upstairs / Hoover stairs upstairs',
+    "Children's Toilets",
+    'Staff Toilet upstairs',
+    'Kitchen',
+    'Staff Room',
+    'Hallway downstairs / windows / door handles',
+    'Staff Toilet',
+    'Back Garden & Bins',
+    'Front creche',
+    'Paper & Soap dispensers',
+  ];
+  var DUTY_ELIGIBLE_SLOTS = {
+    'Kitchen': new Set(['mid2', 'late']),
+    'Hallway downstairs / windows / door handles': new Set(['mid2', 'late']),
+    "Children's Toilets": new Set(['mid2', 'late']),
+    'Back Garden & Bins': new Set(['early']),
+    'Staff Toilet upstairs': new Set(['early']),
+    'Staff Toilet': new Set(['early']),
+    'Hallway upstairs / Hoover stairs upstairs': new Set(['mid1']),
+    'Staff Room': new Set(['mid1']),
+    'Front creche': new Set(['mid1']),
+    'Paper & Soap dispensers': new Set(['mid1']),
+  };
+  var CONTEXT_ROWS = ['Cot Room', 'Changing Area'];
+  var FIXED_DUTIES = [['Dusting', ['Sue']], ['Laundry', ['Shehnaz', 'Priscilla']]];
+  var EXTRA_POOL = ['Jason'];
+
+  function dutyPool(inputs) {
+    var fixedNames = new Set();
+    FIXED_DUTIES.forEach(function (fd) { fd[1].forEach(function (n) { fixedNames.add(n); }); });
+    var pool = [];
+    inputs.staff.forEach(function (st) {
+      if (st.role === 'rotating' && st.name && !fixedNames.has(st.name)) pool.push(st.name);
+    });
+    EXTRA_POOL.forEach(function (n) {
+      if (pool.indexOf(n) === -1 && inputs.staff.some(function (st) { return st.name === n; })) pool.push(n);
+    });
+    return pool;
+  }
+  function presentAllWeek(inputs, name, days) {
+    var st = inputs.staff.filter(function (s) { return s.name === name; })[0];
+    if (!st) return false;
+    for (var i = 0; i < days.length; i++) {
+      var d = days[i];
+      if (st.start_date && d < st.start_date) return false;
+      if (st.end_date && d > st.end_date) return false;
+      if (inputs.leave.some(function (lv) { return lv.name === name && lv.start <= d && (lv.end == null || d <= lv.end); })) return false;
+    }
+    return true;
+  }
+  function weeklySlot(roster, weekIndex, name) {
+    var week = roster.weeks[weekIndex];
+    var slots = [];
+    week.days.forEach(function (d) {
+      var c = week.cells.get(cellKey(name, d));
+      if (c && c.kind === 'shift') slots.push(c.slot);
+    });
+    if (!slots.length) return null;
+    var counts = {};
+    slots.forEach(function (sl) { counts[sl] = (counts[sl] || 0) + 1; });
+    return maxByKey(Object.keys(counts), function (sl) { return [counts[sl], -SLOTS.indexOf(sl)]; });
+  }
+
+  function buildDutyRoster(inputs, roster) {
+    var pool = dutyPool(inputs);
+    var history = {};
+    pool.forEach(function (n) { history[n] = {}; });
+    var weeksOut = [];
+    for (var wi = 0; wi < inputs.settings.weeks; wi++) {
+      var monday = addDays(inputs.settings.roster_start, wi * 7);
+      var days = [];
+      for (var i = 0; i < NDAYS; i++) days.push(addDays(monday, i));
+      var remaining = pool.filter(function (n) { return presentAllWeek(inputs, n, days); });
+      var slotOf = {};
+      remaining.forEach(function (n) { slotOf[n] = weeklySlot(roster, wi, n); });
+      var assignedByDuty = {};
+
+      function bestPick(candidates, duty) {
+        return minByKey(candidates, function (n) { return [g(history[n], duty), sumAll(history[n]), pool.indexOf(n)]; });
+      }
+
+      var offset = wi % DUTY_SLOTS.length;
+      var pickOrder = DUTY_SLOTS.slice(offset).concat(DUTY_SLOTS.slice(0, offset));
+
+      pickOrder.forEach(function (duty) {
+        var eligible = remaining.filter(function (n) { return DUTY_ELIGIBLE_SLOTS[duty].has(slotOf[n]); });
+        if (!eligible.length) return;
+        var person = bestPick(eligible, duty);
+        remaining = remaining.filter(function (x) { return x !== person; });
+        history[person][duty] = (history[person][duty] || 0) + 1;
+        assignedByDuty[duty] = person;
+      });
+      pickOrder.forEach(function (duty) {
+        if (assignedByDuty[duty] || !remaining.length) return;
+        var person = bestPick(remaining, duty);
+        remaining = remaining.filter(function (x) { return x !== person; });
+        history[person][duty] = (history[person][duty] || 0) + 1;
+        assignedByDuty[duty] = person;
+      });
+
+      var unfilled = DUTY_SLOTS.filter(function (duty) { return !assignedByDuty[duty]; });
+
+      var assignments = CONTEXT_ROWS.map(function (duty) { return { duty: duty, people: [] }; });
+      DUTY_SLOTS.forEach(function (duty) {
+        assignments.push({ duty: duty, people: assignedByDuty[duty] ? [assignedByDuty[duty]] : [] });
+      });
+      FIXED_DUTIES.forEach(function (fd) {
+        var duty = fd[0], names = fd[1];
+        var present = names.filter(function (n) { return presentAllWeek(inputs, n, days); });
+        assignments.push({ duty: duty, people: present.length ? present : names });
+      });
+      weeksOut.push({ monday: monday, assignments: assignments, unfilled: unfilled });
+    }
+    return weeksOut;
+  }
+
+  function dutyFairness(inputs, weeks) {
+    var totals = {};
+    dutyPool(inputs).forEach(function (n) { totals[n] = 0; });
+    weeks.forEach(function (week) {
+      week.assignments.forEach(function (a) {
+        a.people.forEach(function (p) { if (p in totals) totals[p]++; });
+      });
+    });
+    return totals;
+  }
+
+  // ---------------------------------------------------------------- db_import.js port
+  function staffFromDoc(doc) {
+    var role = doc.role || 'blank';
+    var fixedSlot = null;
+    if (role === 'fixed') {
+      var note = doc.note || '';
+      fixedSlot = SLOTS.indexOf(note) !== -1 ? note : 'early';
+    }
+    var hours = doc.hours || ['', '', '', '', ''];
+    return {
+      name: doc.name || '', floor: doc.floor || 'All', role: role, note: doc.note || '',
+      fixed_slot: fixedSlot, hours: hours.slice(), number: doc.number || '',
+      start_date: doc.startDate || null, end_date: doc.endDate || null, room: doc.room || '',
+    };
+  }
+  function leaveFromDoc(doc) { return { name: doc.name, start: doc.start, end: doc.end || null, kind: doc.kind || 'Leave' }; }
+  function overrideFromTransferDoc(doc) {
+    return { name: doc.name, start: doc.start, end: doc.end || null, slot: doc.slot || null, text: doc.text || '' };
+  }
+  function seedNewJoinerHistory(staff, history) {
+    var scheduled = new Set(['rotating', 'fixed', 'paired']);
+    var countedNames = staff.filter(function (s) { return scheduled.has(s.role) && s.name && (s.name in history); }).map(function (s) { return s.name; });
+    var avg;
+    if (countedNames.length) {
+      avg = {};
+      SLOTS.forEach(function (slot) {
+        avg[slot] = pyRound(countedNames.reduce(function (sum, n) { return sum + g(history[n], slot); }, 0) / countedNames.length);
+      });
+    } else {
+      avg = {}; SLOTS.forEach(function (slot) { avg[slot] = 0; });
+    }
+    var seeded = Object.assign({}, history);
+    staff.forEach(function (st) {
+      if (scheduled.has(st.role) && st.name && !(st.name in seeded)) seeded[st.name] = Object.assign({}, avg);
+    });
+    return seeded;
+  }
+  function buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, history, lastSlot) {
+    var ordered = staffDocs.slice().sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
+    var staff = ordered.map(staffFromDoc);
+    var leave = leaveDocs.map(leaveFromDoc);
+    history = seedNewJoinerHistory(staff, history);
+    var overrides = transferDocs.filter(function (d) { return d.slot || d.text; }).map(overrideFromTransferDoc);
+    return { settings: settings, staff: staff, leave: leave, overrides: overrides, history: history, last_slot: lastSlot };
+  }
+
+  // ---------------------------------------------------------------- build_preview.js port
+  var ADJUSTMENT_RULES = new Set(['Cover adjusted', 'Closing fallback']);
+
+  function summaryJson(inputs, roster) {
+    var weeksOut = [];
+    roster.weeks.forEach(function (week, wi) {
+      var breaches = roster.checks.filter(function (c) { return c.week === wi && c.level === 'BREACH'; }).map(function (c) { return c.message; });
+      var warnings = roster.checks.filter(function (c) { return c.week === wi && c.level === 'WARNING'; }).map(function (c) { return c.message; });
+      var adjustments = roster.checks.filter(function (c) { return c.week === wi && ADJUSTMENT_RULES.has(c.rule); }).map(function (c) { return c.message; });
+      var infos = roster.checks.filter(function (c) { return c.week === wi && c.level === 'INFO' && !ADJUSTMENT_RULES.has(c.rule); }).map(function (c) { return c.message; });
+      var working = [], people = [];
+      roster.staff_keys.forEach(function (ks) {
+        var key = ks[0], st = ks[1];
+        if (st.role === 'blank') return;
+        var label = st.name || (st.role === 'vacant' ? 'Vacant post' : '');
+        if (!label) return;
+        var daysOut = week.days.map(function (d) {
+          var c = week.cells.get(cellKey(key, d));
+          return { text: c.text || '', kind: c.kind };
+        });
+        people.push({ name: label, role: st.role, days: daysOut });
+        if (st.role !== 'vacant' && week.days.some(function (d) {
+          var c = week.cells.get(cellKey(key, d)); return c && (c.kind === 'shift' || c.kind === 'static');
+        })) working.push(st.name);
+      });
+      weeksOut.push({
+        label: weekLabel(week.days), monday: week.monday, day_names: DAY_NAMES,
+        breaches: breaches, warnings: warnings, adjustments: adjustments, notes: infos,
+        working: working, people: people,
+      });
+    });
+    return { title: inputs.settings.title, weeks: weeksOut };
+  }
+
+  function dutiesJson(inputs, dutyWeeks) {
+    return dutyWeeks.map(function (dw) {
+      var days = []; for (var i = 0; i < NDAYS; i++) days.push(addDays(dw.monday, i));
+      return { label: weekLabel(days), monday: dw.monday, assignments: dw.assignments, unfilled: dw.unfilled };
+    });
+  }
+
+  function fairnessJson(inputs, roster, dutyWeeks) {
+    var rotatingNames = inputs.staff.filter(function (st) { return st.role === 'rotating' && st.name; }).map(function (st) { return st.name; });
+    var shiftRows = rotatingNames.map(function (name) {
+      var pc = roster.period_counts[name] || {};
+      return { name: name, early: g(pc, 'early'), mid1: g(pc, 'mid1'), mid2: g(pc, 'mid2'), late: g(pc, 'late') };
+    });
+    var totals = dutyFairness(inputs, dutyWeeks);
+    var dutyRows = dutyPool(inputs).map(function (name) { return { name: name, duties: totals[name] || 0 }; });
+    return { shifts: shiftRows, duties: dutyRows };
+  }
+
+  // ---------------------------------------------------------------- top-level build + diff
+  function build(staffDocs, leaveDocs, transferDocs, rosterStartIso) {
+    var settings = buildSettings(rosterStartIso);
+    var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, {}, {});
+    var roster = buildRoster(inputs);
+    var dutyWeeks = buildDutyRoster(inputs, roster);
+    var summary = summaryJson(inputs, roster);
+    summary.duties = dutiesJson(inputs, dutyWeeks);
+    summary.fairness = fairnessJson(inputs, roster, dutyWeeks);
+    return { inputs: inputs, roster: roster, dutyWeeks: dutyWeeks, summary: summary };
+  }
+
+  function peopleByWeek(roster) {
+    return roster.weeks.map(function (week) {
+      var people = {};
+      roster.staff_keys.forEach(function (ks) {
+        var key = ks[0], st = ks[1];
+        if (st.role === 'blank' || !st.name) return;
+        people[st.name] = week.days.map(function (d) { return (week.cells.get(cellKey(key, d)) || {}).text || ''; });
+      });
+      return people;
+    });
+  }
+  function diffRosters(beforeRoster, afterRoster, changedName) {
+    if (!beforeRoster) return [];
+    var beforeWeeks = peopleByWeek(beforeRoster);
+    var afterWeeks = peopleByWeek(afterRoster);
+    var changed = new Set();
+    afterWeeks.forEach(function (ap, wi) {
+      var bp = beforeWeeks[wi] || {};
+      for (var name in ap) {
+        if (name === changedName) continue;
+        var b = bp[name], a = ap[name];
+        if (!b || a.join('|') !== b.join('|')) changed.add(name);
+      }
+    });
+    return Array.from(changed);
+  }
+
+  global.RosterEngine = {
+    build: build,
+    buildSettings: buildSettings,
+    buildInputsFromDb: buildInputsFromDb,
+    buildRoster: buildRoster,
+    buildDutyRoster: buildDutyRoster,
+    summaryJson: summaryJson,
+    dutiesJson: dutiesJson,
+    fairnessJson: fairnessJson,
+    diffRosters: diffRosters,
+    mondayOfWeek: mondayOfWeek,
+    addDays: addDays,
+  };
+})(typeof window !== 'undefined' ? window : global);
+
+</script>
+<script>
 (function(){
   var $ = function(id){ return document.getElementById(id); };
   var toastEl = $('toast');
@@ -406,8 +1478,15 @@
   }
 
   $('refreshBtn').onclick = function(){
-    $('refreshBtn').classList.add('spin');
-    location.reload();
+    var btn = $('refreshBtn');
+    btn.classList.add('spin');
+    var out = recompute();
+    if(!out && !(staffLoaded && leaveLoaded && transferLoaded)){
+      // Live data isn't connected in this view - fall back to a full reload.
+      location.reload();
+      return;
+    }
+    setTimeout(function(){ btn.classList.remove('spin'); }, 400);
   };
 
   var data;
@@ -441,105 +1520,113 @@
     return '';
   }
 
-  data.weeks.forEach(function(week, wi){
-    var tab = document.createElement('div');
-    tab.className = 'tab' + (wi===0 ? ' active' : '');
-    tab.textContent = 'Week ' + (wi+1);
-    tab.onclick = function(){ selectWeek(wi); };
-    tabsEl.appendChild(tab);
+  var currentWeekTab = 0, currentDutyTab = 0;
+  function renderRoster(d){
+    tabsEl.innerHTML = '';
+    dutyTabsEl.innerHTML = '';
+    weeksEl.innerHTML = '';
+    d.weeks.forEach(function(week, wi){
+      var tab = document.createElement('div');
+      tab.className = 'tab' + (wi===currentWeekTab ? ' active' : '');
+      tab.textContent = 'Week ' + (wi+1);
+      tab.onclick = function(){ selectWeek(wi); };
+      tabsEl.appendChild(tab);
 
-    var dtab = document.createElement('div');
-    dtab.className = 'tab' + (wi===0 ? ' active' : '');
-    dtab.textContent = 'Week ' + (wi+1);
-    dtab.onclick = function(){ selectDutyWeek(wi); };
-    dutyTabsEl.appendChild(dtab);
+      var dtab = document.createElement('div');
+      dtab.className = 'tab' + (wi===currentDutyTab ? ' active' : '');
+      dtab.textContent = 'Week ' + (wi+1);
+      dtab.onclick = function(){ selectDutyWeek(wi); };
+      dutyTabsEl.appendChild(dtab);
 
-    var wrap = document.createElement('div');
-    wrap.className = 'week card' + (wi===0 ? ' active' : '');
-    wrap.id = 'week-' + wi;
+      var wrap = document.createElement('div');
+      wrap.className = 'week card' + (wi===currentWeekTab ? ' active' : '');
+      wrap.id = 'week-' + wi;
 
-    var heading = document.createElement('div');
-    heading.style.cssText = 'font-size:13px; font-weight:800; margin-bottom:10px;';
-    heading.textContent = week.label;
-    wrap.appendChild(heading);
+      var heading = document.createElement('div');
+      heading.style.cssText = 'font-size:13px; font-weight:800; margin-bottom:10px;';
+      heading.textContent = week.label;
+      wrap.appendChild(heading);
 
-    // Only shown when there's something to flag - a clean week says nothing,
-    // rather than a constant "all good" banner once that's the normal case.
-    if(week.breaches.length || week.warnings.length){
-      var status = document.createElement('div');
-      status.className = 'status-row ' + (week.breaches.length ? 'status-bad' : 'status-warn');
-      status.textContent = week.breaches.length
-        ? (week.breaches.length + ' cover breach' + (week.breaches.length>1?'es':'') + ' this week')
-        : (week.warnings.length + ' thing' + (week.warnings.length>1?'s':'') + ' worth checking');
-      wrap.appendChild(status);
+      // Only shown when there's something to flag - a clean week says nothing,
+      // rather than a constant "all good" banner once that's the normal case.
+      if(week.breaches.length || week.warnings.length){
+        var status = document.createElement('div');
+        status.className = 'status-row ' + (week.breaches.length ? 'status-bad' : 'status-warn');
+        status.textContent = week.breaches.length
+          ? (week.breaches.length + ' cover breach' + (week.breaches.length>1?'es':'') + ' this week')
+          : (week.warnings.length + ' thing' + (week.warnings.length>1?'s':'') + ' worth checking');
+        wrap.appendChild(status);
 
-      week.breaches.concat(week.warnings).forEach(function(msg, i){
-        var isBad = i < week.breaches.length;
-        var line = document.createElement('div');
-        line.className = 'msg-line ' + (isBad ? 'msg-bad' : 'msg-warn');
-        line.textContent = (isBad ? 'Breach: ' : 'Check: ') + msg;
-        wrap.appendChild(line);
-      });
-    }
-
-    week.people.forEach(function(p){
-      var row = document.createElement('div');
-      row.className = 'personrow';
-      var head = document.createElement('div');
-      head.className = 'personhead';
-      var nm = document.createElement('span');
-      nm.className = 'personname';
-      nm.textContent = p.name;
-      head.appendChild(nm);
-      if(p.role === 'vacant'){
-        var rl = document.createElement('span');
-        rl.className = 'personrole';
-        rl.textContent = 'vacant';
-        head.appendChild(rl);
+        week.breaches.concat(week.warnings).forEach(function(msg, i){
+          var isBad = i < week.breaches.length;
+          var line = document.createElement('div');
+          line.className = 'msg-line ' + (isBad ? 'msg-bad' : 'msg-warn');
+          line.textContent = (isBad ? 'Breach: ' : 'Check: ') + msg;
+          wrap.appendChild(line);
+        });
       }
-      row.appendChild(head);
 
-      var pills = document.createElement('div');
-      pills.className = 'daypills';
-      p.days.forEach(function(dcell, di){
-        var pill = document.createElement('div');
-        pill.className = 'daypill ' + pillClass(dcell.kind, dcell.text);
-        var lbl = document.createElement('div');
-        lbl.className = 'dlabel';
-        lbl.textContent = week.day_names[di];
-        var txt = document.createElement('div');
-        txt.className = 'dtext';
-        txt.textContent = dcell.text || '—';
-        pill.appendChild(lbl);
-        pill.appendChild(txt);
-        pills.appendChild(pill);
+      week.people.forEach(function(p){
+        var row = document.createElement('div');
+        row.className = 'personrow';
+        var head = document.createElement('div');
+        head.className = 'personhead';
+        var nm = document.createElement('span');
+        nm.className = 'personname';
+        nm.textContent = p.name;
+        head.appendChild(nm);
+        if(p.role === 'vacant'){
+          var rl = document.createElement('span');
+          rl.className = 'personrole';
+          rl.textContent = 'vacant';
+          head.appendChild(rl);
+        }
+        row.appendChild(head);
+
+        var pills = document.createElement('div');
+        pills.className = 'daypills';
+        p.days.forEach(function(dcell, di){
+          var pill = document.createElement('div');
+          pill.className = 'daypill ' + pillClass(dcell.kind, dcell.text);
+          var lbl = document.createElement('div');
+          lbl.className = 'dlabel';
+          lbl.textContent = week.day_names[di];
+          var txt = document.createElement('div');
+          txt.className = 'dtext';
+          txt.textContent = dcell.text || '—';
+          pill.appendChild(lbl);
+          pill.appendChild(txt);
+          pills.appendChild(pill);
+        });
+        row.appendChild(pills);
+        wrap.appendChild(row);
       });
-      row.appendChild(pills);
-      wrap.appendChild(row);
+
+      if(week.notes.length){
+        var det = document.createElement('details');
+        det.style.marginTop = '10px';
+        var sum = document.createElement('summary');
+        sum.style.fontSize = '11.5px';
+        sum.style.color = 'var(--ink-dim)';
+        sum.style.fontWeight = '600';
+        sum.textContent = week.notes.length + ' scheduling note' + (week.notes.length>1?'s':'');
+        det.appendChild(sum);
+        week.notes.forEach(function(msg){
+          var p2 = document.createElement('p');
+          p2.className = 'note';
+          p2.textContent = msg;
+          det.appendChild(p2);
+        });
+        wrap.appendChild(det);
+      }
+
+      weeksEl.appendChild(wrap);
     });
-
-    if(week.notes.length){
-      var det = document.createElement('details');
-      det.style.marginTop = '10px';
-      var sum = document.createElement('summary');
-      sum.style.fontSize = '11.5px';
-      sum.style.color = 'var(--ink-dim)';
-      sum.style.fontWeight = '600';
-      sum.textContent = week.notes.length + ' scheduling note' + (week.notes.length>1?'s':'');
-      det.appendChild(sum);
-      week.notes.forEach(function(msg){
-        var p2 = document.createElement('p');
-        p2.className = 'note';
-        p2.textContent = msg;
-        det.appendChild(p2);
-      });
-      wrap.appendChild(det);
-    }
-
-    weeksEl.appendChild(wrap);
-  });
+  }
+  renderRoster(data);
 
   function selectWeek(i){
+    currentWeekTab = i;
     document.querySelectorAll('#tabs .tab').forEach(function(t,idx){ t.classList.toggle('active', idx===i); });
     document.querySelectorAll('.week').forEach(function(w,idx){ w.classList.toggle('active', idx===i); });
   }
@@ -577,10 +1664,11 @@
     });
   }
   function selectDutyWeek(i){
+    currentDutyTab = i;
     document.querySelectorAll('#dutyTabs .tab').forEach(function(t,idx){ t.classList.toggle('active', idx===i); });
     renderDuties(i);
   }
-  renderDuties(0);
+  renderDuties(currentDutyTab);
 
   // ---------- fairness screen ----------
   var SHIFT_COLS = [['early','Opening'], ['mid1','8:00'], ['mid2','8:30'], ['late','Closing']];
@@ -651,9 +1739,58 @@
   $('formCancel').onclick = function(){ dialog.close(); };
   var formSave = $('formSave');
 
-  var db = null, comments = null, canSend = 'off';
+  var db = null;
   var staffDocs = [], leaveDocs = [], transferDocs = [], changeLogDocs = [];
   var logNoteTarget = null;
+
+  // ---------- instant client-side rebuild (no waiting on Claude) ----------
+  var lastBuildOut = null; // {inputs, roster, dutyWeeks, summary} from the last successful build
+  var staffLoaded = false, leaveLoaded = false, transferLoaded = false;
+  var buildErrorEl = $('buildError');
+
+  function computeBuild(){
+    var rosterStart = RosterEngine.mondayOfWeek(todayISO());
+    return RosterEngine.build(staffDocs, leaveDocs, transferDocs, rosterStart);
+  }
+  function applyBuild(out){
+    lastBuildOut = out;
+    data = out.summary;
+    buildErrorEl.style.display = 'none';
+    renderRoster(data);
+    renderDuties(currentDutyTab);
+    renderFairness();
+  }
+  function showBuildError(e){
+    var msg = (e && e.problems) ? e.problems.join(' ') : (e && e.message) || 'Unknown error.';
+    buildErrorEl.textContent = 'Could not rebuild the roster: ' + msg;
+    buildErrorEl.style.display = '';
+  }
+  function recompute(){
+    if(!(staffLoaded && leaveLoaded && transferLoaded)) return null;
+    try{
+      var out = computeBuild();
+      applyBuild(out);
+      return out;
+    } catch(e){
+      showBuildError(e);
+      return null;
+    }
+  }
+  // Only the person who made the change logs it - every open copy of this
+  // page recomputes on every db change (harmless, idempotent), but writing
+  // the change-log entry only from here avoids every open copy writing its
+  // own duplicate entry for the same edit.
+  async function logChange(requestText, changedName, beforeRoster){
+    if(!db || !lastBuildOut) return;
+    var changed = RosterEngine.diffRosters(beforeRoster || null, lastBuildOut.roster, changedName || null);
+    var breaches = lastBuildOut.summary.weeks.reduce(function(n,w){ return n + w.breaches.length; }, 0);
+    var impact = changed.length ? (changed.join(', ') + (changed.length>1 ? '’ shifts changed.' : '’s shift changed.')) : 'No one else’s shift changed.';
+    try{
+      await db.collection('changelog').add({
+        request: requestText, createdAt: new Date().toISOString(), breaches: breaches, impact: impact,
+      });
+    } catch(e){ /* the roster itself already saved; a missed log entry isn't worth failing the action over */ }
+  }
 
   function fmtDate(iso){
     if(!iso) return '';
@@ -714,7 +1851,7 @@
       del.className = 'xbtn';
       del.textContent = '✕';
       var label = it.type === 'leave' ? (it.doc.kind + ' for ' + it.doc.name) : ('the transfer for ' + it.doc.name);
-      del.onclick = function(){ deleteDoc(it.type === 'leave' ? 'leave' : 'transfers', it.doc._id, label); };
+      del.onclick = function(){ deleteDoc(it.type === 'leave' ? 'leave' : 'transfers', it.doc._id, label, true, it.doc.name); };
       row.appendChild(del);
       el.appendChild(row);
     });
@@ -743,26 +1880,30 @@
     return new Promise(function(resolve){ confirmResolve = resolve; });
   }
 
-  async function deleteDoc(collection, id, label, notify){
+  async function deleteDoc(collection, id, label, notify, personName){
     notify = notify !== false;
     if(!db){ return; }
     if(!id){ toast('Could not remove it — no id for this entry. Refresh and try again.'); return; }
-    var ok = await askConfirm('Remove ' + label + (notify ? '? Claude will rebuild the roster to match.' : '?'));
+    var ok = await askConfirm('Remove ' + label + (notify ? '? The roster updates immediately.' : '?'));
     if(!ok) return;
     var ref = db.collection(collection).doc(id);
+    var beforeRoster = lastBuildOut ? lastBuildOut.roster : null;
     try{
       await ref.delete();
       // delete() resolving isn't proof it actually removed the document (it's
       // idempotent, so a stale/wrong id "succeeds" silently too) - read it back
-      // before telling the viewer, or Claude, that it's gone.
+      // before telling the viewer it's gone.
       var check = await ref.get();
       if(check.exists){
-        toast('Could not remove it — still there. Try again' + (notify ? ' or tell Claude directly.' : '.'));
+        toast('Could not remove it — still there. Try again.');
         return;
       }
       if(notify){
-        toast('Removed. Notifying Claude to rebuild…');
-        await notifyClaude('Remove ' + label + '. Please rebuild the roster without it.');
+        if(collection === 'leave') leaveDocs = leaveDocs.filter(function(x){ return x._id !== id; });
+        if(collection === 'transfers') transferDocs = transferDocs.filter(function(x){ return x._id !== id; });
+        recompute();
+        await logChange('Remove ' + label + '.', personName, beforeRoster);
+        toast('Removed. Roster updated.');
       } else {
         toast('Removed.');
       }
@@ -777,7 +1918,6 @@
       return;
     }
     db = await window.claude.use('db');
-    comments = await window.claude.use('comments');
     downloadsCap = await window.claude.use('downloads');
     if(downloadsCap){ printBtn.disabled = false; }
     else { printBtn.title = 'Printing isn’t available in this view.'; }
@@ -788,25 +1928,27 @@
       return;
     }
     $('syncDot').className = 'dot on';
-    $('syncText').textContent = comments ? 'Connected — changes sync and can notify Claude.' : 'Connected — changes save (notify Claude manually).';
+    $('syncText').textContent = 'Connected — the roster rebuilds itself instantly here, no waiting on Claude.';
     document.querySelectorAll('.actionbtn').forEach(function(b){ b.disabled = false; });
-
-    if(comments && comments.canSendToClaude){
-      try { canSend = await comments.canSendToClaude(); } catch(e){ canSend = 'off'; }
-    }
 
     db.collection('staff').onSnapshot(function(snap){
       staffDocs = snap.docs.map(function(d){ return Object.assign({}, d.data() || {}, { _id: d.id }); });
+      staffLoaded = true;
       renderStaffList();
+      recompute();
     }, function(){ $('staffList').innerHTML = '<div class="empty">Could not load staff.</div>'; });
 
     db.collection('leave').onSnapshot(function(snap){
       leaveDocs = snap.docs.map(function(d){ return Object.assign({}, d.data() || {}, { _id: d.id }); });
+      leaveLoaded = true;
       renderEventList();
+      recompute();
     });
     db.collection('transfers').onSnapshot(function(snap){
       transferDocs = snap.docs.map(function(d){ return Object.assign({}, d.data() || {}, { _id: d.id }); });
+      transferLoaded = true;
       renderEventList();
+      recompute();
     });
     db.collection('changelog').orderBy('createdAt', 'desc').limit(20).onSnapshot(function(snap){
       changeLogDocs = snap.docs.map(function(d){ return Object.assign({}, d.data() || {}, { _id: d.id }); });
@@ -946,22 +2088,28 @@
         var floor = $('f_floor').value, role = $('f_role').value, room = $('f_room').value, start = $('f_start').value;
         var id = name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || ('staff-'+Date.now());
         var order = staffDocs.reduce(function(m,s){ return Math.max(m, s.order||0); }, 0) + 1;
-        await db.collection('staff').doc(id).set({
+        var staffDoc = {
           name: name, floor: floor, role: role, note: '', hours: ['','','','',''],
           number: '', order: order, active: true, startDate: start, room: room,
-        });
+        };
+        var beforeRoster1 = lastBuildOut ? lastBuildOut.roster : null;
+        await db.collection('staff').doc(id).set(staffDoc);
+        staffDocs = staffDocs.filter(function(s){ return s._id !== id; }).concat([Object.assign({_id:id}, staffDoc)]);
+        recompute();
         var summary = 'Add staff: ' + name + ', floor ' + floor + ', role ' + role +
           (room ? ', room ' + room : '') + ', starting ' + start + '.';
-        await notifyClaude(summary);
-        toast('Added ' + name + '.');
+        await logChange(summary, name, beforeRoster1);
+        toast('Added ' + name + '. Roster updated.');
       } else if(currentAction === 'transfer'){
         var staff = $('f_staff').value, floor2 = $('f_floor').value, start2 = $('f_start').value;
         if(!staff){ formErr.textContent = 'Pick a staff member.'; formSave.disabled=false; return; }
-        await db.collection('transfers').add({
-          name: staff, newFloor: floor2, start: start2, end: null, createdAt: todayISO(),
-        });
+        var transferDoc = { name: staff, newFloor: floor2, start: start2, end: null, createdAt: todayISO() };
+        var beforeRoster2 = lastBuildOut ? lastBuildOut.roster : null;
+        var tref = await db.collection('transfers').add(transferDoc);
+        transferDocs = transferDocs.concat([Object.assign({_id: tref && tref.id}, transferDoc)]);
+        recompute();
         var summary2 = 'Transfer: ' + staff + ' to ' + floor2 + ', from ' + start2 + ' onward (past weeks unchanged).';
-        await notifyClaude(summary2);
+        await logChange(summary2, staff, beforeRoster2);
         toast('Transfer recorded for ' + staff + '.');
       } else if(currentAction === 'add-holiday' || currentAction === 'add-maternity'){
         var kindWord = currentAction === 'add-holiday' ? 'Holiday' : 'Maternity Leave';
@@ -973,12 +2121,14 @@
           formSave.disabled = false;
           return;
         }
-        await db.collection('leave').add({
-          name: staff3, kind: kindWord, start: start3, end: end3, createdAt: todayISO(),
-        });
+        var leaveDoc = { name: staff3, kind: kindWord, start: start3, end: end3, createdAt: todayISO() };
+        var beforeRoster3 = lastBuildOut ? lastBuildOut.roster : null;
+        var lref = await db.collection('leave').add(leaveDoc);
+        leaveDocs = leaveDocs.concat([Object.assign({_id: lref && lref.id}, leaveDoc)]);
+        recompute();
         var summary3 = 'Add ' + kindWord + ': ' + staff3 + ', from ' + start3 + (end3 ? (' to ' + end3) : ' (open-ended, until back)') + '.';
-        await notifyClaude(summary3);
-        toast(kindWord + ' recorded for ' + staff3 + '.');
+        await logChange(summary3, staff3, beforeRoster3);
+        toast(kindWord + ' recorded for ' + staff3 + '. Roster updated.');
       } else if(currentAction === 'log-note'){
         var noteText = ($('f_note').value || '').trim();
         if(!noteText){ formErr.textContent = 'Type a note.'; formSave.disabled=false; return; }
@@ -995,29 +2145,5 @@
     }
     formSave.disabled = false;
   };
-
-  async function notifyClaude(text){
-    if(!comments){ toast('Saved. Tell Claude in chat: "' + text + '"', 6500); return; }
-    try{
-      var anchor = await comments.anchorFor($('requestsPanel'));
-      if(canSend !== 'available' && comments.canSendToClaude){
-        try { canSend = await comments.canSendToClaude(); } catch(e){}
-      }
-      if(canSend === 'available'){
-        await comments.sendToClaude({ anchor: anchor, text: text });
-        toast('Saved and sent to Claude — it will rebuild the roster.');
-      } else {
-        await comments.create({ anchor: anchor, text: text });
-        toast('Saved and posted as a comment. Mention it in chat so Claude picks it up.', 6000);
-      }
-    } catch(e){
-      var code = e && e.code;
-      if(code === 'consent_required'){
-        toast('Saved. Allow this page to comment (you’ll be asked), then it can notify Claude automatically next time.', 6500);
-      } else {
-        toast('Saved. Tell Claude in chat: "' + text + '"', 6500);
-      }
-    }
-  }
 })();
 </script>
