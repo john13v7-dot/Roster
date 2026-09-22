@@ -1496,6 +1496,12 @@
   // a same-week edit look like it did nothing if it landed on what used to
   // be Week 2.
   var rosterStartAnchor = (data.weeks && data.weeks[0] && data.weeks[0].monday) || null;
+  // The client-side engine only ever recomputes Roster/Duties/Fairness - it
+  // has no Excel/PDF generator (that stays server-side, in Claude's Python
+  // build). Keep whatever files this page was published with so Print still
+  // works after a live rebuild replaces `data` with a summary that has no
+  // `files` key of its own.
+  var printFiles = data.files || null;
 
   // ---------- screen navigation ----------
   function showScreen(id){
@@ -1719,13 +1725,14 @@
 
   async function doPrint(){
     if(!downloadsCap){ toast('Printing isn’t available in this view.'); return; }
+    if(!printFiles || !printFiles.xlsx || !printFiles.pdf){ toast('No Excel/PDF file yet - ask Claude to publish one.'); return; }
     printBtn.disabled = true;
     try{
-      var xlsxBlob = b64ToBlob(data.files.xlsx.b64, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      await downloadsCap.save({filename: data.files.xlsx.filename, data: xlsxBlob});
-      var pdfBlob = b64ToBlob(data.files.pdf.b64, 'application/pdf');
-      await downloadsCap.save({filename: data.files.pdf.filename, data: pdfBlob});
-      toast('Saved ' + data.files.xlsx.filename + ' and ' + data.files.pdf.filename + '.');
+      var xlsxBlob = b64ToBlob(printFiles.xlsx.b64, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      await downloadsCap.save({filename: printFiles.xlsx.filename, data: xlsxBlob});
+      var pdfBlob = b64ToBlob(printFiles.pdf.b64, 'application/pdf');
+      await downloadsCap.save({filename: printFiles.pdf.filename, data: pdfBlob});
+      toast('Saved ' + printFiles.xlsx.filename + ' and ' + printFiles.pdf.filename + '.');
     } catch(e){
       var code = e && e.code;
       if(code === 'declined'){ toast('Not saved.'); }
@@ -1761,6 +1768,7 @@
     lastBuildOut = out;
     lastBuildErrorMessage = null;
     data = out.summary;
+    data.files = printFiles;
     buildErrorEl.style.display = 'none';
     renderRoster(data);
     renderDuties(currentDutyTab);
