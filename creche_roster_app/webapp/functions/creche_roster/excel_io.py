@@ -416,6 +416,20 @@ def _write_totals(ws, roster: Roster) -> None:
     )
 
 
+def write_roster_only(roster: Roster, output_path) -> Path:
+    """A clean, printable workbook with just the roster weeks - no input
+    tabs (Staff/Leave/Overrides/Settings/History) and no Checks/Totals.
+    For handing someone the roster itself (e.g. the app's Print button),
+    as distinct from write_workbook's full editable planner file."""
+    output_path = Path(output_path)
+    wb = Workbook()
+    wb.remove(wb.active)
+    for wi in range(len(roster.weeks)):
+        _write_week(wb.create_sheet(f"Week {wi + 1}"), roster, wi)
+    wb.save(output_path)
+    return output_path
+
+
 def write_workbook(input_path, roster: Roster, output_path=None, backup: bool = True) -> Path:
     input_path = Path(input_path)
     output_path = Path(output_path) if output_path else input_path

@@ -10,7 +10,7 @@ from openpyxl import load_workbook
 from pypdf import PdfReader
 
 from creche_roster.engine import build_roster
-from creche_roster.excel_io import make_template, read_inputs, write_workbook
+from creche_roster.excel_io import make_template, read_inputs, write_roster_only, write_workbook
 from creche_roster.layout import NCOLS, date_range_text, week_grid
 from creche_roster.models import InputError, Leave, Override, Shift, t12
 from creche_roster.parsing import norm_hours, parse_date, parse_time
@@ -610,6 +610,16 @@ class Files(unittest.TestCase):
         wb = load_workbook(self.xlsx)
         for n in ("Staff", "Leave", "Overrides", "Settings", "History", "Week 1", "Week 4", "Checks", "Totals"):
             self.assertIn(n, wb.sheetnames)
+
+    def test_roster_only_workbook_has_just_the_weeks(self):
+        # What the app's Print button hands someone: the roster pages only,
+        # not the editable planner's input tabs (Staff/Leave/Overrides/
+        # Settings/History) or the Checks/Totals sheets.
+        roster = build_roster(sample_inputs(START))
+        out = self.dir / "roster_only.xlsx"
+        write_roster_only(roster, out)
+        names = load_workbook(out).sheetnames
+        self.assertEqual(names, ["Week 1", "Week 2", "Week 3", "Week 4"])
 
     def test_running_twice_does_not_duplicate_sheets(self):
         self.build()

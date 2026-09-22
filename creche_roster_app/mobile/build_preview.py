@@ -30,7 +30,7 @@ from openpyxl import load_workbook  # noqa: F401  (excel_io needs it importable)
 from creche_roster.db_import import build_inputs_from_db
 from creche_roster.duties import build_duty_roster, duty_fairness, duty_pool
 from creche_roster.engine import build_roster
-from creche_roster.excel_io import make_template, write_workbook
+from creche_roster.excel_io import write_roster_only
 from creche_roster.models import NDAYS, SLOTS
 from creche_roster.pdf_out import write_pdf
 from creche_roster.sample import sample_inputs
@@ -149,8 +149,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     xlsx, pdf, html = out_dir / "Roster_Planner.xlsx", out_dir / "Roster_Planner.pdf", out_dir / "roster_preview.html"
 
-    make_template(xlsx, roster_start)  # input tabs (Staff/Leave/...) to layer Week/Checks/Totals onto
-    write_workbook(xlsx, roster, xlsx, backup=False)
+    write_roster_only(roster, xlsx)
     write_pdf(roster, pdf)
 
     duty_weeks = build_duty_roster(inputs, roster)

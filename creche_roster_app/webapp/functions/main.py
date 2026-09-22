@@ -24,7 +24,7 @@ from firebase_functions import firestore_fn, https_fn, options, scheduler_fn
 from creche_roster.db_import import build_inputs_from_db
 from creche_roster.duties import build_duty_roster
 from creche_roster.engine import build_roster
-from creche_roster.excel_io import make_template, write_workbook
+from creche_roster.excel_io import write_roster_only
 from creche_roster.models import InputError
 from creche_roster.pdf_out import write_pdf
 from creche_roster.sample import sample_inputs
@@ -72,8 +72,7 @@ def _rebuild() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         xlsx_path = os.path.join(tmp, "Roster_Planner.xlsx")
         pdf_path = os.path.join(tmp, "Roster_Planner.pdf")
-        make_template(xlsx_path, roster_start)
-        write_workbook(xlsx_path, roster, xlsx_path, backup=False)
+        write_roster_only(roster, xlsx_path)
         write_pdf(roster, pdf_path)
 
         bucket = storage.bucket()
