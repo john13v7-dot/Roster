@@ -120,11 +120,15 @@ class PairingRule(unittest.TestCase):
             self.assertEqual(set(kinds(r, wi, "Jason")), {"leave"})
         self.assertEqual(r.breaches, [])
 
-    def test_no_override_gives_warning_not_crash(self):
+    def test_no_override_needed_jason_opens_automatically(self):
+        # Whoever's in when the other is away always opens (7:30) automatically
+        # - no manual override required, and none of the INFO notes about it
+        # read as something needing the manager's attention.
         r = build_roster(inputs(leave=[Leave("Shehnaz", START, None, "Holiday")]))
-        self.assertTrue(any(c.level == "WARNING" and c.rule == "Pairing suspended" for c in r.checks))
+        self.assertFalse(any(c.level == "WARNING" and c.rule == "Pairing suspended" for c in r.checks))
+        self.assertTrue(any(c.rule == "Pairing suspended" and "automatically" in c.message for c in r.checks))
         for wi in range(4):
-            self.assertTrue(all(s in ("early", "late") for s in slots(r, wi, "Jason")))
+            self.assertEqual(set(slots(r, wi, "Jason")), {"early"})
 
     def test_pairing_resumes_when_partner_returns(self):
         leave = [Leave("Shehnaz", START, START + timedelta(days=13), "Holiday")]  # weeks 1 and 2

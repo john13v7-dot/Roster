@@ -47,13 +47,13 @@ in Mon..Fri; type OFF for a day off), `vacant` (empty post, hours optional),
 
 ## The closing fallback
 
-Set `fallback_closer` in Settings to a static-hours person's name (e.g. `Priscilla`)
-whose own hours reach the late shift's end time on a given day. On any day neither
-paired person is closing (both away, or the one who's in was overridden elsewhere),
-that person's presence counts toward closing cover automatically — no cell changes,
-it's just no longer flagged as short by one. A day where their own hours are shorter
-(e.g. a half day) doesn't count, and the normal repair (moving a rotating person)
-still runs if it's still short. Leave the setting blank for no fallback.
+Set `fallback_closer` in Settings to a static-hours person's name (e.g. `Priscilla`).
+On any day neither paired person is closing (both away, or the one who's in was
+overridden elsewhere), that person covers closing automatically — their own hours
+for that day don't gate it (covering closing means working later than usual, not a
+condition they either happen to meet or don't); their displayed hours extend to the
+closing time to say so, unless a manual override for that day already sets their
+hours explicitly, which wins as typed. Leave the setting blank for no fallback.
 
 ## Joiners and leavers
 

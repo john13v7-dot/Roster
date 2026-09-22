@@ -387,9 +387,11 @@
       if (aEarly) { out[a] = 'early'; out[b] = 'late'; } else { out[a] = 'late'; out[b] = 'early'; }
       return out;
     }
+    // Only one of them works this week: the pairing is suspended. Whoever's
+    // in always opens (7:30) automatically - not a fairness pick, and not
+    // something that needs a manual override to hold.
     var who = presentA ? a : b;
-    var slot = share(who, 'early') <= share(who, 'late') ? 'early' : 'late';
-    var out2 = {}; out2[who] = slot; return out2;
+    var out2 = {}; out2[who] = 'early'; return out2;
   }
 
   // ---------------------------------------------------------------- daily repair/checks
@@ -552,11 +554,17 @@
     for (var absent in suspended) {
       var ds = suspended[absent];
       var partner = absent === a ? b : a;
-      var missing = ds.filter(function (d) { return !cells.get(cellKey(partner, d)).overridden; });
-      if (missing.length) {
+      var overriddenDays = ds.filter(function (d) { return cells.get(cellKey(partner, d)).overridden; });
+      if (!overriddenDays.length) {
         checks.push({
-          level: 'WARNING', rule: 'Pairing suspended',
-          message: absent + ' is away: ' + fmtDays(ds) + '. ' + partner + ' has no manual start time for ' + fmtDays(missing) + ', so the rotation slot is used. Add a row in Overrides to set it yourself.',
+          level: 'INFO', rule: 'Pairing suspended',
+          message: absent + ' is away: ' + fmtDays(ds) + '. ' + partner + ' opens (7:30) automatically.',
+          day: null, week: wi,
+        });
+      } else if (overriddenDays.length < ds.length) {
+        checks.push({
+          level: 'INFO', rule: 'Pairing suspended',
+          message: absent + ' is away: ' + fmtDays(ds) + '. ' + partner + ' opens (7:30) automatically, except ' + fmtDays(overriddenDays) + ' where a manual start time is set in Overrides.',
           day: null, week: wi,
         });
       } else {

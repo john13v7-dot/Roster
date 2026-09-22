@@ -357,11 +357,13 @@ def _choose_pair(
             else:
                 a_early = True
         return {a: "early", b: "late"} if a_early else {a: "late", b: "early"}
-    # Only one of them works this week: the pairing is suspended. Give the one
-    # who works the slot they have had least; the manager can override it.
+    # Only one of them works this week: the pairing is suspended. Whoever's in
+    # always opens (7:30) automatically - not a fairness pick, and not
+    # something that needs a manual override to hold. A manual override still
+    # wins if one is set for a specific day (effective_override handles that
+    # in the daily pass, same as any other rotating person's override).
     who = a if present_a else b
-    slot = "early" if share(who, "early") <= share(who, "late") else "late"
-    return {who: slot}
+    return {who: "early"}
 
 
 def _covers_closing(hours_text: str, late_end) -> bool:
@@ -827,15 +829,24 @@ def _report_pairing(pair, days, cells, leave_kind, ignored_override, checks, wi)
 
     for absent, ds in suspended.items():
         partner = b if absent == a else a
-        missing = [d for d in ds if not cells[(partner, d)].overridden]
-        if missing:
+        overridden_days = [d for d in ds if cells[(partner, d)].overridden]
+        if not overridden_days:
             checks.append(
                 Check(
-                    "WARNING",
+                    "INFO",
                     "Pairing suspended",
-                    f"{absent} is away: {fmt_days(ds)}. {partner} has no manual start time for "
-                    f"{fmt_days(missing)}, so the rotation slot is used. "
-                    f"Add a row in Overrides to set it yourself.",
+                    f"{absent} is away: {fmt_days(ds)}. {partner} opens (7:30) automatically.",
+                    None,
+                    wi,
+                )
+            )
+        elif len(overridden_days) < len(ds):
+            checks.append(
+                Check(
+                    "INFO",
+                    "Pairing suspended",
+                    f"{absent} is away: {fmt_days(ds)}. {partner} opens (7:30) automatically, "
+                    f"except {fmt_days(overridden_days)} where a manual start time is set in Overrides.",
                     None,
                     wi,
                 )
