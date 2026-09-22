@@ -771,8 +771,24 @@
         var slots = days.map(function (d) { return cells.get(cellKey(n8, d)); })
           .filter(function (c) { return c && c.kind === 'shift'; })
           .map(function (c) { return c.slot; });
-        slots.forEach(function (sl) { hist[n8][sl] = (hist[n8][sl] || 0) + 1; period[n8][sl] = (period[n8][sl] || 0) + 1; });
+        slots.forEach(function (sl) { period[n8][sl] = (period[n8][sl] || 0) + 1; });
         if (slots.length) lastSlot[n8] = mostCommonSlot(slots);
+        // hist (which decides *future* weeks' base-slot ordering) is
+        // credited for the week's whole base slot, not just the days
+        // actually worked - so a mid-week leave changes only that
+        // person's own cells (and, when cover genuinely needs it, someone
+        // else's matching day via the daily repair pass) instead of
+        // quietly shifting everyone else's rotation in later weeks just
+        // because the absent person's own count came out lower than a
+        // full week would have given them. period (the Fairness screen)
+        // stays truthful to days actually worked.
+        if (Object.prototype.hasOwnProperty.call(base, n8)) {
+          var creditSlot = base[n8];
+          hist[n8][creditSlot] = (hist[n8][creditSlot] || 0) + NDAYS;
+          lastSlot[n8] = creditSlot;
+        } else {
+          slots.forEach(function (sl) { hist[n8][sl] = (hist[n8][sl] || 0) + 1; });
+        }
       }
     }
 

@@ -344,6 +344,27 @@ class HardRules(unittest.TestCase):
     def test_ratios_met_for_twelve_weeks(self):
         self.assertEqual(build_roster(inputs(weeks=12)).breaches, [])
 
+    def test_partial_week_leave_does_not_cascade_to_later_weeks(self):
+        # A rotating person's leave that still leaves them working at least
+        # one day that week (so they keep a base slot) should change only
+        # their own cells that week, plus whichever day(s) genuinely need
+        # someone else to cover - not everyone else's rotation in weeks
+        # still to come, which used to happen purely because the absent
+        # person's own fairness count came out lower than a full week
+        # would have given them.
+        baseline = build_roster(inputs(weeks=4))
+        leave = [Leave("Irene", START + timedelta(days=2), START + timedelta(days=4), "Holiday")]  # Wed-Fri
+        with_leave = build_roster(inputs(leave=leave, weeks=4))
+        self.assertEqual(with_leave.breaches, [])
+        for wi in (1, 2, 3):  # weeks 2-4: Irene is back, nobody else should differ
+            for name in ROTATING:
+                if name == "Irene":
+                    continue
+                self.assertEqual(
+                    texts(with_leave, wi, name), texts(baseline, wi, name),
+                    f"{name} differs in week {wi + 1}",
+                )
+
     def test_fixed_person_always_on_their_slot(self):
         inp = inputs(weeks=6)
         for st in inp.staff:

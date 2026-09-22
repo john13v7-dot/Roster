@@ -601,10 +601,25 @@ def build_roster(inputs: Inputs) -> Roster:
         for n in by_name:
             slots = [cells[(n, d)].slot for d in days if cells[(n, d)].kind == "shift"]
             for sl in slots:
-                hist[n][sl] += 1
                 period[n][sl] += 1
             if slots:
                 last_slot[n] = _most_common_slot(slots)
+            # hist (which decides *future* weeks' base-slot ordering) is
+            # credited for the week's whole base slot, not just the days
+            # actually worked - so a mid-week leave changes only that
+            # person's own cells (and, when cover genuinely needs it,
+            # someone else's matching day, via the daily repair pass
+            # above) instead of quietly shifting everyone else's rotation
+            # in the weeks that follow, just because the absent person's
+            # own count came out lower than a full week would have given
+            # them. period (what the Fairness screen shows) stays truthful
+            # to days actually worked.
+            if n in base:
+                hist[n][base[n]] += NDAYS
+                last_slot[n] = base[n]
+            else:
+                for sl in slots:
+                    hist[n][sl] += 1
 
     return Roster(
         inputs=inputs,
