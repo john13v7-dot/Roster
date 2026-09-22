@@ -10,8 +10,9 @@
     --holiday-bg:#C65B35; --holiday-ink:#fdece3;
     --maternity-bg:#2E9E57; --maternity-ink:#e7f7ee;
     --off-bg:#A9D18E; --off-ink:#2c4a1e;
-    --duties-btn:#3f6b52; --requests-btn:#3a6ea5;
+    --duties-btn:#3f6b52; --requests-btn:#3a6ea5; --fairness-btn:#7d5ba6;
     --info-bg:#e4eef8; --info-ink:#2c567e; --info-line:#c5dcef;
+    --fair-bar-bg:#efe8f6;
   }
   @media (prefers-color-scheme: dark){
     :root:not([data-theme="light"]){
@@ -21,8 +22,9 @@
       --warn-bg:#3a3013; --warn-ink:#f0cf6e;
       --bad-bg:#3d1e19; --bad-ink:#ff9c8c;
       --chip-bg:#2c2721;
-      --duties-btn:#5c9877; --requests-btn:#6ba0d8;
+      --duties-btn:#5c9877; --requests-btn:#6ba0d8; --fairness-btn:#a888d1;
       --info-bg:#1c2e3f; --info-ink:#8fc0ec; --info-line:#2c455c;
+      --fair-bar-bg:#332a3d;
     }
   }
   :root[data-theme="dark"]{
@@ -32,8 +34,9 @@
     --warn-bg:#3a3013; --warn-ink:#f0cf6e;
     --bad-bg:#3d1e19; --bad-ink:#ff9c8c;
     --chip-bg:#2c2721;
-    --duties-btn:#5c9877; --requests-btn:#6ba0d8;
+    --duties-btn:#5c9877; --requests-btn:#6ba0d8; --fairness-btn:#a888d1;
     --info-bg:#1c2e3f; --info-ink:#8fc0ec; --info-line:#2c455c;
+    --fair-bar-bg:#332a3d;
   }
   *{box-sizing:border-box;}
   body{
@@ -66,6 +69,7 @@
   #printBtn:disabled{background:var(--chip-bg); color:var(--ink-dim);}
   #dutiesTopBtn{background:var(--duties-btn);}
   #requestsTopBtn{background:var(--requests-btn);}
+  #fairnessTopBtn{background:var(--fairness-btn);}
   .backbtn{
     display:inline-flex; align-items:center; gap:5px; background:none; border:none;
     color:var(--accent); font-size:14px; font-weight:700; padding:6px 0; cursor:pointer;
@@ -175,6 +179,21 @@
   .grouptitle:first-child{margin-top:0;}
   .empty{font-size:12px; color:var(--ink-dim); font-style:italic; padding:6px 2px;}
 
+  .fairtable{width:100%; border-collapse:collapse; font-size:12px; margin-top:4px;}
+  .fairtable th, .fairtable td{padding:7px 4px; text-align:center; border-bottom:1px solid var(--line);}
+  .fairtable th{font-size:9.5px; text-transform:uppercase; letter-spacing:.03em; color:var(--ink-dim); font-weight:700;}
+  .fairtable td:first-child, .fairtable th:first-child{text-align:left; font-weight:600; padding-left:0;}
+  .fairtable tr:last-child td{border-bottom:none;}
+  .fairnote{font-size:11px; color:var(--ink-dim); margin-top:8px; line-height:1.4;}
+
+  .dutyrow{display:flex; justify-content:space-between; align-items:center; gap:10px; padding:9px 2px; border-bottom:1px solid var(--line); font-size:12.5px;}
+  .dutyrow:last-child{border-bottom:none;}
+  .dutyrow .dname{font-weight:600;}
+  .dutyrow .dpeople{color:var(--ink-dim); font-size:12px; text-align:right;}
+  .dutyrow.fixed .dpeople{color:var(--warn-ink); font-weight:600;}
+  .dutyrow.context .dpeople{font-style:italic;}
+  .dutyrow.unfilled .dpeople{color:var(--bad-ink); font-weight:600;}
+
   .logentry{padding:10px 2px; border-bottom:1px solid var(--line);}
   .logentry:last-child{border-bottom:none;}
   .logrequest{font-size:12.5px; font-weight:600;}
@@ -248,6 +267,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>
         Print
       </button>
+      <button id="fairnessTopBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-6 4 3 5-8"/></svg>
+        Fair
+      </button>
     </div>
     <div class="tabs" id="tabs"></div>
   </div>
@@ -263,10 +286,30 @@
   </div>
 
   <div class="card panel">
-    <h2>Duties (shell preview)</h2>
-    <p class="note" style="margin-top:0;">Placeholder duty list — send me your real one and I'll wire up proper assignment rules. Only people actually working the selected week are offered a duty.</p>
+    <h2>Cleaning duties</h2>
+    <p class="note" style="margin-top:0;">Auto-generated each rebuild from the real duty rota: Dusting and Laundry stay fixed to the same people, Cot Room and Changing Area go to whoever's already working that room, and everyone else gets one rotating duty a week, picked to keep both variety and total load fair over time.</p>
     <div class="tabs" id="dutyTabs" style="margin-top:0;"></div>
-    <div class="rowlist" id="dutiesList" style="margin-top:12px;"></div>
+    <div id="dutiesList" style="margin-top:12px;"></div>
+  </div>
+</div>
+
+<!-- ============================== FAIRNESS SCREEN ============================== -->
+<div class="screen" id="fairnessScreen">
+  <div class="topbar">
+    <button class="backbtn" data-back="homeScreen">‹ Roster</button>
+    <div class="pagetitle" style="margin-top:2px;">Fairness</div>
+  </div>
+
+  <div class="card panel">
+    <h2>Shift fairness · last 4 weeks</h2>
+    <p class="note" style="margin-top:0;">How many opening (7:30), 8:00, 8:30 and closing (9:00) shifts each rotating staff member has done. Management, Priscilla, the cook and Sue aren't part of this rotation, so they're not counted here.</p>
+    <div id="shiftFairTable"></div>
+  </div>
+
+  <div class="card panel">
+    <h2>Duties fairness · last 4 weeks</h2>
+    <p class="note" style="margin-top:0;">How many rotating cleaning duties each person has done. Jason takes a turn here even though his shift itself follows the separate pairing rota; Sue and Shehnaz/Priscilla are fixed to their own duty every week, so they're not counted here.</p>
+    <div id="dutyFairTable"></div>
   </div>
 </div>
 
@@ -377,6 +420,7 @@
   }
   $('requestsTopBtn').onclick = function(){ showScreen('requestsScreen'); };
   $('dutiesTopBtn').onclick = function(){ showScreen('dutiesScreen'); };
+  $('fairnessTopBtn').onclick = function(){ showScreen('fairnessScreen'); };
   document.querySelectorAll('.backbtn').forEach(function(btn){
     btn.onclick = function(){ showScreen(btn.dataset.back); };
   });
@@ -499,24 +543,35 @@
     document.querySelectorAll('.week').forEach(function(w,idx){ w.classList.toggle('active', idx===i); });
   }
 
-  // ---------- duties (requests screen) ----------
-  var DUTY_LIST = [
-    'Kitchen & snack prep', 'Nappy changing station', 'Toy & surface clean-down',
-    'Outdoor play supervision', 'Nap room settling', 'Book corner & registers',
-  ];
+  // ---------- duties (real weekly rota) ----------
+  var CONTEXT_DUTIES = {'Cot Room':1, 'Changing Area':1};
+  var FIXED_DUTIES = {'Dusting':1, 'Laundry':1};
   function renderDuties(wi){
-    var week = data.weeks[wi];
+    var week = (data.duties || [])[wi];
     var list = $('dutiesList');
     list.innerHTML = '';
-    if(!week.working.length){
-      list.innerHTML = '<div class="empty">Nobody scheduled this week.</div>';
+    if(!week){
+      list.innerHTML = '<div class="empty">No duty rota for this week.</div>';
       return;
     }
-    week.working.forEach(function(name, i){
+    var unfilled = {};
+    (week.unfilled || []).forEach(function(d){ unfilled[d] = 1; });
+    week.assignments.forEach(function(a){
       var row = document.createElement('div');
-      row.className = 'item';
-      var duty = DUTY_LIST[i % DUTY_LIST.length];
-      row.innerHTML = '<div class="name">'+esc(name)+'</div><span class="pill">'+esc(duty)+'</span>';
+      var cls = 'dutyrow';
+      var peopleText;
+      if(CONTEXT_DUTIES[a.duty]){
+        cls += ' context';
+        peopleText = 'Staff working in the room';
+      } else if(unfilled[a.duty]){
+        cls += ' unfilled';
+        peopleText = 'Nobody free this week';
+      } else {
+        peopleText = a.people.join(' / ') || '—';
+        if(FIXED_DUTIES[a.duty]) cls += ' fixed';
+      }
+      row.className = cls;
+      row.innerHTML = '<div class="dname">'+esc(a.duty)+'</div><div class="dpeople">'+esc(peopleText)+'</div>';
       list.appendChild(row);
     });
   }
@@ -525,6 +580,38 @@
     renderDuties(i);
   }
   renderDuties(0);
+
+  // ---------- fairness screen ----------
+  var SHIFT_COLS = [['early','Opening'], ['mid1','8:00'], ['mid2','8:30'], ['late','Closing']];
+  function renderFairness(){
+    var fair = data.fairness || {shifts: [], duties: []};
+
+    var st = document.createElement('table');
+    st.className = 'fairtable';
+    var sthead = '<tr><th>Name</th>' + SHIFT_COLS.map(function(c){ return '<th>'+c[1]+'</th>'; }).join('') + '</tr>';
+    var strows = fair.shifts.map(function(row){
+      return '<tr><td>'+esc(row.name)+'</td>' +
+        SHIFT_COLS.map(function(c){ return '<td>'+row[c[0]]+'</td>'; }).join('') + '</tr>';
+    }).join('');
+    st.innerHTML = sthead + strows;
+    var shiftHost = $('shiftFairTable');
+    shiftHost.innerHTML = '';
+    if(fair.shifts.length){ shiftHost.appendChild(st); }
+    else { shiftHost.innerHTML = '<div class="empty">No rotating staff to show yet.</div>'; }
+
+    var dt = document.createElement('table');
+    dt.className = 'fairtable';
+    var dthead = '<tr><th>Name</th><th>Duties done</th></tr>';
+    var dtrows = fair.duties.map(function(row){
+      return '<tr><td>'+esc(row.name)+'</td><td>'+row.duties+'</td></tr>';
+    }).join('');
+    dt.innerHTML = dthead + dtrows;
+    var dutyHost = $('dutyFairTable');
+    dutyHost.innerHTML = '';
+    if(fair.duties.length){ dutyHost.appendChild(dt); }
+    else { dutyHost.innerHTML = '<div class="empty">No duty rota to show yet.</div>'; }
+  }
+  renderFairness();
 
   // ---------- print (downloads capability) ----------
   function b64ToBlob(b64, mime){

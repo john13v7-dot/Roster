@@ -17,7 +17,7 @@ import argparse
 import base64
 import json
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -25,8 +25,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from openpyxl import load_workbook  # noqa: F401  (excel_io needs it importable)
 
 from creche_roster.db_import import build_inputs_from_db
+from creche_roster.duties import build_duty_roster, duty_fairness, duty_pool
 from creche_roster.engine import build_roster
 from creche_roster.excel_io import make_template, write_workbook
+from creche_roster.models import NDAYS, SLOTS
 from creche_roster.pdf_out import write_pdf
 from creche_roster.sample import sample_inputs
 
@@ -79,6 +81,46 @@ def summary_json(inputs, roster) -> dict:
     return {"title": inputs.settings.title, "weeks": weeks_out}
 
 
+def duties_json(inputs, duty_weeks) -> list:
+    """The printed cleaning-duty table, one entry per week, in the same
+    label format as the roster weeks."""
+    weeks_out = []
+    for dw in duty_weeks:
+        days = [dw["monday"] + timedelta(days=i) for i in range(NDAYS)]
+        weeks_out.append({
+            "label": f"{days[0]:%d %b} – {days[-1]:%d %b %Y}",
+            "monday": dw["monday"].isoformat(),
+            "assignments": dw["assignments"],
+            "unfilled": dw["unfilled"],
+        })
+    return weeks_out
+
+
+def fairness_json(inputs, roster, duty_weeks) -> dict:
+    """Shift-slot fairness (opening/8:00/8:30/closing) for the rotating
+    staff over this 4-week build, and duty-count fairness for the duty
+    rota pool (rotating staff plus Jason) - what the Fairness screen shows.
+    Management (Jason, Shehnaz, Priscilla), the cook (Laura), Sue, Megan
+    and Eirini don't rotate shifts, so they're left off the shift table;
+    Sue and Shehnaz/Priscilla are fixed to their own duty, so they're left
+    off the duty table too.
+    """
+    rotating_names = [st.name for st in inputs.staff if st.role == "rotating" and st.name]
+    shift_rows = [
+        {
+            "name": name,
+            "early": roster.period_counts.get(name, {}).get("early", 0),
+            "mid1": roster.period_counts.get(name, {}).get("mid1", 0),
+            "mid2": roster.period_counts.get(name, {}).get("mid2", 0),
+            "late": roster.period_counts.get(name, {}).get("late", 0),
+        }
+        for name in rotating_names
+    ]
+    totals = duty_fairness(inputs, duty_weeks)
+    duty_rows = [{"name": name, "duties": totals[name]} for name in duty_pool(inputs)]
+    return {"shifts": shift_rows, "duties": duty_rows}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--db-export", required=True, help="JSON file: {staff: [...], leave: [...], transfers: [...]}")
@@ -98,7 +140,10 @@ def main() -> None:
     write_workbook(xlsx, roster, xlsx, backup=False)
     write_pdf(roster, pdf)
 
+    duty_weeks = build_duty_roster(inputs)
     summary = summary_json(inputs, roster)
+    summary["duties"] = duties_json(inputs, duty_weeks)
+    summary["fairness"] = fairness_json(inputs, roster, duty_weeks)
     summary["files"] = {
         "xlsx": {"filename": xlsx.name, "b64": base64.b64encode(xlsx.read_bytes()).decode("ascii")},
         "pdf": {"filename": pdf.name, "b64": base64.b64encode(pdf.read_bytes()).decode("ascii")},
