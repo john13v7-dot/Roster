@@ -75,7 +75,14 @@ def summary_json(inputs, roster) -> dict:
             label = st.name or ("Vacant post" if st.role == "vacant" else "")
             if not label:
                 continue
-            days_out = [{"text": week.cells[(key, d)].text, "kind": week.cells[(key, d)].kind} for d in week.days]
+            days_out = [
+                {
+                    "text": week.cells[(key, d)].text,
+                    "kind": week.cells[(key, d)].kind,
+                    "adjusted": week.cells[(key, d)].adjusted,
+                }
+                for d in week.days
+            ]
             people.append({"name": label, "role": st.role, "days": days_out})
             if st.role != "vacant" and any(week.cells[(key, d)].kind in ("shift", "static") for d in week.days):
                 working.append(st.name)

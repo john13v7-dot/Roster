@@ -5,8 +5,10 @@ range, then one table with the columns
 
     No | Name | Mon | Tue | Wed | Thu | Fri | break | (empty)
 
-No colours on shifts. Leave is coloured: Holiday orange-red, Maternity Leave
-green, OFF light green. Times are shown 12-hour style (7:30 - 4:30).
+Leave is coloured: Holiday orange-red, Maternity Leave green, OFF light
+green. A shift is coloured amber when that day it was moved to cover for a
+colleague's leave (the "Cover adjusted" / "Closing fallback" checks) -
+otherwise shifts carry no colour. Times are shown 12-hour style (7:30 - 4:30).
 
 Both the Excel writer and the PDF writer render `week_grid(...)`, so the two
 files always show exactly the same names, times, colours and notes.
@@ -42,6 +44,7 @@ STYLES: Dict[str, dict] = {
     "maternity": _style(fill="2E9E57", color="BFE6CB"),
     "off": _style(fill="A9D18E"),
     "leave": _style(fill="D9D9D9"),
+    "adjusted": _style(fill="FCE4A0", color="7F5F00", bold=True),
     "blank": _style(border=False),
     "note": _style(color="404040", italic=True, size=9, align="left", border=False),
     "note_warn": _style(fill="FFEB9C", color="7F6000", size=9, align="left", border=False),
@@ -149,7 +152,13 @@ def week_grid(roster: Roster, wi: int) -> List[Row]:
         day_cells: List[LCell] = []
         for d in week.days:
             a = week.cells[(key, d)]
-            day_cells.append(LCell(a.text, leave_style(a.text) if a.kind == "leave" else "plain"))
+            if a.kind == "leave":
+                style = leave_style(a.text)
+            elif a.kind == "shift" and a.adjusted:
+                style = "adjusted"
+            else:
+                style = "plain"
+            day_cells.append(LCell(a.text, style))
         has_content = bool(st.name) or any(c.text for c in day_cells)
         cells = (
             [LCell(label, "plain"), LCell(st.name, "plain")]

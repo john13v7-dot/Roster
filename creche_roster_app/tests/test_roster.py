@@ -365,6 +365,27 @@ class HardRules(unittest.TestCase):
                     f"{name} differs in week {wi + 1}",
                 )
 
+    def test_cover_highlight_flags_whoever_actually_covers(self):
+        # A full week's leave (so the rotating pool itself is smaller that
+        # week, not just a same-day repair swap) should flag whoever's
+        # weekly slot actually moved to cover it - and nobody in weeks
+        # where nobody's on leave, even once the fairness algorithm has
+        # settled back down.
+        leave = [Leave("Manuel", START, START + timedelta(days=4), "Holiday")]  # all of week 1
+        r = build_roster(inputs(leave=leave, weeks=4))
+        self.assertEqual(r.breaches, [])
+        week1_adjusted = {
+            n for n in ROTATING if n != "Manuel"
+            and any(r.weeks[0].cells[(n, d)].adjusted for d in r.weeks[0].days)
+        }
+        self.assertTrue(week1_adjusted, "someone should be flagged as covering for Manuel in week 1")
+        for wi in (1, 2, 3):
+            for n in ROTATING:
+                self.assertFalse(
+                    any(r.weeks[wi].cells[(n, d)].adjusted for d in r.weeks[wi].days),
+                    f"{n} flagged as covering in week {wi + 1}, but nobody's on leave that week",
+                )
+
     def test_fixed_person_always_on_their_slot(self):
         inp = inputs(weeks=6)
         for st in inp.staff:

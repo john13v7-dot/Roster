@@ -407,6 +407,25 @@ def build_roster(inputs: Inputs) -> Roster:
                 return lv.kind
         return None
 
+    def credited_kind(name: str, d: date) -> Optional[str]:
+        """Like leave_kind, but a leave request with a known end date
+        doesn't count - only employment boundaries and open-ended leave do.
+        Used only to work out who else's slot moved *because of* someone's
+        temporary leave, for the "changed to cover" highlight - never for
+        what's actually scheduled. Open-ended leave (no return date) is the
+        team's new normal for this build, not a one-off to compare against,
+        so it stays a real absence here too, same as leave_kind."""
+        st = by_name.get(name)
+        if st is not None:
+            if st.start_date and d < st.start_date:
+                return "Not yet started"
+            if st.end_date and d > st.end_date:
+                return "Left"
+        for lv in inputs.leave:
+            if lv.name == name and lv.covers(d) and lv.end is None:
+                return lv.kind
+        return None
+
     def override_slot(name: str, d: date) -> Optional[str]:
         found = None
         for ov in inputs.overrides:  # the last matching row wins
@@ -440,70 +459,89 @@ def build_roster(inputs: Inputs) -> Roster:
         present = {n: [d for d in days if not leave_kind(n, d)] for n in by_name}
 
         # ---- weekly base -------------------------------------------------
-        # Manual overrides that apply this week decide the base slot, so the
-        # solver plans around them instead of having to repair afterwards.
-        manual: Dict[str, str] = {}
-        for n, st in by_name.items():
-            if st.role == "static" or not present[n]:
-                continue
-            ovs = [o for o in (effective_override(n, d)[0] for d in present[n]) if o]
-            if ovs:
-                c = Counter(ovs)
-                manual[n] = max(c, key=lambda sl: (c[sl], -SLOTS.index(sl)))
+        def compute_base(present_map: Dict[str, List[date]]) -> Dict[str, str]:
+            # Manual overrides that apply this week decide the base slot, so
+            # the solver plans around them instead of having to repair
+            # afterwards.
+            manual: Dict[str, str] = {}
+            for n, st in by_name.items():
+                if st.role == "static" or not present_map[n]:
+                    continue
+                ovs = [o for o in (effective_override(n, d)[0] for d in present_map[n]) if o]
+                if ovs:
+                    c = Counter(ovs)
+                    manual[n] = max(c, key=lambda sl: (c[sl], -SLOTS.index(sl)))
 
-        base: Dict[str, str] = {}
-        for n, st in by_name.items():
-            if st.role == "fixed" and present[n]:
-                base[n] = manual.get(n, st.fixed_slot or "early")
-        if pair:
-            a, b = pair
-            base.update(_choose_pair(a, b, bool(present[a]), bool(present[b]), hist, last_slot))
-            for n, partner in ((a, b), (b, a)):
-                if n in manual and not present[partner]:
-                    base[n] = manual[n]  # pairing is suspended all week: follow the override
-        for floor in s.floors:
-            floor_people = [st for st in by_name.values() if st.floor == floor]
-            for st in floor_people:
-                if st.role == "rotating" and st.name in manual:
-                    base[st.name] = manual[st.name]
-            pre = Counter(base[st.name] for st in floor_people if st.name in base)
-            members = [
-                st.name
-                for st in floor_people
-                if st.role == "rotating" and present[st.name] and st.name not in manual
-            ]
-            # If the pair isn't covering closing this week (both away, or the
-            # one present is pinned elsewhere) and a fallback closer is set for
-            # this floor, plan the base around them taking the pair's spot -
-            # not stacking a full rotating close count on top of them. Any day
-            # the fallback doesn't actually apply (e.g. a shorter day) is still
-            # caught and topped back up by the daily repair pass.
-            min_close = s.min_close[floor]
-            if (
-                s.fallback_closer
-                and pair
-                and by_name.get(s.fallback_closer)
-                and by_name[s.fallback_closer].floor == floor
-                and not any(base.get(p) == "late" for p in pair if by_name.get(p) and by_name[p].floor == floor)
-            ):
-                min_close = max(0, min_close - 1)
-            if members:
-                # Same-room staff can't share a slot: seed with whichever
-                # slots this room already has claimed by people decided
-                # before the rotating pool (fixed staff, the pair, manual
-                # overrides), so e.g. Jason's own slot rules it out for his
-                # ECEC 2 room-mates even though he isn't in `members`.
-                taken_by_room: Dict[str, set] = {}
-                for n, slot in base.items():
-                    r = room_of.get(n)
-                    if r:
-                        taken_by_room.setdefault(r, set()).add(slot)
-                base.update(
-                    _assign_weekly_base(
-                        members, pre, s.min_open[floor], min_close, hist, last_slot, wi,
-                        room_of, taken_by_room,
+            base: Dict[str, str] = {}
+            for n, st in by_name.items():
+                if st.role == "fixed" and present_map[n]:
+                    base[n] = manual.get(n, st.fixed_slot or "early")
+            if pair:
+                a, b = pair
+                base.update(_choose_pair(a, b, bool(present_map[a]), bool(present_map[b]), hist, last_slot))
+                for n, partner in ((a, b), (b, a)):
+                    if n in manual and not present_map[partner]:
+                        base[n] = manual[n]  # pairing is suspended all week: follow the override
+            for floor in s.floors:
+                floor_people = [st for st in by_name.values() if st.floor == floor]
+                for st in floor_people:
+                    if st.role == "rotating" and st.name in manual:
+                        base[st.name] = manual[st.name]
+                pre = Counter(base[st.name] for st in floor_people if st.name in base)
+                members = [
+                    st.name
+                    for st in floor_people
+                    if st.role == "rotating" and present_map[st.name] and st.name not in manual
+                ]
+                # If the pair isn't covering closing this week (both away, or
+                # the one present is pinned elsewhere) and a fallback closer
+                # is set for this floor, plan the base around them taking the
+                # pair's spot - not stacking a full rotating close count on
+                # top of them. Any day the fallback doesn't actually apply
+                # (e.g. a shorter day) is still caught and topped back up by
+                # the daily repair pass.
+                min_close = s.min_close[floor]
+                if (
+                    s.fallback_closer
+                    and pair
+                    and by_name.get(s.fallback_closer)
+                    and by_name[s.fallback_closer].floor == floor
+                    and not any(base.get(p) == "late" for p in pair if by_name.get(p) and by_name[p].floor == floor)
+                ):
+                    min_close = max(0, min_close - 1)
+                if members:
+                    # Same-room staff can't share a slot: seed with whichever
+                    # slots this room already has claimed by people decided
+                    # before the rotating pool (fixed staff, the pair,
+                    # manual overrides), so e.g. Jason's own slot rules it
+                    # out for his ECEC 2 room-mates even though he isn't in
+                    # `members`.
+                    taken_by_room: Dict[str, set] = {}
+                    for n, slot in base.items():
+                        r = room_of.get(n)
+                        if r:
+                            taken_by_room.setdefault(r, set()).add(slot)
+                    base.update(
+                        _assign_weekly_base(
+                            members, pre, s.min_open[floor], min_close, hist, last_slot, wi,
+                            room_of, taken_by_room,
+                        )
                     )
-                )
+            return base
+
+        base = compute_base(present)
+        # A second, counterfactual pass - "as if" nobody's temporary leave
+        # had happened this week - used only to work out whose weekly slot
+        # moved *because of* it, for the "changed to cover" highlight below.
+        # It never feeds the real schedule or fairness memory.
+        present_credit = {n: [d for d in days if not credited_kind(n, d)] for n in by_name}
+        base_if_nobody_away = compute_base(present_credit)
+        covering_because_of_leave = {
+            n for n in base
+            if by_name[n].role == "rotating"
+            and n in base_if_nobody_away
+            and base[n] != base_if_nobody_away[n]
+        }
 
         # ---- daily pass --------------------------------------------------
         cells: Dict[Tuple[str, date], Assignment] = {}
@@ -511,6 +549,7 @@ def build_roster(inputs: Inputs) -> Roster:
         for d in days:
             slot_of: Dict[str, str] = {}
             overridden: set = set()
+            adjusted: set = set()  # names moved today to cover someone else's absence
             for key, st in staff_keys:
                 if st.role == "blank":
                     cells[(key, d)] = Assignment("blank")
@@ -579,16 +618,18 @@ def build_roster(inputs: Inputs) -> Roster:
                         # behalf. If the manager wants their hours to actually
                         # show as later that day, that's a manual override she
                         # types in herself, same as any other change.
-                _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=need, room_of=room_of)
+                _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=need, room_of=room_of, adjusted=adjusted)
                 if fallback_covering:
-                    _cap_late_for_fallback(d, floor, slot_of, overridden, by_name, s, need, cost_fn, checks, wi, fb, room_of=room_of)
+                    _cap_late_for_fallback(d, floor, slot_of, overridden, by_name, s, need, cost_fn, checks, wi, fb, room_of=room_of, adjusted=adjusted)
                 _check_floor(d, floor, slot_of, by_name, s, checks, wi, need=need)
 
             _check_rooms(d, slot_of, room_of, s.shifts, checks, wi)
 
             for name, slot in slot_of.items():
                 cells[(name, d)] = Assignment(
-                    "shift", slot, s.shifts[slot].label, overridden=name in overridden
+                    "shift", slot, s.shifts[slot].label,
+                    overridden=name in overridden,
+                    adjusted=name in adjusted or (name not in overridden and name in covering_because_of_leave),
                 )
 
         # ---- pairing report ---------------------------------------------
@@ -606,14 +647,18 @@ def build_roster(inputs: Inputs) -> Roster:
                 last_slot[n] = _most_common_slot(slots)
             # hist (which decides *future* weeks' base-slot ordering) is
             # credited for the week's whole base slot, not just the days
-            # actually worked - so a mid-week leave changes only that
-            # person's own cells (and, when cover genuinely needs it,
-            # someone else's matching day, via the daily repair pass
-            # above) instead of quietly shifting everyone else's rotation
-            # in the weeks that follow, just because the absent person's
-            # own count came out lower than a full week would have given
-            # them. period (what the Fairness screen shows) stays truthful
-            # to days actually worked.
+            # actually worked - so a leave that doesn't empty the whole
+            # week (the person still has a base slot that week) changes
+            # only that person's own cells and whichever day(s) genuinely
+            # need someone else to cover, via the daily repair pass above -
+            # not everyone else's rotation in the weeks that follow, just
+            # because the absent person's own count came out lower than a
+            # full week would have given them. (A leave that empties the
+            # whole week has no base slot to credit here, and needs the
+            # rest of the team's real slots that week to genuinely change
+            # to cover it - that part of the rebalancing is real and does
+            # carry forward, same as it always has.) period (the Fairness
+            # screen) stays truthful to days actually worked either way.
             if n in base:
                 hist[n][base[n]] += NDAYS
                 last_slot[n] = base[n]
@@ -649,7 +694,7 @@ def _would_clash(n, target_slot, slot_of, room_of) -> bool:
     )
 
 
-def _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=None, room_of=None) -> None:
+def _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=None, room_of=None, adjusted=None) -> None:
     need = _needs(floor, s) if need is None else need
     floor_names = [n for n in slot_of if by_name[n].floor == floor]
     for target in ("early", "late"):
@@ -682,6 +727,8 @@ def _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi
             n = donors[0]
             old = slot_of[n]
             slot_of[n] = target
+            if adjusted is not None:
+                adjusted.add(n)
             what = "opening" if target == "early" else "closing"
             checks.append(
                 Check(
@@ -695,7 +742,7 @@ def _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi
             )
 
 
-def _cap_late_for_fallback(d, floor, slot_of, overridden, by_name, s, need, cost_fn, checks, wi, fb, room_of=None) -> None:
+def _cap_late_for_fallback(d, floor, slot_of, overridden, by_name, s, need, cost_fn, checks, wi, fb, room_of=None, adjusted=None) -> None:
     """When the fallback closer is covering (need['late'] was already reduced
     by one for them), keep the actual late headcount at that reduced number
     instead of leaving extra rotating staff on it anyway - otherwise the
@@ -725,6 +772,8 @@ def _cap_late_for_fallback(d, floor, slot_of, overridden, by_name, s, need, cost
         n, move_to = min(options, key=lambda ns: (slot_counts.get(ns[1], 0), cost_fn(ns[0], ns[1])))
         old = slot_of[n]
         slot_of[n] = move_to
+        if adjusted is not None:
+            adjusted.add(n)
         checks.append(
             Check(
                 "INFO",

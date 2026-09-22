@@ -108,6 +108,7 @@ class Assignment:
     slot: Optional[str] = None
     text: str = ""
     overridden: bool = False
+    adjusted: bool = False  # this day's slot was moved to cover for someone else's absence
 
 
 @dataclass

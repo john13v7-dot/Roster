@@ -386,7 +386,7 @@
     return false;
   }
 
-  function repairFloor(d, floor, slotOf, overridden, byName, s, costFn, checks, wi, need, roomOf) {
+  function repairFloor(d, floor, slotOf, overridden, byName, s, costFn, checks, wi, need, roomOf, adjusted) {
     need = need || needs(floor, s);
     var floorNames = Object.keys(slotOf).filter(function (n) { return byName[n].floor === floor; });
     ['early', 'late'].forEach(function (target) {
@@ -415,6 +415,7 @@
         var n = pool[0];
         var old = slotOf[n];
         slotOf[n] = target;
+        if (adjusted) adjusted.add(n);
         var what = target === 'early' ? 'opening' : 'closing';
         checks.push({
           level: 'INFO', rule: 'Cover adjusted',
@@ -426,7 +427,7 @@
     });
   }
 
-  function capLateForFallback(d, floor, slotOf, overridden, byName, s, need, costFn, checks, wi, fb, roomOf) {
+  function capLateForFallback(d, floor, slotOf, overridden, byName, s, need, costFn, checks, wi, fb, roomOf, adjusted) {
     var target = need ? need.late : undefined;
     if (target === undefined || target === null) return;
     var floorNames = Object.keys(slotOf).filter(function (n) { return byName[n].floor === floor; });
@@ -452,6 +453,7 @@
       var n = pick[0], moveTo = pick[1];
       var old = slotOf[n];
       slotOf[n] = moveTo;
+      if (adjusted) adjusted.add(n);
       checks.push({
         level: 'INFO', rule: 'Cover adjusted',
         message: n + ' moved from ' + t12(s.shifts[old].start) + ' to ' + t12(s.shifts[moveTo].start) +
@@ -612,6 +614,25 @@
       }
       return null;
     }
+    // Like leaveKind, but a leave request with a known end date doesn't
+    // count - only employment boundaries and open-ended leave do. Used
+    // only to work out who else's slot moved *because of* someone's
+    // temporary leave, for the "changed to cover" highlight - never for
+    // what's actually scheduled. Open-ended leave (no return date) is the
+    // team's new normal for this build, not a one-off to compare against,
+    // so it stays a real absence here too, same as leaveKind.
+    function creditedKind(name, d) {
+      var st = byName[name];
+      if (st) {
+        if (st.start_date && d < st.start_date) return 'Not yet started';
+        if (st.end_date && d > st.end_date) return 'Left';
+      }
+      for (var i = 0; i < inputs.leave.length; i++) {
+        var lv = inputs.leave[i];
+        if (lv.name === name && lv.start <= d && lv.end == null) return lv.kind;
+      }
+      return null;
+    }
     function ovCovers(ov, d) { return ov.start <= d && (ov.end == null || d <= ov.end); }
     function overrideSlot(name, d) {
       var found = null;
@@ -641,60 +662,78 @@
       for (var n5 in byName) present[n5] = days.filter(function (d) { return !leaveKind(n5, d); });
 
       // ---- weekly base ----
-      var manual = {};
-      for (var n6 in byName) {
-        var st6 = byName[n6];
-        if (st6.role === 'static' || !present[n6].length) continue;
-        var ovs = present[n6].map(function (d) { return effectiveOverride(n6, d)[0]; }).filter(Boolean);
-        if (ovs.length) {
-          var c6 = {};
-          ovs.forEach(function (o) { c6[o] = (c6[o] || 0) + 1; });
-          manual[n6] = maxByKey(Object.keys(c6), function (sl) { return [c6[sl], -SLOTS.indexOf(sl)]; });
-        }
-      }
-
-      var base = {};
-      for (var n7 in byName) {
-        var st7 = byName[n7];
-        if (st7.role === 'fixed' && present[n7].length) base[n7] = manual[n7] || st7.fixed_slot || 'early';
-      }
-      if (pair.length) {
-        var a = pair[0], b = pair[1];
-        Object.assign(base, choosePair(a, b, !!present[a].length, !!present[b].length, hist, lastSlot));
-        [[a, b], [b, a]].forEach(function (pr) {
-          var nm = pr[0], partner = pr[1];
-          if (manual[nm] !== undefined && !present[partner].length) base[nm] = manual[nm];
-        });
-      }
-      s.floors.forEach(function (floor) {
-        var floorPeople = [];
-        for (var nn in byName) if (byName[nn].floor === floor) floorPeople.push(byName[nn]);
-        floorPeople.forEach(function (st) {
-          if (st.role === 'rotating' && manual[st.name] !== undefined) base[st.name] = manual[st.name];
-        });
-        var pre = {};
-        floorPeople.forEach(function (st) { if (base[st.name] !== undefined) pre[base[st.name]] = (pre[base[st.name]] || 0) + 1; });
-        var members = floorPeople
-          .filter(function (st) { return st.role === 'rotating' && present[st.name].length && manual[st.name] === undefined; })
-          .map(function (st) { return st.name; });
-
-        var minClose = s.min_close[floor];
-        if (
-          s.fallback_closer && pair.length &&
-          byName[s.fallback_closer] && byName[s.fallback_closer].floor === floor &&
-          !pair.some(function (p) { return byName[p] && byName[p].floor === floor && base[p] === 'late'; })
-        ) {
-          minClose = Math.max(0, minClose - 1);
-        }
-        if (members.length) {
-          var takenByRoom = {};
-          for (var nb in base) {
-            var r = roomOf[nb];
-            if (r) { if (!takenByRoom[r]) takenByRoom[r] = new Set(); takenByRoom[r].add(base[nb]); }
+      function computeBase(presentMap) {
+        var manual = {};
+        for (var n6 in byName) {
+          var st6 = byName[n6];
+          if (st6.role === 'static' || !presentMap[n6].length) continue;
+          var ovs = presentMap[n6].map(function (d) { return effectiveOverride(n6, d)[0]; }).filter(Boolean);
+          if (ovs.length) {
+            var c6 = {};
+            ovs.forEach(function (o) { c6[o] = (c6[o] || 0) + 1; });
+            manual[n6] = maxByKey(Object.keys(c6), function (sl) { return [c6[sl], -SLOTS.indexOf(sl)]; });
           }
-          Object.assign(base, assignWeeklyBase(members, pre, s.min_open[floor], minClose, hist, lastSlot, wi, roomOf, takenByRoom));
         }
-      });
+
+        var base = {};
+        for (var n7 in byName) {
+          var st7 = byName[n7];
+          if (st7.role === 'fixed' && presentMap[n7].length) base[n7] = manual[n7] || st7.fixed_slot || 'early';
+        }
+        if (pair.length) {
+          var a = pair[0], b = pair[1];
+          Object.assign(base, choosePair(a, b, !!presentMap[a].length, !!presentMap[b].length, hist, lastSlot));
+          [[a, b], [b, a]].forEach(function (pr) {
+            var nm = pr[0], partner = pr[1];
+            if (manual[nm] !== undefined && !presentMap[partner].length) base[nm] = manual[nm];
+          });
+        }
+        s.floors.forEach(function (floor) {
+          var floorPeople = [];
+          for (var nn in byName) if (byName[nn].floor === floor) floorPeople.push(byName[nn]);
+          floorPeople.forEach(function (st) {
+            if (st.role === 'rotating' && manual[st.name] !== undefined) base[st.name] = manual[st.name];
+          });
+          var pre = {};
+          floorPeople.forEach(function (st) { if (base[st.name] !== undefined) pre[base[st.name]] = (pre[base[st.name]] || 0) + 1; });
+          var members = floorPeople
+            .filter(function (st) { return st.role === 'rotating' && presentMap[st.name].length && manual[st.name] === undefined; })
+            .map(function (st) { return st.name; });
+
+          var minClose = s.min_close[floor];
+          if (
+            s.fallback_closer && pair.length &&
+            byName[s.fallback_closer] && byName[s.fallback_closer].floor === floor &&
+            !pair.some(function (p) { return byName[p] && byName[p].floor === floor && base[p] === 'late'; })
+          ) {
+            minClose = Math.max(0, minClose - 1);
+          }
+          if (members.length) {
+            var takenByRoom = {};
+            for (var nb in base) {
+              var r = roomOf[nb];
+              if (r) { if (!takenByRoom[r]) takenByRoom[r] = new Set(); takenByRoom[r].add(base[nb]); }
+            }
+            Object.assign(base, assignWeeklyBase(members, pre, s.min_open[floor], minClose, hist, lastSlot, wi, roomOf, takenByRoom));
+          }
+        });
+        return base;
+      }
+
+      var base = computeBase(present);
+      // A second, counterfactual pass - "as if" nobody's temporary leave
+      // had happened this week - used only to work out whose weekly slot
+      // moved *because of* it, for the "changed to cover" highlight below.
+      // It never feeds the real schedule or fairness memory.
+      var presentCredit = {};
+      for (var n5b in byName) presentCredit[n5b] = days.filter(function (d) { return !creditedKind(n5b, d); });
+      var baseIfNobodyAway = computeBase(presentCredit);
+      var coveringBecauseOfLeave = new Set();
+      for (var n5c in base) {
+        if (byName[n5c].role === 'rotating' && baseIfNobodyAway[n5c] !== undefined && base[n5c] !== baseIfNobodyAway[n5c]) {
+          coveringBecauseOfLeave.add(n5c);
+        }
+      }
 
       // ---- daily pass ----
       var cells = new Map();
@@ -702,6 +741,7 @@
       days.forEach(function (d) {
         var slotOf = {};
         var overridden = new Set();
+        var adjusted = new Set();
         staffKeys.forEach(function (ks) {
           var key = ks[0], st = ks[1];
           if (st.role === 'blank') { cells.set(cellKey(key, d), { kind: 'blank', text: '' }); return; }
@@ -750,8 +790,8 @@
               // that's a manual override she types in herself.
             }
           }
-          repairFloor(d, floor, slotOf, overridden, byName, s, costFn, checks, wi, need, roomOf);
-          if (fallbackCovering) capLateForFallback(d, floor, slotOf, overridden, byName, s, need, costFn, checks, wi, fb, roomOf);
+          repairFloor(d, floor, slotOf, overridden, byName, s, costFn, checks, wi, need, roomOf, adjusted);
+          if (fallbackCovering) capLateForFallback(d, floor, slotOf, overridden, byName, s, need, costFn, checks, wi, fb, roomOf, adjusted);
           checkFloor(d, floor, slotOf, byName, s, checks, wi, need);
         });
 
@@ -759,7 +799,8 @@
 
         for (var name in slotOf) {
           var slot = slotOf[name];
-          cells.set(cellKey(name, d), { kind: 'shift', slot: slot, text: shiftLabel(s.shifts[slot]), overridden: overridden.has(name) });
+          var wasAdjusted = adjusted.has(name) || (!overridden.has(name) && coveringBecauseOfLeave.has(name));
+          cells.set(cellKey(name, d), { kind: 'shift', slot: slot, text: shiftLabel(s.shifts[slot]), overridden: overridden.has(name), adjusted: wasAdjusted });
         }
       });
 
@@ -991,7 +1032,7 @@
         if (!label) return;
         var daysOut = week.days.map(function (d) {
           var c = week.cells.get(cellKey(key, d));
-          return { text: c.text || '', kind: c.kind };
+          return { text: c.text || '', kind: c.kind, adjusted: !!c.adjusted };
         });
         people.push({ name: label, role: st.role, days: daysOut });
         if (st.role !== 'vacant' && week.days.some(function (d) {
