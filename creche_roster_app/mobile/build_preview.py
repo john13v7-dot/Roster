@@ -105,21 +105,20 @@ def fairness_json(inputs, roster, duty_weeks) -> dict:
     Shehnaz/Priscilla are fixed to their own duty, so they're left off the
     duty table too.
 
-    Shift counts are cumulative (history the roster was seeded with, plus
-    this build) - the same total the fairness cost function itself
-    balances against - not just this 4-week window. A 4-week-only count
-    can misread as unfair (e.g. 0 opens this month) when someone simply
-    had their fair share of opens the week before the window started;
-    cumulative is the number that actually answers "has this been fair".
+    Shift counts are for this build's own weeks only (period_counts) -
+    the 4 forthcoming weeks the roster actually covers, not blended with
+    whatever history the roster happened to be seeded with. That's the
+    number a manager looking at this roster wants: what these 4 weeks
+    actually contain.
     """
     rotating_names = [st.name for st in inputs.staff if st.role == "rotating" and st.name]
     shift_rows = [
         {
             "name": name,
-            "early": roster.cumulative_counts.get(name, {}).get("early", 0),
-            "mid1": roster.cumulative_counts.get(name, {}).get("mid1", 0),
-            "mid2": roster.cumulative_counts.get(name, {}).get("mid2", 0),
-            "late": roster.cumulative_counts.get(name, {}).get("late", 0),
+            "early": roster.period_counts.get(name, {}).get("early", 0),
+            "mid1": roster.period_counts.get(name, {}).get("mid1", 0),
+            "mid2": roster.period_counts.get(name, {}).get("mid2", 0),
+            "late": roster.period_counts.get(name, {}).get("late", 0),
         }
         for name in rotating_names
     ]
