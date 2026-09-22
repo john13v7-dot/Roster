@@ -49,8 +49,14 @@ Signed with a self-generated release keystore (password
 directly rather than committing it to the repo, since a private signing
 key doesn't belong in source control. See `keystore/README.md` for the
 one-time step to wire it into the GitHub Actions build via a repository
-secret. **The first build will fail until you've added that secret** -
-that's expected, not a bug.
+secret.
+
+Until you've added that secret, CI generates a throwaway keystore on the
+fly so builds still succeed (you'll see a warning in the build log) - but
+each such build is signed differently, so Android will treat every one as
+a different app and you'd need to uninstall the old one before installing
+a new one. Add the real secret once and every future build is signed
+consistently, so updates just install over each other.
 
 ## Why a GitHub Actions build instead of a local one
 

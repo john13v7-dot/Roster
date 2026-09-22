@@ -35,12 +35,16 @@ jobs:
         env:
           ROSTER_KEYSTORE_BASE64: ${{ secrets.ROSTER_KEYSTORE_BASE64 }}
         run: |
-          if [ -z "$ROSTER_KEYSTORE_BASE64" ]; then
-            echo "::error::Repository secret ROSTER_KEYSTORE_BASE64 is not set. See creche_roster_app/android/keystore/README.md for how to add it."
-            exit 1
-          fi
           mkdir -p keystore
-          echo "$ROSTER_KEYSTORE_BASE64" | base64 -d > keystore/roster-release.keystore
+          if [ -z "$ROSTER_KEYSTORE_BASE64" ]; then
+            echo "::warning::ROSTER_KEYSTORE_BASE64 secret not set - using a throwaway CI-only keystore so the build can still be validated. Set the real secret before installing this build (see creche_roster_app/android/keystore/README.md)."
+            keytool -genkeypair -v -keystore keystore/roster-release.keystore -alias roster \
+              -keyalg RSA -keysize 2048 -validity 1 \
+              -storepass roster-sideload-2026 -keypass roster-sideload-2026 \
+              -dname "CN=CI Test, OU=CI, O=CI, L=NA, ST=NA, C=US"
+          else
+            echo "$ROSTER_KEYSTORE_BASE64" | base64 -d > keystore/roster-release.keystore
+          fi
 
       - name: Build signed release APK
         run: gradle assembleRelease --no-daemon
