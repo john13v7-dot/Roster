@@ -70,3 +70,21 @@ left off the duty-fairness count, since their duty never rotates.
 Like the roster itself, both are recomputed from scratch on every build -
 never a patch - so they stay consistent with whatever leave/staff changes
 triggered the rebuild.
+
+## Rooms
+
+`Staff.room` (Toddlers Room, Preschoolers Room, ECEC 1, ECEC 2 - set on
+the Add Staff form, or via `db_import.py`'s `room` field on a staff doc)
+drives a hard rule enforced in `engine.py`: two staff in the same room
+can never be on the same shift slot. The weekly base assignment
+(`_assign_weekly_base`) actively avoids it, including a swap-based
+cleanup pass (`_resolve_room_clashes`) for the case a 3-person room's
+members all land in the two flexible 8:00/8:30 slots the same week (only
+2 slots for 3 people, so a clash there is arithmetically forced, not a
+bad pick, unless one of them gets swapped into a different slot with
+someone from another room). The daily repair pass is room-aware the same
+way. Whatever's still genuinely unavoidable (typically a manual Override
+pinning two room-mates to the same slot) is reported as a "Room clash"
+breach, not silently allowed - same as opening/closing cover. Eirini has
+no room yet (unknown - she's on maternity leave), so she isn't part of
+the rule until one's set.

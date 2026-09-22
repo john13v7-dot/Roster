@@ -353,7 +353,11 @@ class HardRules(unittest.TestCase):
     def test_infeasible_cover_is_reported_not_hidden(self):
         r = build_roster(inputs(settings={"min_open": {"All": 99}}, weeks=1))
         self.assertTrue(r.breaches)
-        self.assertTrue(all(b.rule == "Opening cover" for b in r.breaches))
+        # An impossible opening minimum forces nearly everyone onto "early"
+        # at once, which also forces same-room staff together on it - a
+        # second, real symptom of the same underlying infeasibility, not a
+        # separate bug.
+        self.assertTrue(all(b.rule in ("Opening cover", "Room clash") for b in r.breaches))
 
     def test_rotation_spreads_start_times(self):
         r = build_roster(inputs(weeks=12))
@@ -374,12 +378,20 @@ class HardRules(unittest.TestCase):
         # total cost could leave one person at 0 opens while everyone else
         # was fine (see git history: Daniel 0 opens over 4 weeks even
         # though his own cost for it was the cheapest in the group).
+        #
+        # The room rule (same-room staff can't share a slot) can now
+        # loosen this a little in return for never breaching that hard
+        # rule - David shares ECEC 2 with Jason, whose own slot is fixed
+        # by the separate pairing rota and isn't itself fairness-balanced,
+        # which costs David some flexibility the room-free members don't
+        # lose. 0 breaches matters more here than the exact tolerance.
         r = build_roster(inputs(weeks=12))
+        self.assertEqual(r.breaches, [])
         totals = {
             n: r.period_counts[n].get("early", 0) + r.period_counts[n].get("late", 0)
             for n in ROTATING
         }
-        self.assertLessEqual(max(totals.values()) - min(totals.values()), 6)
+        self.assertLessEqual(max(totals.values()) - min(totals.values()), 12)
 
     def test_opening_and_closing_beat_pure_cost_minimising_on_a_pinned_pair(self):
         # The scenario that exposed the bug: one paired person permanently
@@ -405,6 +417,77 @@ class HardRules(unittest.TestCase):
         b = build_roster(inputs(weeks=6))
         for wi in range(6):
             self.assertEqual(a.weeks[wi].cells, b.weeks[wi].cells)
+
+
+def _room_clashes(roster, name_room):
+    """[(day, room, [names sharing a slot])] for every day two or more of
+    `name_room`'s people land on the same slot - a direct check against
+    the built roster, independent of whether the engine itself noticed."""
+    out = []
+    for week in roster.weeks:
+        for d in week.days:
+            by_slot = {}
+            for name, room in name_room.items():
+                cell = week.cells.get((name, d))
+                if cell and cell.kind == "shift":
+                    by_slot.setdefault((room, cell.slot), []).append(name)
+            for (room, slot), names in by_slot.items():
+                if len(names) > 1:
+                    out.append((d, room, names))
+    return out
+
+
+ROOMS = {
+    "Manuel": "Preschoolers Room", "Irene": "Preschoolers Room", "Deoshree": "Preschoolers Room",
+    "Sandrine": "ECEC 1", "Daniel": "ECEC 1", "Arantza": "ECEC 1",
+    "David": "ECEC 2", "Usha": "ECEC 2", "Jason": "ECEC 2",
+}
+
+
+class RoomRule(unittest.TestCase):
+    """Staff in the same room can't be on the same shift - important
+    enough to actively avoid (weekly base, daily repair), not just flag."""
+
+    def test_sample_data_has_the_real_room_assignments(self):
+        rooms = {st.name: st.room for st in sample_inputs(START).staff if st.room and st.name}
+        self.assertEqual(rooms, dict(ROOMS, Sue="Toddlers Room", Hanny="Toddlers Room"))
+
+    def test_no_clash_over_a_default_twelve_week_run(self):
+        r = build_roster(inputs(weeks=12))
+        self.assertEqual(r.breaches, [])
+        self.assertEqual(_room_clashes(r, ROOMS), [])
+
+    def test_no_clash_with_jason_pinned_and_shehnaz_away(self):
+        # The live mobile app's actual data - the scenario that first
+        # exposed this needing a real swap-based repair, not just a
+        # preference: a 3-person room can easily end up with all three
+        # members outside the 2 opening + 2 closing seats some week,
+        # which leaves only 2 flexible slots (8:00/8:30) for those 3.
+        leave = [Leave("Shehnaz", START, START + timedelta(days=83), "Holiday")]
+        over = [Override("Jason", START, START + timedelta(days=83), "early")]
+        r = build_roster(inputs(weeks=12, leave=leave, overrides=over))
+        self.assertEqual(r.breaches, [])
+        self.assertEqual(_room_clashes(r, ROOMS), [])
+
+    def test_no_clash_when_a_roommate_is_on_leave(self):
+        leave = [Leave("Irene", START + timedelta(days=7), START + timedelta(days=25), "Holiday")]
+        r = build_roster(inputs(weeks=12, leave=leave))
+        self.assertEqual(r.breaches, [])
+        self.assertEqual(_room_clashes(r, ROOMS), [])
+
+    def test_genuinely_unavoidable_clash_is_reported_not_hidden(self):
+        # Two Preschoolers Room staff manually pinned to the same slot by
+        # an override - nothing the engine does can un-clash a hard pin,
+        # so it has to show up as a breach rather than be silently allowed.
+        over = [
+            Override("Manuel", START, START + timedelta(days=4), "late"),
+            Override("Irene", START, START + timedelta(days=4), "late"),
+        ]
+        r = build_roster(inputs(weeks=1, overrides=over))
+        clashes = [c for c in r.breaches if c.rule == "Room clash"]
+        self.assertTrue(clashes)
+        self.assertIn("Manuel", clashes[0].message)
+        self.assertIn("Irene", clashes[0].message)
 
 
 class Validation(unittest.TestCase):

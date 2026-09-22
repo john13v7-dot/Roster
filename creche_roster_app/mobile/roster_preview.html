@@ -357,10 +357,11 @@
       <li>The vacant seat (row 3) shows with no shift and isn't counted toward cover.</li>
       <li>Holiday and Maternity Leave are picked up automatically for the dates you give them.</li>
       <li>Joiners and leavers: a new staff member's Start date (set when you Add Staff) means they're not scheduled before it; an End date works the same way for someone leaving.</li>
+      <li>Same room, same shift is never allowed: Toddlers Room, Preschoolers Room, ECEC 1 and ECEC 2 each keep their staff on different start times from each other, every day.</li>
     </ul>
     <ul class="rule-list open-list" style="margin-top:14px;">
       <li><strong>Floor balance</strong> — everyone's on one list for now (no ground floor / 1st floor split yet). The Transfer form records a floor move, but it won't change the schedule until floors are split.</li>
-      <li><strong>Eirini's room</strong> — not placed yet.</li>
+      <li><strong>Eirini's room</strong> — not placed yet, so she isn't part of the same-room rule until she is.</li>
     </ul>
     <p class="note">Everything here is generated straight from the real Python scheduling engine — press Print on the Roster screen for the actual Excel and PDF.</p>
   </div>
@@ -681,7 +682,7 @@
       var row = document.createElement('div');
       row.className = 'item';
       row.innerHTML =
-        '<div><div class="name">'+esc(s.name)+'</div><div class="meta">'+esc(s.floor||'All')+'</div></div>' +
+        '<div><div class="name">'+esc(s.name)+'</div><div class="meta">'+esc(s.room||'no room set')+'</div></div>' +
         '<span class="pill">'+esc(s.role)+'</span>';
       el.appendChild(row);
     });
@@ -867,6 +868,8 @@
   var ROLE_OPTS = [['rotating','Rotating (shares the 4 shifts)'],['fixed','Fixed (always one shift)'],
                     ['static','Static (own set hours)'],['vacant','Vacant post'],['paired','Paired (Jason/Shehnaz only)']];
   var FLOOR_OPTS = [['All','All / not split yet'],['down','Ground floor'],['up','1st floor']];
+  var ROOM_OPTS = [['','Not placed yet'],['Toddlers Room','Toddlers Room'],['Preschoolers Room','Preschoolers Room'],
+                    ['ECEC 1','ECEC 1'],['ECEC 2','ECEC 2']];
 
   function field(labelText, inner){
     return '<div class="field"><label>'+labelText+'</label>'+inner+'</div>';
@@ -891,6 +894,7 @@
         field('Name', '<input id="f_name" type="text" placeholder="e.g. Priya">') +
         field('Floor', selectHTML('f_floor', FLOOR_OPTS)) +
         field('Role', selectHTML('f_role', ROLE_OPTS)) +
+        field('Room (same room can\'t share a shift)', selectHTML('f_room', ROOM_OPTS)) +
         field('Start date', '<input id="f_start" type="date" value="'+todayISO()+'">');
     } else if(action === 'transfer'){
       formTitle.textContent = 'Transfer';
@@ -939,14 +943,15 @@
       if(currentAction === 'add-staff'){
         var name = ($('f_name').value || '').trim();
         if(!name){ formErr.textContent = 'Name is required.'; formSave.disabled=false; return; }
-        var floor = $('f_floor').value, role = $('f_role').value, start = $('f_start').value;
+        var floor = $('f_floor').value, role = $('f_role').value, room = $('f_room').value, start = $('f_start').value;
         var id = name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'') || ('staff-'+Date.now());
         var order = staffDocs.reduce(function(m,s){ return Math.max(m, s.order||0); }, 0) + 1;
         await db.collection('staff').doc(id).set({
           name: name, floor: floor, role: role, note: '', hours: ['','','','',''],
-          number: '', order: order, active: true, startDate: start,
+          number: '', order: order, active: true, startDate: start, room: room,
         });
-        var summary = 'Add staff: ' + name + ', floor ' + floor + ', role ' + role + ', starting ' + start + '.';
+        var summary = 'Add staff: ' + name + ', floor ' + floor + ', role ' + role +
+          (room ? ', room ' + room : '') + ', starting ' + start + '.';
         await notifyClaude(summary);
         toast('Added ' + name + '.');
       } else if(currentAction === 'transfer'){

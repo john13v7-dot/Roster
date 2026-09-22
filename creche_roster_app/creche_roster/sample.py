@@ -11,10 +11,10 @@ from datetime import date, time
 from .models import Inputs, Leave, Override, Settings, Shift, Staff
 
 
-def _static(name, hours="", number="", **days):
+def _static(name, hours="", number="", room="", **days):
     """A person with own hours. days: mon="...", thu="OFF" ..."""
     per_day = [days.get(d, "") for d in ("mon", "tue", "wed", "thu", "fri")]
-    return Staff(name, "All", "static", hours, None, per_day, number)
+    return Staff(name, "All", "static", hours, None, per_day, number, room=room)
 
 
 def sample_inputs(start: date) -> Inputs:
@@ -35,25 +35,25 @@ def sample_inputs(start: date) -> Inputs:
         day_headers=False,
         fallback_closer="Priscilla",  # closes when neither Jason nor Shehnaz does
     )
-    rot = lambda n: Staff(n, "All", "rotating")  # noqa: E731
+    rot = lambda n, room: Staff(n, "All", "rotating", room=room)  # noqa: E731
     staff = [
-        _static("Sue", "8:30 – 1:30", thu="OFF"),
-        rot("Hanny"),
-        Staff("", "All", "vacant", "8:30 – 5:30"),  # the empty post on the printed roster
-        rot("Manuel"),
-        rot("Irene"),
-        rot("Deoshree"),
-        rot("Sandrine"),
-        rot("Daniel"),
-        rot("Arantza"),
-        rot("David"),
-        rot("Usha"),
+        _static("Sue", "8:30 – 1:30", thu="OFF", room="Toddlers Room"),
+        rot("Hanny", "Toddlers Room"),
+        Staff("", "All", "vacant", "8:30 – 5:30", room="Toddlers Room"),  # the empty post on the printed roster
+        rot("Manuel", "Preschoolers Room"),
+        rot("Irene", "Preschoolers Room"),
+        rot("Deoshree", "Preschoolers Room"),
+        rot("Sandrine", "ECEC 1"),
+        rot("Daniel", "ECEC 1"),
+        rot("Arantza", "ECEC 1"),
+        rot("David", "ECEC 2"),
+        rot("Usha", "ECEC 2"),
         Staff("", "All", "vacant"),
         Staff("", "All", "vacant"),
         Staff("", "All", "blank"),
-        _static("Eirini", number="-"),
+        _static("Eirini", number="-"),  # room not known - excluded from the room rule for now
         _static("Megan"),
-        Staff("Jason", "All", "paired"),
+        Staff("Jason", "All", "paired", room="ECEC 2"),
         Staff("Shehnaz", "All", "paired"),
         _static("Priscilla", "10:00 – 6:00", mon="10:00 – 2:00"),
         _static("Laura", "9:00 – 1:00"),

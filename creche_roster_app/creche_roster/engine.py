@@ -161,8 +161,20 @@ def _assign_weekly_base(
     hist: Dict[str, Counter],
     last_slot: Dict[str, str],
     week_index: int,
+    room_of: Optional[Dict[str, str]] = None,
+    taken_by_room: Optional[Dict[str, set]] = None,
 ) -> Dict[str, str]:
     """Each rotating member's weekly base slot for one floor.
+
+    Same-room staff can't share a slot (hard rule): `room_of` maps each
+    candidate to their room, and `taken_by_room` starts with whichever
+    slots that room already has claimed this week (fixed staff, the
+    paired pair, manual overrides) and is extended in place as this
+    function assigns people, so it also catches two members of the same
+    room being assigned here. A candidate that would create a clash is
+    only ever picked when every remaining candidate for that slot would -
+    genuinely unavoidable that week - so it can be reported, not silently
+    allowed.
 
     Opening and closing are the two shifts meant to be shared equally, so
     they're filled first, together, from a single least-done-first queue
@@ -189,14 +201,31 @@ def _assign_weekly_base(
     """
     remaining = list(members)
     result: Dict[str, str] = {}
+    room_of = room_of or {}
+    taken_by_room: Dict[str, set] = taken_by_room if taken_by_room is not None else {}
 
     def priority(n: str) -> int:
         return (members.index(n) - week_index) % len(members)
 
+    def clashes(n: str, slot: str) -> bool:
+        room = room_of.get(n)
+        return bool(room) and slot in taken_by_room.get(room, ())
+
+    def claim(n: str, slot: str) -> None:
+        result[n] = slot
+        room = room_of.get(n)
+        if room:
+            taken_by_room.setdefault(room, set()).add(slot)
+
     def take(slot: str, k: int) -> None:
         for _ in range(min(k, len(remaining))):
+            # A room-mate already on this slot this week is only ever
+            # accepted when there's no clash-free candidate left - a real
+            # shortfall, not a preference to override.
+            safe = [n for n in remaining if not clashes(n, slot)]
+            pool = safe or remaining
             n = min(
-                remaining,
+                pool,
                 key=lambda n: (
                     hist[n]["early"] + hist[n]["late"],
                     hist[n][slot],
@@ -206,7 +235,7 @@ def _assign_weekly_base(
                 ),
             )
             remaining.remove(n)
-            result[n] = slot
+            claim(n, slot)
 
     early_k = max(0, need_open - pre_counts.get("early", 0))
     late_k = max(0, need_close - pre_counts.get("late", 0))
@@ -228,15 +257,77 @@ def _assign_weekly_base(
         # individually stacks up on one of the two), and this week's fill
         # level is only the tie-break - not the other way round, which let
         # an odd leftover (2-3 split, most weeks) stack the same slot for
-        # whoever's left over across several weeks running.
+        # whoever's left over across several weeks running. A room-mate
+        # already on one of the two only rules it out when the other is
+        # actually free to take instead.
+        options = [sl for sl in ("mid1", "mid2") if not clashes(n, sl)] or ["mid1", "mid2"]
         target = min(
-            ("mid1", "mid2"),
+            options,
             key=lambda sl: (hist[n][sl], mid_counts[sl], 1 if last_slot.get(n) == sl else 0),
         )
-        result[n] = target
+        claim(n, target)
         mid_counts[target] += 1
 
+    _resolve_room_clashes(result, room_of, hist)
     return result
+
+
+def _room_clash_free(assignment: Dict[str, str], room_of: Dict[str, str]) -> bool:
+    seen: Dict[Tuple[str, str], str] = {}
+    for n, slot in assignment.items():
+        room = room_of.get(n)
+        if not room:
+            continue
+        key = (room, slot)
+        if key in seen:
+            return False
+        seen[key] = n
+    return True
+
+
+def _resolve_room_clashes(result: Dict[str, str], room_of: Dict[str, str], hist: Dict[str, Counter]) -> None:
+    """Swap-based cleanup for whatever the least-done-first pass above
+    couldn't avoid on its own - mainly a 3-person room whose members all
+    land in the two flexible 8:00/8:30 slots the same week (only 2 slots
+    for 3 people, so a clash there is arithmetically forced, not a bad
+    pick). Trade one of the clashing pair with someone from a different
+    room, in whichever direction - and with whichever swap partner -
+    actually clears it at the lowest fairness cost. A clash that can't be
+    resolved this way (every candidate swap partner would just create a
+    different clash) is left for the daily check to report, same as any
+    other hard-rule shortfall that's genuinely unavoidable that week."""
+    for _ in range(20):
+        clash = None
+        seen: Dict[Tuple[str, str], str] = {}
+        for n, slot in result.items():
+            room = room_of.get(n)
+            if not room:
+                continue
+            key = (room, slot)
+            if key in seen:
+                clash = (n, seen[key])
+                break
+            seen[key] = n
+        if not clash:
+            return
+
+        best: Optional[Tuple[float, str, str, str, str]] = None
+        for mover in clash:
+            cur = result[mover]
+            for other, oslot in result.items():
+                if other == mover or oslot == cur or room_of.get(other) == room_of.get(mover):
+                    continue
+                trial = dict(result)
+                trial[mover], trial[other] = oslot, cur
+                if not _room_clash_free(trial, room_of):
+                    continue
+                cost = hist[mover][oslot] + hist[other][cur]
+                if best is None or cost < best[0]:
+                    best = (cost, mover, other, oslot, cur)
+        if best is None:
+            return  # genuinely unavoidable this week
+        _, mover, other, oslot, cur = best
+        result[mover], result[other] = oslot, cur
 
 
 def _choose_pair(
@@ -312,6 +403,8 @@ def build_roster(inputs: Inputs) -> Roster:
     working = [(k, st) for k, st in staff_keys if st.role in ("rotating", "fixed", "paired", "static")]
     by_name: Dict[str, Staff] = {st.name: st for _, st in working}
     pair = [st.name for _, st in working if st.role == "paired"]
+
+    room_of: Dict[str, str] = {n: st.room for n, st in by_name.items() if st.room}
 
     hist: Dict[str, Counter] = {n: Counter(inputs.history.get(n, {})) for n in by_name}
     period: Dict[str, Counter] = {n: Counter() for n in by_name}
@@ -412,8 +505,21 @@ def build_roster(inputs: Inputs) -> Roster:
             ):
                 min_close = max(0, min_close - 1)
             if members:
+                # Same-room staff can't share a slot: seed with whichever
+                # slots this room already has claimed by people decided
+                # before the rotating pool (fixed staff, the pair, manual
+                # overrides), so e.g. Jason's own slot rules it out for his
+                # ECEC 2 room-mates even though he isn't in `members`.
+                taken_by_room: Dict[str, set] = {}
+                for n, slot in base.items():
+                    r = room_of.get(n)
+                    if r:
+                        taken_by_room.setdefault(r, set()).add(slot)
                 base.update(
-                    _assign_weekly_base(members, pre, s.min_open[floor], min_close, hist, last_slot, wi)
+                    _assign_weekly_base(
+                        members, pre, s.min_open[floor], min_close, hist, last_slot, wi,
+                        room_of, taken_by_room,
+                    )
                 )
 
         # ---- daily pass --------------------------------------------------
@@ -479,10 +585,12 @@ def build_roster(inputs: Inputs) -> Roster:
                                 wi,
                             )
                         )
-                _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=need)
+                _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=need, room_of=room_of)
                 if fallback_covering:
-                    _cap_late_for_fallback(d, floor, slot_of, overridden, by_name, s, need, cost_fn, checks, wi, fb)
+                    _cap_late_for_fallback(d, floor, slot_of, overridden, by_name, s, need, cost_fn, checks, wi, fb, room_of=room_of)
                 _check_floor(d, floor, slot_of, by_name, s, checks, wi, need=need)
+
+            _check_rooms(d, slot_of, room_of, s.shifts, checks, wi)
 
             for name, slot in slot_of.items():
                 cells[(name, d)] = Assignment(
@@ -522,7 +630,17 @@ def _needs(floor: str, s) -> Dict[str, int]:
     return {"early": s.min_open[floor], "late": s.min_close[floor]}
 
 
-def _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=None) -> None:
+def _would_clash(n, target_slot, slot_of, room_of) -> bool:
+    room = room_of.get(n) if room_of else None
+    if not room:
+        return False
+    return any(
+        other != n and room_of.get(other) == room and slot_of.get(other) == target_slot
+        for other in slot_of
+    )
+
+
+def _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=None, room_of=None) -> None:
     need = _needs(floor, s) if need is None else need
     floor_names = [n for n in slot_of if by_name[n].floor == floor]
     for target in ("early", "late"):
@@ -540,6 +658,11 @@ def _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi
                 donors.append(n)
             if not donors:
                 break
+            # A donor who'd clash with a room-mate already on `target` is
+            # only picked when every donor would - same "avoid unless
+            # genuinely unavoidable" rule as the weekly base.
+            safe_donors = [n for n in donors if not _would_clash(n, target, slot_of, room_of)]
+            donors = safe_donors or donors
             donors.sort(
                 key=lambda n: (
                     0 if slot_of[n] in ("mid1", "mid2") else 1,
@@ -563,7 +686,7 @@ def _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi
             )
 
 
-def _cap_late_for_fallback(d, floor, slot_of, overridden, by_name, s, need, cost_fn, checks, wi, fb) -> None:
+def _cap_late_for_fallback(d, floor, slot_of, overridden, by_name, s, need, cost_fn, checks, wi, fb, room_of=None) -> None:
     """When the fallback closer is covering (need['late'] was already reduced
     by one for them), keep the actual late headcount at that reduced number
     instead of leaving extra rotating staff on it anyway - otherwise the
@@ -581,8 +704,16 @@ def _cap_late_for_fallback(d, floor, slot_of, overridden, by_name, s, need, cost
         if not candidates:
             break
         slot_counts = Counter(slot_of[n] for n in floor_names)
-        move_to = min(other_slots, key=lambda sl: slot_counts.get(sl, 0))
-        n = min(candidates, key=lambda n: cost_fn(n, move_to))
+        # Every (person, slot-to-move-to) pairing that doesn't clash with a
+        # room-mate, ranked by keeping the other slots balanced first and
+        # cost second - same "unless genuinely unavoidable" fallback as
+        # everywhere else this rule applies.
+        options = [
+            (n, sl) for n in candidates for sl in other_slots
+            if not _would_clash(n, sl, slot_of, room_of)
+        ]
+        options = options or [(n, sl) for n in candidates for sl in other_slots]
+        n, move_to = min(options, key=lambda ns: (slot_counts.get(ns[1], 0), cost_fn(ns[0], ns[1])))
         old = slot_of[n]
         slot_of[n] = move_to
         checks.append(
@@ -612,6 +743,33 @@ def _check_floor(d, floor, slot_of, by_name, s, checks, wi, need=None) -> None:
                     wi,
                 )
             )
+
+
+def _check_rooms(d, slot_of, room_of, shifts, checks, wi) -> None:
+    """Hard rule: two people in the same room can't be on the same slot.
+    The weekly base and daily repair both actively avoid this already;
+    this is the final check that catches whatever they couldn't (an
+    override, a leave-driven change) so it's reported, not silently let
+    through."""
+    by_room: Dict[str, Dict[str, List[str]]] = {}
+    for name, slot in slot_of.items():
+        room = room_of.get(name)
+        if not room:
+            continue
+        by_room.setdefault(room, {}).setdefault(slot, []).append(name)
+    for room, by_slot in by_room.items():
+        for slot, names in by_slot.items():
+            if len(names) > 1:
+                checks.append(
+                    Check(
+                        "BREACH",
+                        "Room clash",
+                        f"{room}: {', '.join(sorted(names))} are all on the {t12(shifts[slot].start)} "
+                        f"start on {fmt_day(d)} - same-room staff can't share a shift.",
+                        d,
+                        wi,
+                    )
+                )
 
 
 def _report_pairing(pair, days, cells, leave_kind, ignored_override, checks, wi) -> None:

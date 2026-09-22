@@ -65,6 +65,7 @@ class Staff:
     number: str = ""  # printed row number: empty = automatic, "-" = none, "12" = set it
     start_date: Optional[date] = None  # joiner: not scheduled before this date
     end_date: Optional[date] = None  # leaver: not scheduled after this date
+    room: str = ""  # the physical room (Toddlers, Preschoolers, ECEC 1, ECEC 2...); "" = not placed
 
 
 @dataclass
