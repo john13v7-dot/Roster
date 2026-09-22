@@ -663,12 +663,18 @@
 
       // ---- weekly base ----
       function computeBase(presentMap) {
+        // An override that covers every day someone's in this week decides
+        // their base slot for the whole week (an open-ended pinned shift,
+        // say) - a shorter one only applies to the specific day(s) it
+        // names, via effectiveOverride() in the daily pass below. It's
+        // deliberately kept out of the weekly base here, or it would drag
+        // every other day that week along with it too.
         var manual = {};
         for (var n6 in byName) {
           var st6 = byName[n6];
           if (st6.role === 'static' || !presentMap[n6].length) continue;
           var ovs = presentMap[n6].map(function (d) { return effectiveOverride(n6, d)[0]; }).filter(Boolean);
-          if (ovs.length) {
+          if (ovs.length && ovs.length === presentMap[n6].length) {
             var c6 = {};
             ovs.forEach(function (o) { c6[o] = (c6[o] || 0) + 1; });
             manual[n6] = maxByKey(Object.keys(c6), function (sl) { return [c6[sl], -SLOTS.indexOf(sl)]; });
@@ -925,7 +931,23 @@
       var offset = wi % DUTY_SLOTS.length;
       var pickOrder = DUTY_SLOTS.slice(offset).concat(DUTY_SLOTS.slice(0, offset));
 
+      // Pass 0: the manager's manual picks for this week, honoured only
+      // when the person's actually working that week and the duty still
+      // matches the shift they're actually on now - a pick that's gone
+      // stale (their shift changed since) is dropped silently and falls
+      // back to the normal fair pick below, rather than forcing a
+      // mismatch through or leaving the build broken.
+      (inputs.duty_overrides || []).forEach(function (ov) {
+        if (ov.week !== monday || DUTY_SLOTS.indexOf(ov.duty) === -1) return;
+        if (assignedByDuty[ov.duty] || remaining.indexOf(ov.name) === -1) return;
+        if (!DUTY_ELIGIBLE_SLOTS[ov.duty].has(slotOf[ov.name])) return;
+        remaining = remaining.filter(function (x) { return x !== ov.name; });
+        history[ov.name][ov.duty] = (history[ov.name][ov.duty] || 0) + 1;
+        assignedByDuty[ov.duty] = ov.name;
+      });
+
       pickOrder.forEach(function (duty) {
+        if (assignedByDuty[duty]) return;
         var eligible = remaining.filter(function (n) { return DUTY_ELIGIBLE_SLOTS[duty].has(slotOf[n]); });
         if (!eligible.length) return;
         var person = bestPick(eligible, duty);
@@ -987,6 +1009,7 @@
   function overrideFromTransferDoc(doc) {
     return { name: doc.name, start: doc.start, end: doc.end || null, slot: doc.slot || null, text: doc.text || '' };
   }
+  function dutyOverrideFromDoc(doc) { return { name: doc.name, week: doc.week, duty: doc.duty }; }
   function seedNewJoinerHistory(staff, history) {
     var scheduled = new Set(['rotating', 'fixed', 'paired']);
     var countedNames = staff.filter(function (s) { return scheduled.has(s.role) && s.name && (s.name in history); }).map(function (s) { return s.name; });
@@ -1005,13 +1028,17 @@
     });
     return seeded;
   }
-  function buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, history, lastSlot) {
+  function buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, history, lastSlot, dutyOverrideDocs) {
     var ordered = staffDocs.slice().sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
     var staff = ordered.map(staffFromDoc);
     var leave = leaveDocs.map(leaveFromDoc);
     history = seedNewJoinerHistory(staff, history);
     var overrides = transferDocs.filter(function (d) { return d.slot || d.text; }).map(overrideFromTransferDoc);
-    return { settings: settings, staff: staff, leave: leave, overrides: overrides, history: history, last_slot: lastSlot };
+    var dutyOverrides = (dutyOverrideDocs || []).map(dutyOverrideFromDoc);
+    return {
+      settings: settings, staff: staff, leave: leave, overrides: overrides,
+      duty_overrides: dutyOverrides, history: history, last_slot: lastSlot,
+    };
   }
 
   // ---------------------------------------------------------------- build_preview.js port
@@ -1067,9 +1094,9 @@
   }
 
   // ---------------------------------------------------------------- top-level build + diff
-  function build(staffDocs, leaveDocs, transferDocs, rosterStartIso) {
+  function build(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs) {
     var settings = buildSettings(rosterStartIso);
-    var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, {}, {});
+    var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, {}, {}, dutyOverrideDocs);
     var roster = buildRoster(inputs);
     var dutyWeeks = buildDutyRoster(inputs, roster);
     var summary = summaryJson(inputs, roster);
@@ -1122,5 +1149,10 @@
     diffRosters: diffRosters,
     mondayOfWeek: mondayOfWeek,
     addDays: addDays,
+    dutyPool: dutyPool,
+    weeklySlot: weeklySlot,
+    presentAllWeek: presentAllWeek,
+    DUTY_SLOTS: DUTY_SLOTS,
+    DUTY_ELIGIBLE_SLOTS: DUTY_ELIGIBLE_SLOTS,
   };
 })(typeof window !== 'undefined' ? window : global);

@@ -11,9 +11,9 @@ from (sample_inputs today); only staff/leave/transfers are replaced.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from .models import SLOTS, Inputs, Leave, Override, Settings, Staff
+from .models import SLOTS, DutyOverride, Inputs, Leave, Override, Settings, Staff
 from .parsing import parse_date
 
 
@@ -57,6 +57,10 @@ def _override_from_transfer_doc(doc: Dict[str, Any]) -> Override:
     )
 
 
+def _duty_override_from_doc(doc: Dict[str, Any]) -> DutyOverride:
+    return DutyOverride(name=doc["name"], week=parse_date(doc["week"]), duty=doc["duty"])
+
+
 def _seed_new_joiner_history(
     staff: List[Staff], history: Dict[str, Dict[str, int]]
 ) -> Dict[str, Dict[str, int]]:
@@ -91,6 +95,7 @@ def build_inputs_from_db(
     transfer_docs: List[Dict[str, Any]],
     history: Dict[str, Dict[str, int]],
     last_slot: Dict[str, str],
+    duty_override_docs: Optional[List[Dict[str, Any]]] = None,
 ) -> Inputs:
     ordered = sorted(staff_docs, key=lambda d: d.get("order", 0))
     staff = [_staff_from_doc(d) for d in ordered]
@@ -107,12 +112,14 @@ def build_inputs_from_db(
     overrides = [
         _override_from_transfer_doc(d) for d in transfer_docs if d.get("slot") or d.get("text")
     ]
+    duty_overrides = [_duty_override_from_doc(d) for d in (duty_override_docs or [])]
 
     return Inputs(
         settings=settings,
         staff=staff,
         leave=leave,
         overrides=overrides,
+        duty_overrides=duty_overrides,
         history=history,
         last_slot=last_slot,
     )

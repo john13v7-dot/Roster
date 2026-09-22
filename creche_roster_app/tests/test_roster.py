@@ -261,6 +261,19 @@ class Overrides(unittest.TestCase):
         r = build_roster(inputs(overrides=over, weeks=1))
         self.assertEqual(slots(r, 0, "Manuel"), ["late", "late", "mid1", "mid1", "mid1"])
 
+    def test_single_day_override_leaves_the_rest_of_the_week_alone(self):
+        # A one-day override used to (wrongly) get treated as if it named
+        # the person's slot for the *whole* week - any day without an
+        # explicit override fell back to that same value instead of their
+        # normal rotation. Only the named day should change.
+        baseline = build_roster(inputs(weeks=1))
+        over = [Override("Hanny", START, START, "late")]
+        r = build_roster(inputs(overrides=over, weeks=1))
+        self.assertEqual(slots(r, 0, "Hanny")[0], "late")
+        self.assertTrue(r.weeks[0].cells[("Hanny", START)].overridden)
+        self.assertEqual(slots(r, 0, "Hanny")[1:], slots(baseline, 0, "Hanny")[1:])
+        self.assertEqual(r.breaches, [])
+
     def test_static_override_is_free_text(self):
         over = [
             Override("Priscilla", START, START, None, "OFF"),

@@ -16,7 +16,7 @@ from creche_roster.duties import (
     duty_pool,
 )
 from creche_roster.engine import build_roster
-from creche_roster.models import Leave, Override
+from creche_roster.models import DutyOverride, Leave, Override
 from creche_roster.sample import sample_inputs
 
 START = date(2026, 9, 28)
@@ -27,6 +27,7 @@ def inputs(**kw):
     inp = sample_inputs(START)
     inp.leave = kw.get("leave", [])
     inp.overrides = kw.get("overrides", [])
+    inp.duty_overrides = kw.get("duty_overrides", [])
     inp.settings.weeks = kw.get("weeks", 4)
     return inp
 
@@ -139,6 +140,52 @@ class DutyRoster(unittest.TestCase):
             filled = [a for a in week["assignments"] if a["duty"] in DUTY_SLOTS and a["people"]]
             self.assertLessEqual(len(filled), 2)
             self.assertEqual(len(filled) + len(week["unfilled"]), len(DUTY_SLOTS))
+
+    def test_manual_duty_pick_is_honoured_when_it_matches_their_slot(self):
+        # Hanny's default week-1 slot (in this test file's baseline, which
+        # clears sample_inputs' own default Jason override) is "late" -
+        # "Kitchen" is one of the duties eligible for mid2/late, so a
+        # manual pick of it should win over whatever the fair rotation
+        # would otherwise have given her.
+        inp0, roster0, _ = build()
+        slot = _weekly_slot(roster0, 0, "Hanny")
+        self.assertEqual(slot, "late")
+        over = [DutyOverride("Hanny", START, "Kitchen")]
+        inp, roster, weeks = build(duty_overrides=over)
+        by_duty = {a["duty"]: a["people"] for a in weeks[0]["assignments"]}
+        self.assertEqual(by_duty["Kitchen"], ["Hanny"])
+        self.assertEqual(weeks[0]["unfilled"], [])
+        # Every other duty that week is still filled exactly once, same as
+        # the unforced build - the manual pick doesn't leave a gap
+        # elsewhere or double up.
+        for a in weeks[0]["assignments"]:
+            if a["duty"] in DUTY_SLOTS:
+                self.assertLessEqual(len(a["people"]), 1)
+
+    def test_manual_duty_pick_is_dropped_silently_when_it_no_longer_matches(self):
+        # Hanny's week-1 slot is "late", but Staff Room needs mid1 - a
+        # stale or wrong pick like this should be ignored, not forced
+        # through or left to break the build.
+        over = [DutyOverride("Hanny", START, "Staff Room")]
+        inp, roster, weeks = build(duty_overrides=over)
+        by_duty = {a["duty"]: a["people"] for a in weeks[0]["assignments"]}
+        self.assertNotIn("Hanny", by_duty["Staff Room"])
+        self.assertEqual(weeks[0]["unfilled"], [])
+        # Hanny still gets some other duty that week - dropping the
+        # invalid pick falls back to the normal fair assignment, not to
+        # leaving her without one.
+        assigned_names = {p for a in weeks[0]["assignments"] if a["duty"] in DUTY_SLOTS for p in a["people"]}
+        self.assertIn("Hanny", assigned_names)
+
+    def test_manual_duty_pick_only_assigns_its_own_week(self):
+        # A pick written for week 1's Monday shouldn't itself assign
+        # anything in the other three weeks (Hanny did do that duty for
+        # real, though, so it's fair for it to count toward who's "owed"
+        # what afterward - same as any other week's real outcome would).
+        over = [DutyOverride("Hanny", START, "Kitchen")]
+        _, _, weeks = build(duty_overrides=over)
+        for wi in (1, 2, 3):
+            self.assertEqual(weeks[wi]["unfilled"], [])
 
     def test_uneven_headcount_falls_back_instead_of_leaving_gaps(self):
         # Jason pinned to "early" and Shehnaz away the whole run is the

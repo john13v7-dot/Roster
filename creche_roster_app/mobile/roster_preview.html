@@ -332,6 +332,8 @@
       <button class="actionbtn" data-action="transfer" disabled>Transfer</button>
       <button class="actionbtn" data-action="add-holiday" disabled>+ Add Holiday</button>
       <button class="actionbtn" data-action="add-maternity" disabled>+ Add Maternity Leave</button>
+      <button class="actionbtn" data-action="adjust-shift" disabled>Adjust Shift</button>
+      <button class="actionbtn" data-action="adjust-duty" disabled>Adjust Duty</button>
     </div>
 
     <div class="grouptitle">Current staff</div>
@@ -340,7 +342,10 @@
     <div class="grouptitle">Leave &amp; transfers</div>
     <div class="rowlist" id="eventList"><div class="empty">Loading…</div></div>
 
-    <p class="note">Changes save and the whole roster rebuilds itself instantly, right here — no need to wait on Claude. Jason and Shehnaz are never scheduled away at the same time; this is blocked here and flagged on the roster if it ever slips through elsewhere.</p>
+    <div class="grouptitle">Manual adjustments</div>
+    <div class="rowlist" id="adjustList"><div class="empty">Loading…</div></div>
+
+    <p class="note">Changes save and the whole roster rebuilds itself instantly, right here — no need to wait on Claude. Jason and Shehnaz are never scheduled away at the same time; this is blocked here and flagged on the roster if it ever slips through elsewhere. A manual shift or duty pick still has to respect the same rules as the automatic build (cover minimums, same-room, duty finish-time matching) — a pick that no longer fits is dropped rather than forced through.</p>
   </div>
 
   <div class="card panel">
@@ -1070,12 +1075,18 @@
 
       // ---- weekly base ----
       function computeBase(presentMap) {
+        // An override that covers every day someone's in this week decides
+        // their base slot for the whole week (an open-ended pinned shift,
+        // say) - a shorter one only applies to the specific day(s) it
+        // names, via effectiveOverride() in the daily pass below. It's
+        // deliberately kept out of the weekly base here, or it would drag
+        // every other day that week along with it too.
         var manual = {};
         for (var n6 in byName) {
           var st6 = byName[n6];
           if (st6.role === 'static' || !presentMap[n6].length) continue;
           var ovs = presentMap[n6].map(function (d) { return effectiveOverride(n6, d)[0]; }).filter(Boolean);
-          if (ovs.length) {
+          if (ovs.length && ovs.length === presentMap[n6].length) {
             var c6 = {};
             ovs.forEach(function (o) { c6[o] = (c6[o] || 0) + 1; });
             manual[n6] = maxByKey(Object.keys(c6), function (sl) { return [c6[sl], -SLOTS.indexOf(sl)]; });
@@ -1332,7 +1343,23 @@
       var offset = wi % DUTY_SLOTS.length;
       var pickOrder = DUTY_SLOTS.slice(offset).concat(DUTY_SLOTS.slice(0, offset));
 
+      // Pass 0: the manager's manual picks for this week, honoured only
+      // when the person's actually working that week and the duty still
+      // matches the shift they're actually on now - a pick that's gone
+      // stale (their shift changed since) is dropped silently and falls
+      // back to the normal fair pick below, rather than forcing a
+      // mismatch through or leaving the build broken.
+      (inputs.duty_overrides || []).forEach(function (ov) {
+        if (ov.week !== monday || DUTY_SLOTS.indexOf(ov.duty) === -1) return;
+        if (assignedByDuty[ov.duty] || remaining.indexOf(ov.name) === -1) return;
+        if (!DUTY_ELIGIBLE_SLOTS[ov.duty].has(slotOf[ov.name])) return;
+        remaining = remaining.filter(function (x) { return x !== ov.name; });
+        history[ov.name][ov.duty] = (history[ov.name][ov.duty] || 0) + 1;
+        assignedByDuty[ov.duty] = ov.name;
+      });
+
       pickOrder.forEach(function (duty) {
+        if (assignedByDuty[duty]) return;
         var eligible = remaining.filter(function (n) { return DUTY_ELIGIBLE_SLOTS[duty].has(slotOf[n]); });
         if (!eligible.length) return;
         var person = bestPick(eligible, duty);
@@ -1394,6 +1421,7 @@
   function overrideFromTransferDoc(doc) {
     return { name: doc.name, start: doc.start, end: doc.end || null, slot: doc.slot || null, text: doc.text || '' };
   }
+  function dutyOverrideFromDoc(doc) { return { name: doc.name, week: doc.week, duty: doc.duty }; }
   function seedNewJoinerHistory(staff, history) {
     var scheduled = new Set(['rotating', 'fixed', 'paired']);
     var countedNames = staff.filter(function (s) { return scheduled.has(s.role) && s.name && (s.name in history); }).map(function (s) { return s.name; });
@@ -1412,13 +1440,17 @@
     });
     return seeded;
   }
-  function buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, history, lastSlot) {
+  function buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, history, lastSlot, dutyOverrideDocs) {
     var ordered = staffDocs.slice().sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
     var staff = ordered.map(staffFromDoc);
     var leave = leaveDocs.map(leaveFromDoc);
     history = seedNewJoinerHistory(staff, history);
     var overrides = transferDocs.filter(function (d) { return d.slot || d.text; }).map(overrideFromTransferDoc);
-    return { settings: settings, staff: staff, leave: leave, overrides: overrides, history: history, last_slot: lastSlot };
+    var dutyOverrides = (dutyOverrideDocs || []).map(dutyOverrideFromDoc);
+    return {
+      settings: settings, staff: staff, leave: leave, overrides: overrides,
+      duty_overrides: dutyOverrides, history: history, last_slot: lastSlot,
+    };
   }
 
   // ---------------------------------------------------------------- build_preview.js port
@@ -1474,9 +1506,9 @@
   }
 
   // ---------------------------------------------------------------- top-level build + diff
-  function build(staffDocs, leaveDocs, transferDocs, rosterStartIso) {
+  function build(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs) {
     var settings = buildSettings(rosterStartIso);
-    var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, {}, {});
+    var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, {}, {}, dutyOverrideDocs);
     var roster = buildRoster(inputs);
     var dutyWeeks = buildDutyRoster(inputs, roster);
     var summary = summaryJson(inputs, roster);
@@ -1529,6 +1561,11 @@
     diffRosters: diffRosters,
     mondayOfWeek: mondayOfWeek,
     addDays: addDays,
+    dutyPool: dutyPool,
+    weeklySlot: weeklySlot,
+    presentAllWeek: presentAllWeek,
+    DUTY_SLOTS: DUTY_SLOTS,
+    DUTY_ELIGIBLE_SLOTS: DUTY_ELIGIBLE_SLOTS,
   };
 })(typeof window !== 'undefined' ? window : global);
 </script>
@@ -1861,17 +1898,17 @@
   var formSave = $('formSave');
 
   var db = null;
-  var staffDocs = [], leaveDocs = [], transferDocs = [], changeLogDocs = [];
+  var staffDocs = [], leaveDocs = [], transferDocs = [], changeLogDocs = [], dutyOverrideDocs = [];
   var logNoteTarget = null;
 
   // ---------- instant client-side rebuild (no waiting on Claude) ----------
   var lastBuildOut = null; // {inputs, roster, dutyWeeks, summary} from the last successful build
-  var staffLoaded = false, leaveLoaded = false, transferLoaded = false;
+  var staffLoaded = false, leaveLoaded = false, transferLoaded = false, dutyOverrideLoaded = false;
   var buildErrorEl = $('buildError');
 
   function computeBuild(){
     var rosterStart = rosterStartAnchor || RosterEngine.mondayOfWeek(todayISO());
-    return RosterEngine.build(staffDocs, leaveDocs, transferDocs, rosterStart);
+    return RosterEngine.build(staffDocs, leaveDocs, transferDocs, rosterStart, dutyOverrideDocs);
   }
   var lastBuildErrorMessage = null;
   function applyBuild(out){
@@ -1891,7 +1928,7 @@
     buildErrorEl.style.display = '';
   }
   function recompute(){
-    if(!(staffLoaded && leaveLoaded && transferLoaded)) return null;
+    if(!(staffLoaded && leaveLoaded && transferLoaded && dutyOverrideLoaded)) return null;
     try{
       var out = computeBuild();
       applyBuild(out);
@@ -1959,7 +1996,9 @@
     el.innerHTML = '';
     var items = [];
     leaveDocs.forEach(function(l){ items.push({type:'leave', doc:l}); });
-    transferDocs.forEach(function(t){ items.push({type:'transfer', doc:t}); });
+    // Shift adjustments piggyback on this same collection (slot/text set)
+    // but show under "Manual adjustments" instead - see renderAdjustList.
+    transferDocs.filter(function(t){ return !(t.slot || t.text); }).forEach(function(t){ items.push({type:'transfer', doc:t}); });
     if(!items.length){ el.innerHTML = '<div class="empty">Nothing on leave, no transfers.</div>'; return; }
     items.forEach(function(it){
       var row = document.createElement('div');
@@ -1971,16 +2010,50 @@
           '<span class="pill leave">'+esc(l.kind)+'</span>';
       } else {
         var t = it.doc;
-        var label = t.slot ? ('starts ' + esc(t.slot)) : (t.text ? esc(t.text) : 'transfer');
         row.innerHTML =
           '<div><div class="name">'+esc(t.name)+'</div><div class="meta">from '+esc(fmtDate(t.start))+(t.end?(' to '+esc(fmtDate(t.end))):'')+'</div></div>' +
-          '<span class="pill transfer">'+label+'</span>';
+          '<span class="pill transfer">transfer</span>';
       }
       var del = document.createElement('button');
       del.className = 'xbtn';
       del.textContent = '✕';
       var label = it.type === 'leave' ? (it.doc.kind + ' for ' + it.doc.name) : ('the transfer for ' + it.doc.name);
       del.onclick = function(){ deleteDoc(it.type === 'leave' ? 'leave' : 'transfers', it.doc._id, label, true, it.doc.name); };
+      row.appendChild(del);
+      el.appendChild(row);
+    });
+  }
+
+  var SLOT_TIME_LABEL = {early:'7:30 (Opening)', mid1:'8:00', mid2:'8:30', late:'9:00 (Closing)'};
+
+  function renderAdjustList(){
+    var el = $('adjustList');
+    el.innerHTML = '';
+    var items = [];
+    transferDocs.filter(function(t){ return t.slot || t.text; }).forEach(function(t){ items.push({type:'shift', doc:t}); });
+    dutyOverrideDocs.forEach(function(d){ items.push({type:'duty', doc:d}); });
+    if(!items.length){ el.innerHTML = '<div class="empty">No manual shift or duty picks.</div>'; return; }
+    items.forEach(function(it){
+      var row = document.createElement('div');
+      row.className = 'item';
+      var del = document.createElement('button');
+      del.className = 'xbtn';
+      del.textContent = '✕';
+      if(it.type === 'shift'){
+        var t = it.doc;
+        var when = fmtDate(t.start) + (t.end && t.end !== t.start ? (' – ' + fmtDate(t.end)) : '');
+        var val = t.slot ? (SLOT_TIME_LABEL[t.slot] || t.slot) : t.text;
+        row.innerHTML =
+          '<div><div class="name">'+esc(t.name)+'</div><div class="meta">'+esc(when)+'</div></div>' +
+          '<span class="pill">'+esc(val)+'</span>';
+        del.onclick = function(){ deleteDoc('transfers', t._id, 'the shift adjustment for ' + t.name, true, t.name); };
+      } else {
+        var d = it.doc;
+        row.innerHTML =
+          '<div><div class="name">'+esc(d.name)+'</div><div class="meta">week of '+esc(fmtDate(d.week))+'</div></div>' +
+          '<span class="pill">'+esc(d.duty)+'</span>';
+        del.onclick = function(){ deleteDoc('dutyOverrides', d._id, 'the duty pick for ' + d.name, true, d.name); };
+      }
       row.appendChild(del);
       el.appendChild(row);
     });
@@ -2030,6 +2103,8 @@
       if(notify){
         if(collection === 'leave') leaveDocs = leaveDocs.filter(function(x){ return x._id !== id; });
         if(collection === 'transfers') transferDocs = transferDocs.filter(function(x){ return x._id !== id; });
+        if(collection === 'dutyOverrides') dutyOverrideDocs = dutyOverrideDocs.filter(function(x){ return x._id !== id; });
+        renderAdjustList();
         recompute();
         await logChange('Remove ' + label + '.', personName, beforeRoster);
         toast('Removed. Roster updated.');
@@ -2077,6 +2152,13 @@
       transferDocs = snap.docs.map(function(d){ return Object.assign({}, d.data() || {}, { _id: d.id }); });
       transferLoaded = true;
       renderEventList();
+      renderAdjustList();
+      recompute();
+    });
+    db.collection('dutyOverrides').onSnapshot(function(snap){
+      dutyOverrideDocs = snap.docs.map(function(d){ return Object.assign({}, d.data() || {}, { _id: d.id }); });
+      dutyOverrideLoaded = true;
+      renderAdjustList();
       recompute();
     });
     db.collection('changelog').orderBy('createdAt', 'desc').limit(20).onSnapshot(function(snap){
@@ -2180,11 +2262,71 @@
         field('Staff', '<select id="f_staff">'+staffOptionsHTML()+'</select>') +
         field('From', '<input id="f_start" type="date" value="'+todayISO()+'">') +
         field('To (leave blank if open-ended)', '<input id="f_end" type="date">');
+    } else if(action === 'adjust-shift'){
+      formTitle.textContent = 'Adjust Shift';
+      formBody.innerHTML =
+        field('Staff', '<select id="f_staff">'+staffOptionsHTML()+'</select>') +
+        field('Date', '<input id="f_start" type="date" value="'+todayISO()+'">') +
+        field('New time', '<div id="f_shiftValueWrap"></div>');
+      $('f_staff').onchange = refreshShiftValueField;
+      refreshShiftValueField();
+    } else if(action === 'adjust-duty'){
+      formTitle.textContent = 'Adjust Duty';
+      var weekOpts = (data.weeks || []).map(function(w, i){ return [String(i), w.label]; });
+      formBody.innerHTML =
+        field('Staff', '<select id="f_staff">'+dutyStaffOptionsHTML()+'</select>') +
+        field('Week', selectHTML('f_week', weekOpts)) +
+        field('Duty (only what fits their shift that week)', '<div id="f_dutyWrap"></div>');
+      $('f_staff').onchange = refreshDutyOptions;
+      $('f_week').onchange = refreshDutyOptions;
+      refreshDutyOptions();
     } else if(action === 'log-note'){
       formTitle.textContent = 'Add a note';
       formBody.innerHTML = field('Note', '<input id="f_note" type="text" placeholder="e.g. Confirmed with Deoshree">');
     }
     dialog.showModal();
+  }
+
+  var SLOT_OPTS = [['early','7:30 (Opening)'],['mid1','8:00'],['mid2','8:30'],['late','9:00 (Closing)']];
+
+  function refreshShiftValueField(){
+    var wrap = $('f_shiftValueWrap');
+    if(!wrap) return;
+    var name = $('f_staff') ? $('f_staff').value : '';
+    var st = staffDocs.filter(function(s){ return s.name === name; })[0];
+    if(st && st.role === 'static'){
+      wrap.innerHTML = '<input id="f_shiftvalue" type="text" placeholder="e.g. 10:00 - 2:00, or OFF">';
+    } else {
+      wrap.innerHTML = selectHTML('f_shiftvalue', SLOT_OPTS);
+    }
+  }
+
+  function dutyStaffOptionsHTML(){
+    var pool = (lastBuildOut && lastBuildOut.inputs) ? RosterEngine.dutyPool(lastBuildOut.inputs) : [];
+    if(!pool.length) return '<option value="">No eligible staff</option>';
+    return pool.map(function(n){ return '<option value="'+esc(n)+'">'+esc(n)+'</option>'; }).join('');
+  }
+
+  function refreshDutyOptions(){
+    var wrap = $('f_dutyWrap');
+    if(!wrap) return;
+    var name = $('f_staff') ? $('f_staff').value : '';
+    var wi = $('f_week') ? parseInt($('f_week').value, 10) : 0;
+    if(!name || !lastBuildOut || !lastBuildOut.roster.weeks[wi]){
+      wrap.innerHTML = '<div class="note" style="margin-top:0;">Pick a staff member.</div>';
+      return;
+    }
+    var slot = RosterEngine.weeklySlot(lastBuildOut.roster, wi, name);
+    if(!slot){
+      wrap.innerHTML = '<div class="note" style="margin-top:0; color:var(--bad-ink);">'+esc(name)+' isn’t scheduled to work that week.</div>';
+      return;
+    }
+    var eligible = RosterEngine.DUTY_SLOTS.filter(function(duty){ return RosterEngine.DUTY_ELIGIBLE_SLOTS[duty].has(slot); });
+    if(!eligible.length){
+      wrap.innerHTML = '<div class="note" style="margin-top:0; color:var(--bad-ink);">No duties match that shift.</div>';
+      return;
+    }
+    wrap.innerHTML = selectHTML('f_duty', eligible.map(function(d){ return [d, d]; }));
   }
 
   document.querySelectorAll('.actionbtn').forEach(function(btn){
@@ -2243,7 +2385,7 @@
         var beforeRoster2 = lastBuildOut ? lastBuildOut.roster : null;
         var tref = await db.collection('transfers').add(transferDoc);
         var transferId = tref && tref.id;
-        transferDocs = transferDocs.concat([Object.assign({_id: transferId}, transferDoc)]);
+        transferDocs = transferDocs.filter(function(t){ return t._id !== transferId; }).concat([Object.assign({_id: transferId}, transferDoc)]);
         if(!recompute()){
           if(transferId) await db.collection('transfers').doc(transferId).delete();
           transferDocs = transferDocs.filter(function(t){ return t._id !== transferId; });
@@ -2274,7 +2416,7 @@
         var beforeRoster3 = lastBuildOut ? lastBuildOut.roster : null;
         var lref = await db.collection('leave').add(leaveDoc);
         var leaveId = lref && lref.id;
-        leaveDocs = leaveDocs.concat([Object.assign({_id: leaveId}, leaveDoc)]);
+        leaveDocs = leaveDocs.filter(function(l){ return l._id !== leaveId; }).concat([Object.assign({_id: leaveId}, leaveDoc)]);
         if(!recompute()){
           if(leaveId) await db.collection('leave').doc(leaveId).delete();
           leaveDocs = leaveDocs.filter(function(l){ return l._id !== leaveId; });
@@ -2286,6 +2428,62 @@
         var summary3 = 'Add ' + kindWord + ': ' + staff3 + ', from ' + start3 + (end3 ? (' to ' + end3) : ' (open-ended, until back)') + '.';
         await logChange(summary3, staff3, beforeRoster3);
         toast(kindWord + ' recorded for ' + staff3 + '. Roster updated.');
+      } else if(currentAction === 'adjust-shift'){
+        var staff4 = $('f_staff').value, date4 = $('f_start').value, value4 = ($('f_shiftvalue').value || '').trim();
+        if(!staff4){ formErr.textContent = 'Pick a staff member.'; formSave.disabled=false; return; }
+        if(!date4){ formErr.textContent = 'Pick a date.'; formSave.disabled=false; return; }
+        var st4 = staffDocs.filter(function(s){ return s.name === staff4; })[0];
+        var isStatic4 = st4 && st4.role === 'static';
+        if(isStatic4 && !value4){ formErr.textContent = 'Type the hours (e.g. 10:00 - 2:00) or OFF.'; formSave.disabled=false; return; }
+        var overrideDoc = { name: staff4, start: date4, end: date4, createdAt: todayISO() };
+        if(isStatic4){ overrideDoc.text = value4; } else { overrideDoc.slot = value4; }
+        var beforeRoster4 = lastBuildOut ? lastBuildOut.roster : null;
+        var oref = await db.collection('transfers').add(overrideDoc);
+        var overrideId = oref && oref.id;
+        transferDocs = transferDocs.filter(function(t){ return t._id !== overrideId; }).concat([Object.assign({_id: overrideId}, overrideDoc)]);
+        if(!recompute()){
+          if(overrideId) await db.collection('transfers').doc(overrideId).delete();
+          transferDocs = transferDocs.filter(function(t){ return t._id !== overrideId; });
+          recompute();
+          formErr.textContent = 'Could not adjust that shift: ' + lastBuildErrorMessage;
+          formSave.disabled = false;
+          return;
+        }
+        var label4 = isStatic4 ? value4 : (SLOT_TIME_LABEL[value4] || value4);
+        var summary4 = 'Adjust shift: ' + staff4 + ' on ' + fmtDate(date4) + ' → ' + label4 + '.';
+        await logChange(summary4, staff4, beforeRoster4);
+        renderAdjustList();
+        toast('Shift adjusted for ' + staff4 + '.');
+      } else if(currentAction === 'adjust-duty'){
+        var staff5 = $('f_staff').value;
+        var wi5 = $('f_week') ? parseInt($('f_week').value, 10) : 0;
+        var duty5 = $('f_duty') ? $('f_duty').value : '';
+        if(!staff5){ formErr.textContent = 'Pick a staff member.'; formSave.disabled=false; return; }
+        if(!duty5){ formErr.textContent = 'No duty available to pick for that week.'; formSave.disabled=false; return; }
+        var weekMonday = data.weeks[wi5] && data.weeks[wi5].monday;
+        if(!weekMonday){ formErr.textContent = 'Pick a week.'; formSave.disabled=false; return; }
+        var dutyDoc = { name: staff5, week: weekMonday, duty: duty5, createdAt: todayISO() };
+        var beforeRoster5 = lastBuildOut ? lastBuildOut.roster : null;
+        var dref = await db.collection('dutyOverrides').add(dutyDoc);
+        var dutyOverrideId = dref && dref.id;
+        dutyOverrideDocs = dutyOverrideDocs.filter(function(x){ return x._id !== dutyOverrideId; }).concat([Object.assign({_id: dutyOverrideId}, dutyDoc)]);
+        var out5 = recompute();
+        var appliedWeek = out5 && out5.dutyWeeks[wi5];
+        var appliedOk = appliedWeek && appliedWeek.assignments.some(function(a){ return a.duty === duty5 && a.people.indexOf(staff5) !== -1; });
+        if(!out5 || !appliedOk){
+          if(dutyOverrideId) await db.collection('dutyOverrides').doc(dutyOverrideId).delete();
+          dutyOverrideDocs = dutyOverrideDocs.filter(function(x){ return x._id !== dutyOverrideId; });
+          recompute();
+          formErr.textContent = out5
+            ? ('That pick no longer matches ' + staff5 + '’s shift that week — try again.')
+            : ('Could not set that duty: ' + lastBuildErrorMessage);
+          formSave.disabled = false;
+          return;
+        }
+        var summary5 = 'Adjust duty: ' + staff5 + ', week of ' + fmtDate(weekMonday) + ' → ' + duty5 + '.';
+        await logChange(summary5, staff5, beforeRoster5);
+        renderAdjustList();
+        toast('Duty set for ' + staff5 + '.');
       } else if(currentAction === 'log-note'){
         var noteText = ($('f_note').value || '').trim();
         if(!noteText){ formErr.textContent = 'Type a note.'; formSave.disabled=false; return; }

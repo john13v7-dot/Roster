@@ -92,11 +92,25 @@ class Override:
 
 
 @dataclass
+class DutyOverride:
+    """A manager's manual pick of a cleaning duty for one person, one week -
+    the duty rota's equivalent of Override above. `week` is that week's
+    Monday. Only takes effect if `duty` is still eligible for whatever
+    slot `name` actually works that week (DUTY_ELIGIBLE_SLOTS in duties.py)
+    - a pick that's gone stale (their shift changed since) is dropped
+    silently rather than forced through or left to break the build."""
+    name: str
+    week: date
+    duty: str
+
+
+@dataclass
 class Inputs:
     settings: Settings
     staff: List[Staff]
     leave: List[Leave] = field(default_factory=list)
     overrides: List[Override] = field(default_factory=list)
+    duty_overrides: List[DutyOverride] = field(default_factory=list)
     # Days already worked on each start time before this roster (fairness memory).
     history: Dict[str, Dict[str, int]] = field(default_factory=dict)
     last_slot: Dict[str, str] = field(default_factory=dict)

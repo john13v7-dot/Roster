@@ -53,7 +53,7 @@ def build(db_export: dict, roster_start: date) -> tuple:
     # these same 4 weeks, so the schedule itself should be fair within them).
     inputs = build_inputs_from_db(
         base.settings, db_export["staff"], db_export["leave"], db_export["transfers"],
-        {}, {},
+        {}, {}, db_export.get("dutyOverrides"),
     )
     return inputs, build_roster(inputs)
 

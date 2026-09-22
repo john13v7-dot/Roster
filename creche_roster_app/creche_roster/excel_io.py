@@ -263,7 +263,7 @@ def read_inputs(path) -> Inputs:
 
     if problems:
         raise InputError(problems)
-    return Inputs(settings, staff, leave, overrides, history, last_slot)
+    return Inputs(settings=settings, staff=staff, leave=leave, overrides=overrides, history=history, last_slot=last_slot)
 
 
 # ==========================================================================

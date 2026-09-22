@@ -460,15 +460,22 @@ def build_roster(inputs: Inputs) -> Roster:
 
         # ---- weekly base -------------------------------------------------
         def compute_base(present_map: Dict[str, List[date]]) -> Dict[str, str]:
-            # Manual overrides that apply this week decide the base slot, so
-            # the solver plans around them instead of having to repair
-            # afterwards.
+            # An override that covers every day someone's in this week
+            # decides their base slot for the whole week, same as before -
+            # that's what an open-ended override (e.g. a permanent pinned
+            # shift) means. A shorter one - a single day, or any run that
+            # doesn't reach every present day - only ever applies to the
+            # specific day(s) it names, via effective_override() in the
+            # daily pass below; it's deliberately NOT let anywhere near the
+            # weekly base here, or it would silently drag every other day
+            # that week along with it too, which is not what a one-day
+            # manual adjustment means.
             manual: Dict[str, str] = {}
             for n, st in by_name.items():
                 if st.role == "static" or not present_map[n]:
                     continue
                 ovs = [o for o in (effective_override(n, d)[0] for d in present_map[n]) if o]
-                if ovs:
+                if ovs and len(ovs) == len(present_map[n]):
                     c = Counter(ovs)
                     manual[n] = max(c, key=lambda sl: (c[sl], -SLOTS.index(sl)))
 

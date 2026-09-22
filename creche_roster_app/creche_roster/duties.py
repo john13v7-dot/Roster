@@ -154,8 +154,27 @@ def build_duty_roster(inputs: Inputs, roster: Roster) -> List[Dict]:
         offset = wi % len(DUTY_SLOTS)
         pick_order = DUTY_SLOTS[offset:] + DUTY_SLOTS[:offset]
 
+        # Pass 0: the manager's manual picks for this week, honoured only
+        # when the person's actually working that week and the duty still
+        # matches the shift they're actually on now - a pick that's gone
+        # stale (their shift changed since) is dropped silently and falls
+        # back to the normal fair pick below, rather than forcing a
+        # mismatch through or leaving the build broken.
+        for ov in inputs.duty_overrides:
+            if ov.week != monday or ov.duty not in DUTY_SLOTS:
+                continue
+            if ov.duty in assigned_by_duty or ov.name not in remaining:
+                continue
+            if slot_of.get(ov.name) not in DUTY_ELIGIBLE_SLOTS[ov.duty]:
+                continue
+            remaining.remove(ov.name)
+            history[ov.name][ov.duty] += 1
+            assigned_by_duty[ov.duty] = ov.name
+
         # Pass 1: strictly by finish time - the actual rule.
         for duty in pick_order:
+            if duty in assigned_by_duty:
+                continue
             eligible = [n for n in remaining if slot_of.get(n) in DUTY_ELIGIBLE_SLOTS[duty]]
             if not eligible:
                 continue

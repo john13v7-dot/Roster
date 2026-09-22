@@ -42,6 +42,7 @@ def _rebuild() -> None:
     staff = [d.to_dict() for d in db.collection("staff").stream()]
     leave = [d.to_dict() for d in db.collection("leave").stream()]
     transfers = [d.to_dict() for d in db.collection("transfers").stream()]
+    duty_overrides = [d.to_dict() for d in db.collection("dutyOverrides").stream()]
 
     old_doc = db.collection("roster").document("current").get()
     old_summary = old_doc.to_dict() if old_doc.exists else None
@@ -51,7 +52,7 @@ def _rebuild() -> None:
     # No carried-over history: each 4-week window is balanced among
     # itself, not against whatever was worked before it - matches the
     # Claude-hosted build (mobile/build_preview.py's build()).
-    inputs = build_inputs_from_db(base.settings, staff, leave, transfers, {}, {})
+    inputs = build_inputs_from_db(base.settings, staff, leave, transfers, {}, {}, duty_overrides)
 
     try:
         roster = build_roster(inputs)
