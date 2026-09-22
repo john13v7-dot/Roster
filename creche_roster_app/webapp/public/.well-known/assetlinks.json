@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.crecheroster.app",
+      "sha256_cert_fingerprints": [
+        "4F:E3:22:1C:83:E8:EC:70:EB:DF:83:DF:17:7A:C3:10:A5:C3:50:4A:30:B0:E3:44:72:FF:37:C3:86:3C:B5:AF"
+      ]
+    }
+  }
+]

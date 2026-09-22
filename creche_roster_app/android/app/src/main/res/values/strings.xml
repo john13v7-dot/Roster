@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Creche Roster</string>
+
+    <!-- REPLACE-ME: set this to your real Firebase Hosting URL once you've
+         deployed webapp/ (see webapp/DEPLOY.md), then edit this file on
+         GitHub's website and commit - the APK rebuilds itself automatically. -->
+    <string name="launch_url">https://REPLACE-ME.web.app/</string>
+    <string name="host_name">REPLACE-ME.web.app</string>
+    <string name="asset_statements">[{\"relation\":[\"delegate_permission/common.handle_all_urls\"],\"target\":{\"namespace\":\"web\",\"site\":\"https://REPLACE-ME.web.app\"}}]</string>
+</resources>

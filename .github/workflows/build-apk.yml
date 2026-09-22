@@ -1,0 +1,64 @@
+name: Build Roster Android APK
+
+on:
+  push:
+    branches: [ claude/roster-scheduling-algorithm-kiaow2 ]
+    paths:
+      - 'creche_roster_app/android/**'
+      - '.github/workflows/build-apk.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: creche_roster_app/android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Reconstruct signing keystore from secret
+        env:
+          ROSTER_KEYSTORE_BASE64: ${{ secrets.ROSTER_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$ROSTER_KEYSTORE_BASE64" ]; then
+            echo "::error::Repository secret ROSTER_KEYSTORE_BASE64 is not set. See creche_roster_app/android/keystore/README.md for how to add it."
+            exit 1
+          fi
+          mkdir -p keystore
+          echo "$ROSTER_KEYSTORE_BASE64" | base64 -d > keystore/roster-release.keystore
+
+      - name: Build signed release APK
+        run: gradle assembleRelease --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: roster-app-release-apk
+          path: creche_roster_app/android/app/build/outputs/apk/release/*.apk
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          apk=$(ls app/build/outputs/apk/release/*.apk | head -n1)
+          gh release create "roster-app-run${{ github.run_number }}" \
+            "$apk" \
+            --title "Creche Roster app (build ${{ github.run_number }})" \
+            --notes "Automated Android build of the Creche Roster app from commit ${{ github.sha }}. Download the .apk below and open it on your Android phone to install (you may need to allow \"install unknown apps\" for your browser/file manager)." \
+            --repo "${{ github.repository }}"
