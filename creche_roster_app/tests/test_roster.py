@@ -400,6 +400,26 @@ class HardRules(unittest.TestCase):
                     f"{n} flagged as covering in week {wi + 1}, but nobody's on leave that week",
                 )
 
+    def test_bounded_override_highlights_the_persons_own_cell(self):
+        # A manager's own one-off manual adjustment (a bounded override -
+        # it has an end date) should highlight the adjusted person's own
+        # cell, not just whoever ends up covering for the side effect.
+        over = [Override("Hanny", START, START, "late")]
+        r = build_roster(inputs(overrides=over, weeks=1))
+        self.assertTrue(r.weeks[0].cells[("Hanny", START)].adjusted)
+        for d in r.weeks[0].days[1:]:
+            self.assertFalse(r.weeks[0].cells[("Hanny", d)].adjusted, d)
+
+    def test_open_ended_override_is_not_highlighted(self):
+        # A standing, open-ended override (no end date) - like a permanent
+        # pin to a particular slot - is just how that person's week
+        # normally looks, not a recent change, so it should never be
+        # flagged as adjusted, on any day.
+        over = [Override("Jason", START, None, "early")]
+        r = build_roster(inputs(overrides=over, weeks=1))
+        for d in r.weeks[0].days:
+            self.assertFalse(r.weeks[0].cells[("Jason", d)].adjusted, d)
+
     def test_fixed_person_always_on_their_slot(self):
         inp = inputs(weeks=6)
         for st in inp.staff:

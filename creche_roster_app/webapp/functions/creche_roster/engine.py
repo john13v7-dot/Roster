@@ -440,6 +440,19 @@ def build_roster(inputs: Inputs) -> Roster:
                 found = ov.text
         return found
 
+    def bounded_override(name: str, d: date) -> bool:
+        """True if the override in effect for this person on this day has a
+        known end date - a temporary, one-off adjustment, as opposed to an
+        open-ended standing pin (e.g. the paired person's permanent early
+        slot). Only the former counts as a "changed today" highlight; a
+        standing pin is just how that person's week normally looks, so
+        flagging it every day would be noise, not signal."""
+        found = None
+        for ov in inputs.overrides:
+            if ov.name == name and ov.covers(d) and (ov.slot or ov.text):
+                found = ov
+        return found is not None and found.end is not None
+
     def effective_override(name: str, d: date) -> Tuple[Optional[str], bool]:
         """(slot, ignored). An override on a paired person only applies on days
         when their partner is away; otherwise the pairing rule wins."""
@@ -556,6 +569,7 @@ def build_roster(inputs: Inputs) -> Roster:
         for d in days:
             slot_of: Dict[str, str] = {}
             overridden: set = set()
+            bounded_overridden: set = set()  # subset of overridden with a known end date
             adjusted: set = set()  # names moved today to cover someone else's absence
             for key, st in staff_keys:
                 if st.role == "blank":
@@ -581,6 +595,8 @@ def build_roster(inputs: Inputs) -> Roster:
                 if ov:
                     slot_of[st.name] = ov
                     overridden.add(st.name)
+                    if bounded_override(st.name, d):
+                        bounded_overridden.add(st.name)
                 else:
                     slot_of[st.name] = base[st.name]
 
@@ -636,7 +652,17 @@ def build_roster(inputs: Inputs) -> Roster:
                 cells[(name, d)] = Assignment(
                     "shift", slot, s.shifts[slot].label,
                     overridden=name in overridden,
-                    adjusted=name in adjusted or (name not in overridden and name in covering_because_of_leave),
+                    # Highlighted whenever this cell isn't what the normal
+                    # rotation would have given them: a same-day repair
+                    # swap or weekly reshuffle to cover someone else's
+                    # leave (adjusted / covering_because_of_leave), or a
+                    # manager's own temporary manual pick for this day
+                    # (bounded_overridden) - the person directly moved
+                    # should read as changed just as much as whoever moved
+                    # to cover them. An open-ended standing pin (no end
+                    # date) doesn't count - that's just how that person's
+                    # week normally looks, not a recent change.
+                    adjusted=name in adjusted or name in covering_because_of_leave or name in bounded_overridden,
                 )
 
         # ---- pairing report ---------------------------------------------

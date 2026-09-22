@@ -1069,6 +1069,15 @@
       inputs.overrides.forEach(function (ov) { if (ov.name === name && ovCovers(ov, d) && ov.text) found = ov.text; });
       return found;
     }
+    // True if the override in effect for this person on this day has a
+    // known end date - a temporary, one-off adjustment, as opposed to an
+    // open-ended standing pin (e.g. the paired person's permanent early
+    // slot). Only the former counts toward the "changed today" highlight.
+    function boundedOverride(name, d) {
+      var found = null;
+      inputs.overrides.forEach(function (ov) { if (ov.name === name && ovCovers(ov, d) && (ov.slot || ov.text)) found = ov; });
+      return found !== null && found.end != null;
+    }
     function effectiveOverride(name, d) {
       var ov = overrideSlot(name, d);
       if (ov && byName[name].role === 'paired') {
@@ -1172,6 +1181,7 @@
       days.forEach(function (d) {
         var slotOf = {};
         var overridden = new Set();
+        var boundedOverridden = new Set();
         var adjusted = new Set();
         staffKeys.forEach(function (ks) {
           var key = ks[0], st = ks[1];
@@ -1188,8 +1198,11 @@
           var eo = effectiveOverride(st.name, d);
           var ov = eo[0], ignored = eo[1];
           if (ignored) (ignoredOverride[st.name] = ignoredOverride[st.name] || []).push(d);
-          if (ov) { slotOf[st.name] = ov; overridden.add(st.name); }
-          else { slotOf[st.name] = base[st.name]; }
+          if (ov) {
+            slotOf[st.name] = ov;
+            overridden.add(st.name);
+            if (boundedOverride(st.name, d)) boundedOverridden.add(st.name);
+          } else { slotOf[st.name] = base[st.name]; }
         });
 
         var fb = s.fallback_closer;
@@ -1230,7 +1243,7 @@
 
         for (var name in slotOf) {
           var slot = slotOf[name];
-          var wasAdjusted = adjusted.has(name) || (!overridden.has(name) && coveringBecauseOfLeave.has(name));
+          var wasAdjusted = adjusted.has(name) || coveringBecauseOfLeave.has(name) || boundedOverridden.has(name);
           cells.set(cellKey(name, d), { kind: 'shift', slot: slot, text: shiftLabel(s.shifts[slot]), overridden: overridden.has(name), adjusted: wasAdjusted });
         }
       });
