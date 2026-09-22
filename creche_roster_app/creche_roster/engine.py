@@ -9,15 +9,19 @@ HARD RULES (always enforced or reported as a BREACH, never silently traded off)
      other one's start time is set manually in the Overrides tab.
      (An override on a paired person is ignored on days when the partner works.)
 
-SOFT RULES (cost weighted)
-  - Fair rotation: people get the start times they have had least so far.
+SOFT RULES
+  - Fair rotation: opening and closing (the two shifts meant to be shared
+    equally) go least-done-first, so nobody's opening/closing count can
+    drift more than one shift apart from anyone else's over a run. 8:00
+    and 8:30 are filled the same way from whoever's left, kept fair but
+    looser, since they don't need to match each other exactly.
   - Recency: avoid repeating last week's start time.
-  - Floor mix: spread starts evenly across the four slots on each floor.
 
 How it works
   Weekly base:  fixed staff get their slot; the pair is decided together;
-                each floor's rotating staff are solved exactly by dynamic
-                programming over slot-count vectors (tiny state space).
+                each floor's rotating staff get opening/closing seats
+                least-done-first, then 8:00/8:30 the same way from
+                whoever's left.
   Daily pass:   leave and overrides are applied, then any floor that fell
                 below its opening/closing minimum is repaired by moving the
                 least disruptive rotating person. Anything still short is
@@ -47,10 +51,8 @@ from .models import (
 )
 from .parsing import fmt_day, fmt_days, is_off, parse_time
 
-BIG = 1000.0  # penalty per missing person on a hard rule (dwarfs everything else)
 W_FAIR = 10.0
 W_RECENT = 3.0
-W_MIX = 1.0
 
 
 # --------------------------------------------------------------------------
@@ -151,44 +153,90 @@ def _cost(hist: Dict[str, Counter], last_slot: Dict[str, str], name: str, slot: 
     return c
 
 
-def _solve_floor(
+def _assign_weekly_base(
     members: List[str],
     pre_counts: Counter,
     need_open: int,
     need_close: int,
-    cost_fn,
+    hist: Dict[str, Counter],
+    last_slot: Dict[str, str],
+    week_index: int,
 ) -> Dict[str, str]:
-    """Exact minimum-cost slot assignment for one floor's rotating staff.
+    """Each rotating member's weekly base slot for one floor.
 
-    State = how many people are on each slot so far (a 4-tuple). Cost is
-    additive per person, hard/mix penalties depend only on the final counts,
-    so keeping the cheapest path per count vector is exact.
+    Opening and closing are the two shifts meant to be shared equally, so
+    they're filled first, together, from a single least-done-first queue
+    ranked by each person's combined opening+closing count so far -
+    whoever is furthest behind on either gets the next open seat *or* the
+    next close seat, whichever comes up, whichever they're most owed. With
+    9 people and only 2 open + 2 close seats a week, nobody can get both
+    every week, but treating them as one shared pool (rather than two
+    separate ones) means a week someone misses opening puts them straight
+    in line for closing, instead of two independent shortfalls being able
+    to land on the same unlucky person, or on different people who then
+    both end up behind rather than compensating each other.
+
+    8:00/8:30 are filled from whoever's left the same way (least-done
+    first, the two counted together since they don't need to match each
+    other exactly) - fair, but looser than opening/closing on purpose.
+
+    Genuine ties (everyone owed the same amount so far - the norm in the
+    first week or two of a fresh team) are broken by list position, but
+    rotated by the week index rather than fixed: a static tie-break would
+    let the same person lose every tie, every week, for as long as the
+    ties keep recurring - precisely how one person can end up with zero
+    opens or closes over an otherwise well-balanced run.
     """
-    start = tuple(pre_counts.get(sl, 0) for sl in SLOTS)
-    states: Dict[Tuple[int, ...], Tuple[float, Tuple[str, ...]]] = {start: (0.0, ())}
-    for name in members:
-        nxt: Dict[Tuple[int, ...], Tuple[float, Tuple[str, ...]]] = {}
-        for cnt in sorted(states):
-            c, path = states[cnt]
-            for i, sl in enumerate(SLOTS):
-                c2 = c + cost_fn(name, sl)
-                cnt2 = cnt[:i] + (cnt[i] + 1,) + cnt[i + 1:]
-                cur = nxt.get(cnt2)
-                if cur is None or c2 < cur[0] - 1e-12:
-                    nxt[cnt2] = (c2, path + (sl,))
-        states = nxt
+    remaining = list(members)
+    result: Dict[str, str] = {}
 
-    best_total: Optional[float] = None
-    best_path: Tuple[str, ...] = ()
-    for cnt in sorted(states):
-        c, path = states[cnt]
-        n = sum(cnt)
-        pen = BIG * (max(0, need_open - cnt[0]) + max(0, need_close - cnt[3]))
-        pen += W_MIX * sum((x - n / 4.0) ** 2 for x in cnt)
-        total = c + pen
-        if best_total is None or total < best_total - 1e-12:
-            best_total, best_path = total, path
-    return dict(zip(members, best_path))
+    def priority(n: str) -> int:
+        return (members.index(n) - week_index) % len(members)
+
+    def take(slot: str, k: int) -> None:
+        for _ in range(min(k, len(remaining))):
+            n = min(
+                remaining,
+                key=lambda n: (
+                    hist[n]["early"] + hist[n]["late"],
+                    hist[n][slot],
+                    sum(hist[n].values()),
+                    1 if last_slot.get(n) == slot else 0,
+                    priority(n),
+                ),
+            )
+            remaining.remove(n)
+            result[n] = slot
+
+    early_k = max(0, need_open - pre_counts.get("early", 0))
+    late_k = max(0, need_close - pre_counts.get("late", 0))
+    # Reserve enough of the pool for closing before greedily filling
+    # opening, so an unreasonable opening requirement (or a genuinely
+    # infeasible one) can't starve closing out entirely - it should still
+    # report as its own shortfall, not cascade into a second one.
+    early_k = min(early_k, max(0, len(remaining) - late_k))
+    take("early", early_k)
+    take("late", late_k)
+
+    order = sorted(
+        remaining,
+        key=lambda n: (hist[n]["mid1"] + hist[n]["mid2"], sum(hist[n].values()), priority(n)),
+    )
+    mid_counts = {"mid1": 0, "mid2": 0}
+    for n in order:
+        # Each person's own 8:00 vs 8:30 balance decides first (so nobody
+        # individually stacks up on one of the two), and this week's fill
+        # level is only the tie-break - not the other way round, which let
+        # an odd leftover (2-3 split, most weeks) stack the same slot for
+        # whoever's left over across several weeks running.
+        target = min(
+            ("mid1", "mid2"),
+            key=lambda sl: (hist[n][sl], mid_counts[sl], 1 if last_slot.get(n) == sl else 0),
+        )
+        result[n] = target
+        mid_counts[target] += 1
+
+    return result
 
 
 def _choose_pair(
@@ -365,7 +413,7 @@ def build_roster(inputs: Inputs) -> Roster:
                 min_close = max(0, min_close - 1)
             if members:
                 base.update(
-                    _solve_floor(members, pre, s.min_open[floor], min_close, cost_fn)
+                    _assign_weekly_base(members, pre, s.min_open[floor], min_close, hist, last_slot, wi)
                 )
 
         # ---- daily pass --------------------------------------------------

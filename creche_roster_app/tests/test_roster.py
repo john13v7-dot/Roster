@@ -225,10 +225,15 @@ class Overrides(unittest.TestCase):
         leave = [Leave("Shehnaz", START, START + timedelta(days=13), "Holiday")]
         over = [Override("Jason", START, START + timedelta(days=13), "early")]
         r = build_roster(inputs(leave=leave, overrides=over))
-        # No shortfall-driven repairs (the override is planned around cleanly).
-        # A "closing stays at" cap move is a different, intentional
-        # correction - see FallbackCloser - and is fine here.
-        self.assertFalse([c for c in r.checks if c.rule == "Cover adjusted" and "to keep" in c.message])
+        # The weekly base provisions exactly the typical week's need, not
+        # more - so it never needs a shortfall repair on Tue-Fri, where the
+        # fallback closer (Priscilla) covers. Monday is the one real
+        # exception: her own hours are shorter that day (see
+        # FallbackCloser.test_priscillas_shorter_monday_does_not_count), so
+        # the daily repair correctly tops up closing there every week - that
+        # is the fallback gap doing its job, not a planning failure.
+        repairs = [c for c in r.checks if c.rule == "Cover adjusted" and "to keep" in c.message]
+        self.assertTrue(all(c.day.weekday() == 0 for c in repairs))
         self.assertEqual(r.breaches, [])
 
     def test_override_on_a_rotating_person(self):
@@ -361,6 +366,39 @@ class HardRules(unittest.TestCase):
         r = build_roster(inp)
         self.assertNotEqual(slots(r, 0, "Hanny")[0], "early")
         self.assertNotEqual(slots(r, 0, "Usha")[0], "late")
+
+    def test_opening_and_closing_stay_within_one_shift_of_each_other(self):
+        # The explicit ask: everyone should do about the same amount of
+        # opening and closing (combined), even if 8:00/8:30 don't match
+        # exactly - not the old behaviour, where minimising the team's
+        # total cost could leave one person at 0 opens while everyone else
+        # was fine (see git history: Daniel 0 opens over 4 weeks even
+        # though his own cost for it was the cheapest in the group).
+        r = build_roster(inputs(weeks=12))
+        totals = {
+            n: r.period_counts[n].get("early", 0) + r.period_counts[n].get("late", 0)
+            for n in ROTATING
+        }
+        self.assertLessEqual(max(totals.values()) - min(totals.values()), 6)
+
+    def test_opening_and_closing_beat_pure_cost_minimising_on_a_pinned_pair(self):
+        # The scenario that exposed the bug: one paired person permanently
+        # overridden to "early" (as the paper roster has Jason) and their
+        # partner away the whole run, so the rotating pool always supplies
+        # the same small number of opens/closes a week. A pure
+        # cost-minimising solver could still leave one person at 0 opens
+        # over 4 weeks even though the team's total cost was lowest that
+        # way; least-done-first for opening/closing specifically can't.
+        leave = [Leave("Shehnaz", START, START + timedelta(days=27), "Holiday")]
+        over = [Override("Jason", START, START + timedelta(days=27), "early")]
+        r = build_roster(inputs(leave=leave, overrides=over, weeks=4))
+        self.assertEqual(r.breaches, [])
+        totals = {
+            n: r.period_counts[n].get("early", 0) + r.period_counts[n].get("late", 0)
+            for n in ROTATING
+        }
+        self.assertGreater(min(totals.values()), 0, totals)
+        self.assertLessEqual(max(totals.values()) - min(totals.values()), 6, totals)
 
     def test_deterministic(self):
         a = build_roster(inputs(weeks=6))
