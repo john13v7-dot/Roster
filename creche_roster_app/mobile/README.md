@@ -17,16 +17,22 @@ ArtifactData tool's `list` action on each collection). `db_import.py` in
 the main package turns that into a real `Inputs` and `build_preview.py`
 runs the actual engine on it - nothing here is hand-typed.
 
-Settings, fairness history and the last-slot memory aren't editable
-through the app yet, so they still come from `sample_inputs()`. Every
-build re-runs the real engine over the *whole* roster from these inputs -
-it's never a patch applied to the previous result - so opening/closing
-cover and fairness are readjusted across everyone automatically on every
-request (a leave change, a staff change, anything), not just for the
-person the request was about. A brand-new staff doc with no entry in
-`history` is seeded at the team's rounded average per slot rather than
-zero, so they're folded into the fair rotation from day one instead of
-looking artificially "owed" every slot at once.
+Settings aren't editable through the app yet, so they still come from
+`sample_inputs()`. Fairness history and the last-slot memory start empty
+on every build, on purpose: the roster's own 4 weeks are balanced fairly
+among themselves, not against whatever was worked before the window -
+matching the Fairness screen, which likewise only ever shows those same 4
+weeks (see "Duties and fairness" below for why). `db_import.py`'s
+new-joiner seeding (team average rather than zero) still exists and is
+still exercised directly in `tests/test_db_import.py` for whoever calls it
+with real history of their own; `build_preview.py` itself just doesn't
+pass any, so in practice everyone starts level.
+
+Every build re-runs the real engine over the *whole* roster from these
+inputs - it's never a patch applied to the previous result - so
+opening/closing cover and fairness are readjusted across everyone
+automatically on every request (a leave change, a staff change, anything),
+not just for the person the request was about.
 
 Publish the output HTML with the Artifact tool (`db`, `comments` and
 `downloads` capabilities declared) to get a live link; write the returned

@@ -4,9 +4,12 @@ the preview's own Add Staff / Transfer / Add Holiday / Add Maternity Leave
 buttons write to (staff / leave / transfers collections).
 
 The db export itself isn't fetched by this script - it has no network
-access of its own - so pass it in as a file (see --db-export). Settings,
-fairness history and last-slot aren't editable through the app yet, so
-they still come from sample_inputs().
+access of its own - so pass it in as a file (see --db-export). Settings
+aren't editable through the app yet, so they still come from
+sample_inputs(). Fairness history and last-slot start empty on every
+build - each build's 4 weeks are balanced fairly among themselves, not
+against whatever was worked before the window - matching the app's own
+Fairness screen, which only ever shows these same 4 weeks.
 
 Usage:
     python -m mobile.build_preview --db-export db_export.json --out-dir out/
@@ -44,9 +47,13 @@ ADJUSTMENT_RULES = {"Cover adjusted", "Closing fallback"}
 
 def build(db_export: dict, roster_start: date) -> tuple:
     base = sample_inputs(roster_start)
+    # No carried-over history: each build's own 4 weeks are the whole
+    # fairness picture, balanced among themselves - not skewed by whatever
+    # was worked before the window (the Fairness screen only ever shows
+    # these same 4 weeks, so the schedule itself should be fair within them).
     inputs = build_inputs_from_db(
         base.settings, db_export["staff"], db_export["leave"], db_export["transfers"],
-        base.history, base.last_slot,
+        {}, {},
     )
     return inputs, build_roster(inputs)
 
