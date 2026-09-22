@@ -393,7 +393,7 @@
 
 <dialog id="printDialog">
   <div class="formhead">Save as…</div>
-  <div class="confirmbody" style="padding-top:0;">Choose which file to save.</div>
+  <div class="confirmbody" id="printDialogBody" style="padding-top:0;">Choose which file to save.</div>
   <div class="formfoot">
     <button type="button" class="cancel" id="printCancel">Cancel</button>
     <button type="button" class="save" id="printPdfBtn">PDF</button>
@@ -1577,6 +1577,23 @@
   // works after a live rebuild replaces `data` with a summary that has no
   // `files` key of its own.
   var printFiles = data.files || null;
+  // A snapshot of what the roster looked like when those files were built,
+  // so Print can tell the viewer when the file no longer matches what's on
+  // screen - taken now, before any live edit replaces `data` below.
+  var printFilesSnapshot = (data.weeks || []).map(function(w){
+    return (w.people || []).map(function(p){
+      return p.name + '|' + p.days.map(function(d){ return d.text; }).join(',');
+    }).join(';');
+  }).join('||');
+  function printFilesAreStale(){
+    if(!data.weeks) return false;
+    var current = data.weeks.map(function(w){
+      return (w.people || []).map(function(p){
+        return p.name + '|' + p.days.map(function(d){ return d.text; }).join(',');
+      }).join(';');
+    }).join('||');
+    return current !== printFilesSnapshot;
+  }
 
   // ---------- screen navigation ----------
   function showScreen(id){
@@ -1798,11 +1815,19 @@
 
   var printBtn = $('printBtn');
   var printDialog = $('printDialog');
+  var printDialogBody = $('printDialogBody');
   var downloadsCap = null;
 
   printBtn.onclick = function(){
     if(!downloadsCap){ toast('Printing isn’t available in this view.'); return; }
     if(!printFiles || !printFiles.xlsx || !printFiles.pdf){ toast('No Excel/PDF file yet - ask Claude to publish one.'); return; }
+    if(printFilesAreStale()){
+      printDialogBody.innerHTML =
+        '<strong style="color:var(--bad-ink);">This file doesn’t include changes made since it was last generated.</strong>' +
+        '<br>Ask Claude to refresh it for the current roster, or save the older version below.';
+    } else {
+      printDialogBody.textContent = 'Choose which file to save.';
+    }
     printDialog.showModal();
   };
   $('printCancel').onclick = function(){ printDialog.close(); };
