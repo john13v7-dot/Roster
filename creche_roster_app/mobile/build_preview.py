@@ -98,21 +98,28 @@ def duties_json(inputs, duty_weeks) -> list:
 
 def fairness_json(inputs, roster, duty_weeks) -> dict:
     """Shift-slot fairness (opening/8:00/8:30/closing) for the rotating
-    staff over this 4-week build, and duty-count fairness for the duty
-    rota pool (rotating staff plus Jason) - what the Fairness screen shows.
-    Management (Jason, Shehnaz, Priscilla), the cook (Laura), Sue, Megan
-    and Eirini don't rotate shifts, so they're left off the shift table;
-    Sue and Shehnaz/Priscilla are fixed to their own duty, so they're left
-    off the duty table too.
+    staff, and duty-count fairness for the duty rota pool (rotating staff
+    plus Jason) - what the Fairness screen shows. Management (Jason,
+    Shehnaz, Priscilla), the cook (Laura), Sue, Megan and Eirini don't
+    rotate shifts, so they're left off the shift table; Sue and
+    Shehnaz/Priscilla are fixed to their own duty, so they're left off the
+    duty table too.
+
+    Shift counts are cumulative (history the roster was seeded with, plus
+    this build) - the same total the fairness cost function itself
+    balances against - not just this 4-week window. A 4-week-only count
+    can misread as unfair (e.g. 0 opens this month) when someone simply
+    had their fair share of opens the week before the window started;
+    cumulative is the number that actually answers "has this been fair".
     """
     rotating_names = [st.name for st in inputs.staff if st.role == "rotating" and st.name]
     shift_rows = [
         {
             "name": name,
-            "early": roster.period_counts.get(name, {}).get("early", 0),
-            "mid1": roster.period_counts.get(name, {}).get("mid1", 0),
-            "mid2": roster.period_counts.get(name, {}).get("mid2", 0),
-            "late": roster.period_counts.get(name, {}).get("late", 0),
+            "early": roster.cumulative_counts.get(name, {}).get("early", 0),
+            "mid1": roster.cumulative_counts.get(name, {}).get("mid1", 0),
+            "mid2": roster.cumulative_counts.get(name, {}).get("mid2", 0),
+            "late": roster.cumulative_counts.get(name, {}).get("late", 0),
         }
         for name in rotating_names
     ]
