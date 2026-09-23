@@ -2599,10 +2599,13 @@
       formBody.innerHTML =
         field('Staff', '<select id="f_staff">'+staffOptionsHTML()+'</select>') +
         field('New floor', selectHTML('f_floor', FLOOR_OPTS)) +
+        field('Room (same room can\'t share a shift)', selectHTML('f_room', ROOM_OPTS)) +
         field('From (week starting)', '<input id="f_start" type="date" value="'+todayISO()+'">') +
-        '<div class="note" id="f_shiftHint" style="margin-top:-8px;"></div>';
-      $('f_staff').onchange = renderShiftHint;
+        '<div class="note" id="f_shiftHint" style="margin-top:-8px;"></div>' +
+        '<p class="note" style="margin:0;">The room takes effect right away (there\'s no per-week room history yet); the floor is only recorded for now, per the note below - it doesn\'t affect the schedule until floors are split.</p>';
+      $('f_staff').onchange = function(){ refreshTransferRoomField(); renderShiftHint(); };
       $('f_start').oninput = renderShiftHint;
+      refreshTransferRoomField();
       renderShiftHint();
     } else if(action === 'add-holiday' || action === 'add-maternity'){
       var kind = action === 'add-holiday' ? 'Holiday' : 'Maternity Leave';
@@ -2655,6 +2658,14 @@
     } else {
       wrap.innerHTML = selectHTML('f_shiftvalue', SLOT_OPTS);
     }
+  }
+
+  function refreshTransferRoomField(){
+    var sel = $('f_room');
+    if(!sel) return;
+    var name = $('f_staff') ? $('f_staff').value : '';
+    var st = staffDocs.filter(function(s){ return s.name === name; })[0];
+    sel.value = (st && st.room) || '';
   }
 
   function dutyStaffOptionsHTML(){
@@ -2736,21 +2747,35 @@
         toast('Added ' + name + '. Roster updated.');
       } else if(currentAction === 'transfer'){
         var staff = $('f_staff').value, floor2 = $('f_floor').value, start2 = $('f_start').value;
+        var room2 = $('f_room') ? $('f_room').value : '';
         if(!staff){ formErr.textContent = 'Pick a staff member.'; formSave.disabled=false; return; }
+        var staffDoc2 = staffDocs.filter(function(s){ return s.name === staff; })[0];
+        var oldRoom2 = (staffDoc2 && staffDoc2.room) || '';
+        var roomChanged = staffDoc2 && room2 !== oldRoom2;
         var transferDoc = { name: staff, newFloor: floor2, start: start2, end: null, createdAt: todayISO() };
         var beforeRoster2 = lastBuildOut ? lastBuildOut.roster : null;
         var tref = await db.collection('transfers').add(transferDoc);
         var transferId = tref && tref.id;
         transferDocs = transferDocs.filter(function(t){ return t._id !== transferId; }).concat([Object.assign({_id: transferId}, transferDoc)]);
+        if(roomChanged){
+          await db.collection('staff').doc(staffDoc2._id).update({room: room2});
+          staffDocs = staffDocs.map(function(s){ return s._id === staffDoc2._id ? Object.assign({}, s, {room: room2}) : s; });
+        }
         if(!recompute()){
           if(transferId) await db.collection('transfers').doc(transferId).delete();
           transferDocs = transferDocs.filter(function(t){ return t._id !== transferId; });
+          if(roomChanged){
+            await db.collection('staff').doc(staffDoc2._id).update({room: oldRoom2});
+            staffDocs = staffDocs.map(function(s){ return s._id === staffDoc2._id ? Object.assign({}, s, {room: oldRoom2}) : s; });
+          }
           recompute();
           formErr.textContent = 'Could not record that transfer: ' + lastBuildErrorMessage;
           formSave.disabled = false;
           return;
         }
-        var summary2 = 'Transfer: ' + staff + ' to ' + floor2 + ', from ' + start2 + ' onward (past weeks unchanged).';
+        var summary2 = 'Transfer: ' + staff + ' to ' + floor2 +
+          (roomChanged ? ', room ' + (room2 || 'not placed') : '') +
+          ', from ' + start2 + ' onward (past weeks unchanged).';
         await logChange(summary2, staff, beforeRoster2);
         toast('Transfer recorded for ' + staff + '.');
       } else if(currentAction === 'add-holiday' || currentAction === 'add-maternity'){
