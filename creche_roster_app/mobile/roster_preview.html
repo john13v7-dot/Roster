@@ -2172,6 +2172,51 @@
     var d = new Date();
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
   }
+  function daysBetweenIso(a, b){
+    return Math.round((new Date(b+'T00:00:00') - new Date(a+'T00:00:00')) / 86400000);
+  }
+
+  // What a given person's cell on the Roster screen shows for a given date
+  // - so a form asking for a staff member and a date can tell the manager
+  // what that person's currently scheduled to do that day, without them
+  // switching over to the Roster tab to check first.
+  function shiftInfoFor(name, isoDate){
+    if(!name || !isoDate || !data.weeks) return {kind: 'unknown'};
+    for(var wi=0; wi<data.weeks.length; wi++){
+      var week = data.weeks[wi];
+      var offset = daysBetweenIso(week.monday, isoDate);
+      if(offset < 0 || offset > 6) continue;
+      if(offset > 4) return {kind: 'weekend'};
+      var person = week.people.filter(function(p){ return p.name === name; })[0];
+      if(!person) return {kind: 'no-person'};
+      return {kind: 'cell', cell: person.days[offset]};
+    }
+    return {kind: 'out-of-range'};
+  }
+  function renderShiftHint(){
+    var hintEl = $('f_shiftHint');
+    if(!hintEl) return;
+    var staffSel = $('f_staff');
+    var dateInput = $('f_start');
+    if(!staffSel || !dateInput){ hintEl.textContent = ''; return; }
+    var name = staffSel.value;
+    var info = shiftInfoFor(name, dateInput.value);
+    if(info.kind === 'cell'){
+      var c = info.cell;
+      var what;
+      if(c.kind === 'vacant') what = 'that post is vacant that day';
+      else if(!c.text) what = 'not scheduled that day';
+      else if(c.kind === 'leave') what = 'down as "' + c.text + '" that day';
+      else what = 'currently scheduled ' + c.text + ' that day';
+      hintEl.textContent = esc(name) + ' is ' + what + '.';
+    } else if(info.kind === 'weekend'){
+      hintEl.textContent = 'That date is a weekend - not on the roster.';
+    } else if(info.kind === 'out-of-range'){
+      hintEl.textContent = 'That date is outside the 4 weeks shown here.';
+    } else {
+      hintEl.textContent = '';
+    }
+  }
 
   function renderStaffList(){
     var el = $('staffList');
@@ -2452,22 +2497,33 @@
       formBody.innerHTML =
         field('Staff', '<select id="f_staff">'+staffOptionsHTML()+'</select>') +
         field('New floor', selectHTML('f_floor', FLOOR_OPTS)) +
-        field('From (week starting)', '<input id="f_start" type="date" value="'+todayISO()+'">');
+        field('From (week starting)', '<input id="f_start" type="date" value="'+todayISO()+'">') +
+        '<div class="note" id="f_shiftHint" style="margin-top:-8px;"></div>';
+      $('f_staff').onchange = renderShiftHint;
+      $('f_start').oninput = renderShiftHint;
+      renderShiftHint();
     } else if(action === 'add-holiday' || action === 'add-maternity'){
       var kind = action === 'add-holiday' ? 'Holiday' : 'Maternity Leave';
       formTitle.textContent = 'Add ' + kind;
       formBody.innerHTML =
         field('Staff', '<select id="f_staff">'+staffOptionsHTML()+'</select>') +
         field('From', '<input id="f_start" type="date" value="'+todayISO()+'">') +
+        '<div class="note" id="f_shiftHint" style="margin-top:-8px;"></div>' +
         field('To (leave blank if open-ended)', '<input id="f_end" type="date">');
+      $('f_staff').onchange = renderShiftHint;
+      $('f_start').oninput = renderShiftHint;
+      renderShiftHint();
     } else if(action === 'adjust-shift'){
       formTitle.textContent = 'Adjust Shift';
       formBody.innerHTML =
         field('Staff', '<select id="f_staff">'+staffOptionsHTML()+'</select>') +
         field('Date', '<input id="f_start" type="date" value="'+todayISO()+'">') +
+        '<div class="note" id="f_shiftHint" style="margin-top:-8px;"></div>' +
         field('New time', '<div id="f_shiftValueWrap"></div>');
-      $('f_staff').onchange = refreshShiftValueField;
+      $('f_staff').onchange = function(){ refreshShiftValueField(); renderShiftHint(); };
+      $('f_start').oninput = renderShiftHint;
       refreshShiftValueField();
+      renderShiftHint();
     } else if(action === 'adjust-duty'){
       formTitle.textContent = 'Adjust Duty';
       var weekOpts = (data.weeks || []).map(function(w, i){ return [String(i), w.label]; });
