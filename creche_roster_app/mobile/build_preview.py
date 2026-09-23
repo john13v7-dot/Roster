@@ -17,7 +17,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import sys
 from datetime import date, timedelta
@@ -168,11 +167,6 @@ def main() -> None:
     summary = summary_json(inputs, roster)
     summary["duties"] = duties_json(inputs, duty_weeks)
     summary["fairness"] = fairness_json(inputs, roster, duty_weeks)
-    summary["files"] = {
-        "xlsx": {"filename": xlsx.name, "b64": base64.b64encode(xlsx.read_bytes()).decode("ascii")},
-        "pdf": {"filename": pdf.name, "b64": base64.b64encode(pdf.read_bytes()).decode("ascii")},
-        "dutiesPdf": {"filename": duties_pdf.name, "b64": base64.b64encode(duties_pdf.read_bytes()).decode("ascii")},
-    }
     template = (HERE / "roster_preview.html").read_text(encoding="utf-8")
     html.write_text(template.replace("__ROSTER_JSON__", json.dumps(summary)), encoding="utf-8")
 

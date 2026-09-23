@@ -235,6 +235,13 @@
   .formfoot .cancel{background:var(--chip-bg); color:var(--ink);}
   .formfoot .save{background:var(--accent); color:#fff;}
   .formerr{font-size:11.5px; color:var(--bad-ink); min-height:14px;}
+  .weekpicker{display:flex; flex-direction:column; gap:2px;}
+  .weekpicker label{
+    display:flex; align-items:center; gap:9px; font-size:13.5px; font-weight:600;
+    padding:8px 2px; border-bottom:1px solid var(--line); cursor:pointer;
+  }
+  .weekpicker label:last-child{border-bottom:none;}
+  .weekpicker input{width:16px; height:16px; flex:none;}
 
   #toast{
     position:fixed; left:16px; right:16px; bottom:calc(16px + env(safe-area-inset-bottom,0px));
@@ -386,7 +393,7 @@
       <li><strong>Floor balance</strong> — everyone's on one list for now (no ground floor / 1st floor split yet). The Transfer form records a floor move, but it won't change the schedule until floors are split.</li>
       <li><strong>Eirini's room</strong> — not placed yet, so she isn't part of the same-room rule until she is.</li>
     </ul>
-    <p class="note">The Roster, Duties and Fairness screens rebuild instantly in your browser using the same rules as the real Python scheduling engine, so they're always current. The Print button's Excel/PDF are only as current as the last time Claude regenerated them — ask Claude to refresh them before printing if you've made changes since.</p>
+    <p class="note">The Roster, Duties and Fairness screens rebuild instantly in your browser using the same rules as the real Python scheduling engine, so they're always current. Print builds the Excel/PDF the same way, right here, the moment you click it — always matches what's on screen, and you choose which week(s) to include.</p>
   </div>
 </div>
 
@@ -410,8 +417,11 @@
 </dialog>
 
 <dialog id="printDialog">
-  <div class="formhead">Save as…</div>
-  <div class="confirmbody" id="printDialogBody" style="padding-top:0;">Choose which file to save.</div>
+  <div class="formhead" id="printDialogTitle">Print</div>
+  <div class="confirmbody" style="padding-top:0;">
+    <div class="note" style="margin:0 0 10px;">Choose which week(s), built fresh from what's on screen right now.</div>
+    <div id="printWeekPicker" class="weekpicker"></div>
+  </div>
   <div class="formfoot">
     <button type="button" class="cancel" id="printCancel">Cancel</button>
     <button type="button" class="save" id="printPdfBtn">PDF</button>
@@ -420,6 +430,10 @@
 </dialog>
 
 <div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 
 <script id="roster-data" type="application/json">__ROSTER_JSON__</script>
 <script>
@@ -1634,42 +1648,6 @@
   // a same-week edit look like it did nothing if it landed on what used to
   // be Week 2.
   var rosterStartAnchor = (data.weeks && data.weeks[0] && data.weeks[0].monday) || null;
-  // The client-side engine only ever recomputes Roster/Duties/Fairness - it
-  // has no Excel/PDF generator (that stays server-side, in Claude's Python
-  // build). Keep whatever files this page was published with so Print still
-  // works after a live rebuild replaces `data` with a summary that has no
-  // `files` key of its own.
-  var printFiles = data.files || null;
-  // A snapshot of what the roster looked like when those files were built,
-  // so Print can tell the viewer when the file no longer matches what's on
-  // screen - taken now, before any live edit replaces `data` below.
-  var printFilesSnapshot = (data.weeks || []).map(function(w){
-    return (w.people || []).map(function(p){
-      return p.name + '|' + p.days.map(function(d){ return d.text; }).join(',');
-    }).join(';');
-  }).join('||');
-  function printFilesAreStale(){
-    if(!data.weeks) return false;
-    var current = data.weeks.map(function(w){
-      return (w.people || []).map(function(p){
-        return p.name + '|' + p.days.map(function(d){ return d.text; }).join(',');
-      }).join(';');
-    }).join('||');
-    return current !== printFilesSnapshot;
-  }
-
-  // Same idea, for the Duties screen's own Print button and its baked PDF.
-  var dutiesPrintFile = (data.files && data.files.dutiesPdf) || null;
-  function dutiesSnapshotText(){
-    return (data.duties || []).map(function(w){
-      return (w.assignments || []).map(function(a){ return a.duty + '=' + a.people.join('/'); }).join(';');
-    }).join('||');
-  }
-  var dutiesPrintSnapshot = dutiesSnapshotText();
-  function dutiesFileIsStale(){
-    return dutiesSnapshotText() !== dutiesPrintSnapshot;
-  }
-
   // ---------- screen navigation ----------
   function showScreen(id){
     document.querySelectorAll('.screen').forEach(function(s){ s.classList.toggle('active', s.id === id); });
@@ -1880,74 +1858,208 @@
   }
   renderFairness();
 
-  // ---------- print (downloads capability) ----------
-  function b64ToBlob(b64, mime){
-    var bin = atob(b64);
-    var bytes = new Uint8Array(bin.length);
-    for(var i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
-    return new Blob([bytes], {type: mime});
+  // ---------- print: built live in the browser, from whatever `data` (the
+  // same object driving the Roster/Duties screens) holds right now - never
+  // a baked file that can go out of date, and always exactly the week(s)
+  // the viewer picks. ----------
+  var printBtn = $('printBtn');
+  var dutiesPrintBtn = $('dutiesPrintBtn');
+  var printDialog = $('printDialog');
+  var printDialogTitle = $('printDialogTitle');
+  var printWeekPicker = $('printWeekPicker');
+  var printXlsxBtn = $('printXlsxBtn');
+  var downloadsCap = null;
+  var printMode = 'roster'; // or 'duties'
+
+  // Same colour rules as pillClass()/the on-screen daypills, expressed as
+  // RGB triples for the PDF/Excel libraries instead of CSS classes.
+  function cellFill(kind, text, adjusted){
+    if(kind === 'vacant') return null;
+    if(kind === 'leave'){
+      var t = (text || '').trim().toLowerCase();
+      if(t === 'off') return {bg:[169,209,142], ink:[44,74,30]};
+      if(t.indexOf('holiday') !== -1) return {bg:[198,91,53], ink:[253,236,227]};
+      if(t.indexOf('maternity') !== -1) return {bg:[46,158,87], ink:[231,247,238]};
+      return {bg:[169,209,142], ink:[44,74,30]};
+    }
+    if(kind === 'shift' && adjusted) return {bg:[252,228,160], ink:[127,95,0]};
+    return null;
+  }
+  function rgbToHex(rgb){
+    return rgb.map(function(c){ return ('0' + c.toString(16)).slice(-2); }).join('').toUpperCase();
+  }
+  function rgbToArgb(rgb){ return 'FF' + rgbToHex(rgb); }
+
+  function buildRosterPdfBlob(weekIndices){
+    var doc = new window.jspdf.jsPDF({unit:'pt', format:'a4'});
+    weekIndices.forEach(function(wi, idx){
+      var week = data.weeks[wi];
+      if(idx > 0) doc.addPage();
+      doc.setFontSize(16); doc.setTextColor(224,74,50);
+      doc.text('STAFF ROSTER', 40, 42);
+      doc.setFontSize(11); doc.setTextColor(33,28,26);
+      doc.text(week.label, 40, 60);
+      var body = week.people.map(function(p){
+        return [p.name + (p.role === 'vacant' ? '  (vacant)' : '')].concat(
+          p.days.map(function(d){ return d.text || '—'; })
+        );
+      });
+      doc.autoTable({
+        startY: 74,
+        head: [['Name'].concat(week.day_names)],
+        body: body,
+        styles: {fontSize:9, cellPadding:5, lineColor:[231,221,212], lineWidth:0.5},
+        headStyles: {fillColor:[33,28,26], textColor:255, fontStyle:'bold'},
+        didParseCell: function(hook){
+          if(hook.section !== 'body' || hook.column.index === 0) return;
+          var p = week.people[hook.row.index];
+          var d = p.days[hook.column.index - 1];
+          var style = cellFill(d.kind, d.text, d.adjusted);
+          if(style){
+            hook.cell.styles.fillColor = style.bg;
+            hook.cell.styles.textColor = style.ink;
+            hook.cell.styles.fontStyle = 'bold';
+          }
+        },
+      });
+    });
+    return doc.output('blob');
   }
 
-  var printBtn = $('printBtn');
-  var printDialog = $('printDialog');
-  var printDialogBody = $('printDialogBody');
-  var downloadsCap = null;
+  async function buildRosterXlsxBlob(weekIndices){
+    var wb = new ExcelJS.Workbook();
+    weekIndices.forEach(function(wi){
+      var week = data.weeks[wi];
+      var ws = wb.addWorksheet(('Week ' + (wi + 1)).slice(0, 31));
+      ws.addRow(['STAFF ROSTER']).font = {bold:true, size:14, color:{argb:'FFE04A32'}};
+      ws.addRow([week.label]).font = {bold:true};
+      ws.addRow([]);
+      var headerRow = ws.addRow(['Name'].concat(week.day_names));
+      headerRow.eachCell(function(cell){
+        cell.font = {bold:true, color:{argb:'FFFFFFFF'}};
+        cell.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FF211C1A'}};
+      });
+      week.people.forEach(function(p){
+        var row = ws.addRow([p.name + (p.role === 'vacant' ? '  (vacant)' : '')].concat(
+          p.days.map(function(d){ return d.text || ''; })
+        ));
+        p.days.forEach(function(d, di){
+          var style = cellFill(d.kind, d.text, d.adjusted);
+          if(style){
+            var cell = row.getCell(di + 2);
+            cell.fill = {type:'pattern', pattern:'solid', fgColor:{argb: rgbToArgb(style.bg)}};
+            cell.font = {bold:true, color:{argb: rgbToArgb(style.ink)}};
+          }
+        });
+      });
+      ws.columns = [{width:20}].concat(week.day_names.map(function(){ return {width:16}; }));
+    });
+    var buffer = await wb.xlsx.writeBuffer();
+    return new Blob([buffer], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  }
 
+  function buildDutiesPdfBlob(weekIndices){
+    var doc = new window.jspdf.jsPDF({unit:'pt', format:'a4'});
+    var used = 0;
+    weekIndices.forEach(function(wi){
+      var week = (data.duties || [])[wi];
+      if(!week) return;
+      if(used > 0) doc.addPage();
+      used++;
+      doc.setFontSize(16); doc.setTextColor(224,74,50);
+      doc.text('CLEANING DUTIES', 40, 42);
+      doc.setFontSize(11); doc.setTextColor(33,28,26);
+      doc.text(week.label, 40, 60);
+      var unfilled = {};
+      (week.unfilled || []).forEach(function(d){ unfilled[d] = 1; });
+      var body = week.assignments.map(function(a){
+        var peopleText;
+        if(CONTEXT_DUTIES[a.duty]) peopleText = 'Staff working in the room';
+        else if(unfilled[a.duty]) peopleText = 'Nobody free this week';
+        else peopleText = a.people.join(' / ') || '—';
+        return [a.duty, peopleText];
+      });
+      doc.autoTable({
+        startY: 74,
+        head: [['Duty', 'Assigned']],
+        body: body,
+        styles: {fontSize:10, cellPadding:6, lineColor:[231,221,212], lineWidth:0.5},
+        headStyles: {fillColor:[63,107,82], textColor:255, fontStyle:'bold'},
+      });
+    });
+    return doc.output('blob');
+  }
+
+  function weekSuffix(idxs, total){
+    if(idxs.length === total) return '';
+    return '_' + idxs.map(function(i){ return 'Week' + (i + 1); }).join('-');
+  }
+
+  function openPrintDialog(mode){
+    printMode = mode;
+    var weeks = mode === 'roster' ? (data.weeks || []) : (data.duties || []);
+    printDialogTitle.textContent = mode === 'roster' ? 'Print roster' : 'Print duty rota';
+    printWeekPicker.innerHTML = weeks.map(function(w, i){
+      return '<label><input type="checkbox" class="printweekcb" value="' + i + '" checked> ' + esc(w.label) + '</label>';
+    }).join('');
+    printXlsxBtn.style.display = mode === 'roster' ? '' : 'none';
+    printDialog.showModal();
+  }
   printBtn.onclick = function(){
     if(!downloadsCap){ toast('Printing isn’t available in this view.'); return; }
-    if(!printFiles || !printFiles.xlsx || !printFiles.pdf){ toast('No Excel/PDF file yet - ask Claude to publish one.'); return; }
-    if(printFilesAreStale()){
-      printDialogBody.innerHTML =
-        '<strong style="color:var(--bad-ink);">This file doesn’t include changes made since it was last generated.</strong>' +
-        '<br>Ask Claude to refresh it for the current roster, or save the older version below.';
-    } else {
-      printDialogBody.textContent = 'Choose which file to save.';
-    }
-    printDialog.showModal();
+    if(!(data.weeks || []).length){ toast('No roster to print yet.'); return; }
+    openPrintDialog('roster');
+  };
+  dutiesPrintBtn.onclick = function(){
+    if(!downloadsCap){ toast('Printing isn’t available in this view.'); return; }
+    if(!(data.duties || []).length){ toast('No duty rota to print yet.'); return; }
+    openPrintDialog('duties');
   };
   $('printCancel').onclick = function(){ printDialog.close(); };
 
-  async function saveOne(kind){
+  function selectedWeekIndices(){
+    return Array.prototype.map.call(
+      document.querySelectorAll('.printweekcb:checked'),
+      function(cb){ return parseInt(cb.value, 10); }
+    );
+  }
+
+  async function saveBlob(filename, blob){
+    try{
+      await downloadsCap.save({filename: filename, data: blob});
+      toast('Saved ' + filename + '.');
+    } catch(e){
+      var code = e && e.code;
+      if(code === 'declined'){ toast('Not saved.'); }
+      else { toast('Could not save: ' + (e && e.message ? e.message : 'try again.')); }
+    }
+  }
+
+  printXlsxBtn.onclick = async function(){
+    var idxs = selectedWeekIndices();
+    if(!idxs.length){ toast('Choose at least one week.'); return; }
     printDialog.close();
     printBtn.disabled = true;
-    try{
-      var file = printFiles[kind];
-      var mime = kind === 'xlsx'
-        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        : 'application/pdf';
-      await downloadsCap.save({filename: file.filename, data: b64ToBlob(file.b64, mime)});
-      toast('Saved ' + file.filename + '.');
-    } catch(e){
-      var code = e && e.code;
-      if(code === 'declined'){ toast('Not saved.'); }
-      else { toast('Could not save: ' + (e && e.message ? e.message : 'try again.')); }
-    }
+    var blob = await buildRosterXlsxBlob(idxs);
+    await saveBlob('Roster_Planner' + weekSuffix(idxs, data.weeks.length) + '.xlsx', blob);
     printBtn.disabled = false;
-  }
-  $('printXlsxBtn').onclick = function(){ saveOne('xlsx'); };
-  $('printPdfBtn').onclick = function(){ saveOne('pdf'); };
-
-  // ---------- print (duties screen, PDF only) ----------
-  var dutiesPrintBtn = $('dutiesPrintBtn');
-  async function doDutiesPrint(){
-    if(!downloadsCap){ toast('Printing isn’t available in this view.'); return; }
-    if(!dutiesPrintFile){ toast('No duty rota PDF yet - ask Claude to publish one.'); return; }
-    if(dutiesFileIsStale()){
-      var ok = await askConfirm('This file doesn’t include duty changes made since it was last generated. Save the older version anyway?');
-      if(!ok) return;
+  };
+  $('printPdfBtn').onclick = async function(){
+    var idxs = selectedWeekIndices();
+    if(!idxs.length){ toast('Choose at least one week.'); return; }
+    printDialog.close();
+    if(printMode === 'roster'){
+      printBtn.disabled = true;
+      var blob = buildRosterPdfBlob(idxs);
+      await saveBlob('Roster_Planner' + weekSuffix(idxs, data.weeks.length) + '.pdf', blob);
+      printBtn.disabled = false;
+    } else {
+      dutiesPrintBtn.disabled = true;
+      var blob2 = buildDutiesPdfBlob(idxs);
+      await saveBlob('Duty_Rota' + weekSuffix(idxs, data.duties.length) + '.pdf', blob2);
+      dutiesPrintBtn.disabled = false;
     }
-    dutiesPrintBtn.disabled = true;
-    try{
-      await downloadsCap.save({filename: dutiesPrintFile.filename, data: b64ToBlob(dutiesPrintFile.b64, 'application/pdf')});
-      toast('Saved ' + dutiesPrintFile.filename + '.');
-    } catch(e){
-      var code = e && e.code;
-      if(code === 'declined'){ toast('Not saved.'); }
-      else { toast('Could not save: ' + (e && e.message ? e.message : 'try again.')); }
-    }
-    dutiesPrintBtn.disabled = false;
-  }
-  dutiesPrintBtn.onclick = doDutiesPrint;
+  };
 
   // ---------- staff & requests: db / comments ----------
   var dialog = $('formDialog');
@@ -1975,7 +2087,6 @@
     lastBuildOut = out;
     lastBuildErrorMessage = null;
     data = out.summary;
-    data.files = printFiles;
     buildErrorEl.style.display = 'none';
     renderRoster(data);
     renderDuties(currentDutyTab);
