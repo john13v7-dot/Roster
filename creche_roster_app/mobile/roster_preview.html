@@ -1322,6 +1322,14 @@
     'Front creche': new Set(['mid1']),
     'Paper & Soap dispensers': new Set(['mid1']),
   };
+  var DUTY_MIN_SLOT = {};
+  Object.keys(DUTY_ELIGIBLE_SLOTS).forEach(function (duty) {
+    var best = null;
+    DUTY_ELIGIBLE_SLOTS[duty].forEach(function (sl) {
+      if (best === null || SLOTS.indexOf(sl) < SLOTS.indexOf(best)) best = sl;
+    });
+    DUTY_MIN_SLOT[duty] = best;
+  });
   var CONTEXT_ROWS = ['Cot Room', 'Changing Area'];
   var FIXED_DUTIES = [['Dusting', ['Sue']], ['Laundry', ['Shehnaz', 'Priscilla']]];
   var EXTRA_POOL = ['Jason'];
@@ -1376,8 +1384,17 @@
       remaining.forEach(function (n) { slotOf[n] = weeklySlot(roster, wi, n); });
       var assignedByDuty = {};
 
+      // Who wins a tie (same duty-specific and total history) rotates by
+      // week too - a fixed tie-break would keep resolving the same tie the
+      // same way every week, pinning whichever structural shortfall
+      // recurs (there are always more 17:00-finish duties than 17:00
+      // finishers) onto one person permanently instead of spreading it
+      // around.
+      var tieOffset = wi % pool.length;
+      var tieOrder = pool.slice(tieOffset).concat(pool.slice(0, tieOffset));
+
       function bestPick(candidates, duty) {
-        return minByKey(candidates, function (n) { return [g(history[n], duty), sumAll(history[n]), pool.indexOf(n)]; });
+        return minByKey(candidates, function (n) { return [g(history[n], duty), sumAll(history[n]), tieOrder.indexOf(n)]; });
       }
 
       var offset = wi % DUTY_SLOTS.length;
@@ -1398,6 +1415,8 @@
         assignedByDuty[ov.duty] = ov.name;
       });
 
+      // Pass 1: the ideal match - ties to the actual finish-time bucket
+      // each duty is designed for.
       pickOrder.forEach(function (duty) {
         if (assignedByDuty[duty]) return;
         var eligible = remaining.filter(function (n) { return DUTY_ELIGIBLE_SLOTS[duty].has(slotOf[n]); });
@@ -1407,9 +1426,17 @@
         history[person][duty] = (history[person][duty] || 0) + 1;
         assignedByDuty[duty] = person;
       });
+
+      // Pass 2: the safe fallback, for whatever's still unfilled - anyone
+      // who finishes at least as late as the duty needs (DUTY_MIN_SLOT)
+      // can stand in, since they're there long enough to cover it; never
+      // someone finishing earlier, who'd have already left.
       pickOrder.forEach(function (duty) {
         if (assignedByDuty[duty] || !remaining.length) return;
-        var person = bestPick(remaining, duty);
+        var minIndex = SLOTS.indexOf(DUTY_MIN_SLOT[duty]);
+        var eligible = remaining.filter(function (n) { return slotOf[n] && SLOTS.indexOf(slotOf[n]) >= minIndex; });
+        if (!eligible.length) return;
+        var person = bestPick(eligible, duty);
         remaining = remaining.filter(function (x) { return x !== person; });
         history[person][duty] = (history[person][duty] || 0) + 1;
         assignedByDuty[duty] = person;

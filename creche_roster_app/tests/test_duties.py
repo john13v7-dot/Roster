@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from creche_roster.duties import (
     CONTEXT_ROWS,
     DUTY_ELIGIBLE_SLOTS,
+    DUTY_MIN_SLOT,
     DUTY_SLOTS,
     FIXED_DUTIES,
     _weekly_slot,
@@ -16,7 +17,7 @@ from creche_roster.duties import (
     duty_pool,
 )
 from creche_roster.engine import build_roster
-from creche_roster.models import DutyOverride, Leave, Override
+from creche_roster.models import SLOTS, DutyOverride, Leave, Override
 from creche_roster.sample import sample_inputs
 
 START = date(2026, 9, 28)
@@ -114,6 +115,56 @@ class DutyRoster(unittest.TestCase):
             assigned = [p for a in week["assignments"] if a["duty"] in DUTY_SLOTS for p in a["people"]]
             self.assertEqual(len(assigned), len(set(assigned)))
             self.assertEqual(set(assigned), pool)
+
+    def test_fallback_never_assigns_someone_who_finishes_too_early(self):
+        # The bug this guards against: a duty's fallback pass used to hand
+        # it to whoever was left over, with no regard for whether they'd
+        # actually still be there. Every real assignment - fallback or not
+        # - must go to someone whose own finish time is at least as late as
+        # the duty needs, never earlier.
+        inp, roster, weeks = build()
+        for wi, week in enumerate(weeks):
+            for a in week["assignments"]:
+                if a["duty"] not in DUTY_SLOTS or not a["people"]:
+                    continue
+                person = a["people"][0]
+                slot = _weekly_slot(roster, wi, person)
+                self.assertIsNotNone(slot, (a["duty"], person, wi))
+                self.assertGreaterEqual(
+                    SLOTS.index(slot), SLOTS.index(DUTY_MIN_SLOT[a["duty"]]),
+                    f"{person} (finishes {slot}) assigned {a['duty']!r} in week {wi + 1}, "
+                    f"but they'd already have left before it needs doing",
+                )
+
+    def test_shortfall_rotates_rather_than_pinning_one_person(self):
+        # The reported bug: David kept landing on the same duty every
+        # single week. That happened because the pool of people eligible
+        # for the chronically-under-supplied mid1 bucket (more duties need
+        # it than the rotation typically puts there) tied on duty-specific
+        # and total history most weeks, and a *fixed* tie-break resolved
+        # that tie the same way every time - so whichever duty came up
+        # short always landed on the same person. Over an 8-week run with
+        # the same recurring shortfall (Shehnaz away, Jason pinned early,
+        # as in test_duties_match_who_finishes_when_headcount_lines_up),
+        # nobody should be stuck with one single duty for the whole run.
+        leave = [Leave("Shehnaz", START, START + timedelta(weeks=8) - timedelta(days=1), "Holiday")]
+        over = [Override("Jason", START, START + timedelta(weeks=8) - timedelta(days=1), "early")]
+        inp, roster, weeks = build(leave=leave, overrides=over, weeks=8)
+        pool = duty_pool(inp)
+        per_person = {n: [] for n in pool}
+        for week in weeks:
+            for a in week["assignments"]:
+                if a["duty"] in DUTY_SLOTS:
+                    for p in a["people"]:
+                        per_person[p].append(a["duty"])
+        for name, duties_done in per_person.items():
+            if len(duties_done) < 2:
+                continue
+            self.assertGreater(
+                len(set(duties_done)), 1,
+                f"{name} was assigned {duties_done[0]!r} in every one of their "
+                f"{len(duties_done)} weeks - never rotated to anything else",
+            )
 
     def test_load_is_equal_over_four_full_weeks(self):
         inp, roster, weeks = build()

@@ -7,9 +7,14 @@ the rotation. Everyone else on the duty rota - the rotating shift staff,
 plus Jason, who still takes a duty even though his shift itself is on the
 separate pairing rota with Shehnaz - gets exactly one of the remaining
 duties each week, matched to how long they're actually there for (the
-duty that takes more time goes to whoever finishes latest that week), and
+duty that takes more time goes to whoever finishes latest that week,
+falling back to anyone who finishes at least that late when the ideal
+match isn't available - never to someone who'd have already left), and
 otherwise chosen to keep both duty-type variety and overall load fair over
-time.
+time. Which candidate is favoured on a tie rotates week to week too - a
+fixed tie-break would let the same structural shortfall (there are always
+more 17:00-finish duties than 17:00 finishers) land on the same person
+every single week instead of spreading it around.
 """
 
 from __future__ import annotations
@@ -35,15 +40,17 @@ DUTY_SLOTS: List[str] = [
     "Paper & Soap dispensers",
 ]
 
-# Which shift end time each duty belongs to (by slot: early=16:30,
+# Which shift end time each duty is best matched to (by slot: early=16:30,
 # mid1=17:00, mid2=17:30, late=18:00). Kitchen/hallway downstairs/
-# children's toilets take longer, so they go to whoever finishes latest
-# (17:30 or 18:00); bins/staff toilets are quick, for whoever finishes
-# earliest (16:30); everything else goes to the 17:00 finishers. When a
-# week's actual headcount doesn't split this cleanly (someone on leave,
-# an uneven shift mix), build_duty_roster() falls back to filling what's
-# left from whoever's still free, rather than leaving a duty undone or a
-# person without one.
+# children's toilets take longer, so they're best matched to whoever
+# finishes latest (17:30 or 18:00); bins/staff toilets are quick, best for
+# whoever finishes earliest (16:30); everything else best fits the 17:00
+# finishers. That's the first thing build_duty_roster() tries. Someone
+# finishing later than a duty needs is still there long enough to cover it
+# though, so when the ideal match for a duty isn't available that week
+# (someone on leave, an uneven shift mix), it falls back to whoever's free
+# and finishes at least that late - never to someone who'd already have
+# left before the duty's actually done.
 DUTY_ELIGIBLE_SLOTS: Dict[str, FrozenSet[str]] = {
     "Kitchen": frozenset({"mid2", "late"}),
     "Hallway downstairs / windows / door handles": frozenset({"mid2", "late"}),
@@ -56,6 +63,11 @@ DUTY_ELIGIBLE_SLOTS: Dict[str, FrozenSet[str]] = {
     "Front creche": frozenset({"mid1"}),
     "Paper & Soap dispensers": frozenset({"mid1"}),
 }
+
+# The earliest finish time that still covers each duty - the fallback
+# floor: whoever finishes at this slot or later can stand in when the
+# duty's ideal match (DUTY_ELIGIBLE_SLOTS, above) isn't available.
+DUTY_MIN_SLOT: Dict[str, str] = {duty: min(slots, key=SLOTS.index) for duty, slots in DUTY_ELIGIBLE_SLOTS.items()}
 
 # Filled by whoever's already working that room - never a named, rotating
 # assignment.
@@ -123,12 +135,11 @@ def build_duty_roster(inputs: Inputs, roster: Roster) -> List[Dict]:
     shift each person is actually working that week (see
     DUTY_ELIGIBLE_SLOTS), so the shift rota has to exist first.
 
-    Each duty first goes to whoever's eligible for it (by finish time) and
-    has done that duty type least so far; someone left without a duty
-    because their own bucket ran out, or a duty left unfilled because its
-    bucket came up short (leave, an uneven shift mix that week), is then
-    matched up from whoever/whatever's left over, same least-done-first
-    rule, rather than staying empty when a reasonable match exists.
+    Each duty first goes to whoever's ideally matched to it (by finish
+    time) and has done that duty type least so far; if that bucket comes up
+    short that week (leave, an uneven shift mix), it falls back to anyone
+    still free who finishes at least as late - never to someone who'd
+    already have left. Only stays unfilled if even that has nobody left.
     """
     pool = duty_pool(inputs)
     history: Dict[str, Counter] = {n: Counter() for n in pool}
@@ -140,10 +151,20 @@ def build_duty_roster(inputs: Inputs, roster: Roster) -> List[Dict]:
         slot_of = {n: _weekly_slot(roster, wi, n) for n in remaining}
         assigned_by_duty: Dict[str, str] = {}
 
+        # Who wins a tie (same duty-specific and total history) rotates by
+        # week too. Total load tends to march in lockstep across the whole
+        # pool - most weeks hand out almost exactly one duty each - so a
+        # *fixed* tie-break would keep resolving the same tie the same way
+        # every week, pinning whichever structural shortfall recurs (there
+        # are always more 17:00-finish duties than 17:00 finishers) onto
+        # one person permanently instead of spreading it around.
+        tie_offset = wi % len(pool)
+        tie_order = pool[tie_offset:] + pool[:tie_offset]
+
         def best_pick(candidates: List[str], duty: str) -> str:
             return min(
                 candidates,
-                key=lambda n: (history[n][duty], sum(history[n].values()), pool.index(n)),
+                key=lambda n: (history[n][duty], sum(history[n].values()), tie_order.index(n)),
             )
 
         # Rotate which duty gets first pick within its own bucket each
@@ -171,7 +192,8 @@ def build_duty_roster(inputs: Inputs, roster: Roster) -> List[Dict]:
             history[ov.name][ov.duty] += 1
             assigned_by_duty[ov.duty] = ov.name
 
-        # Pass 1: strictly by finish time - the actual rule.
+        # Pass 1: the ideal match - ties to the actual finish-time bucket
+        # each duty is designed for.
         for duty in pick_order:
             if duty in assigned_by_duty:
                 continue
@@ -183,14 +205,18 @@ def build_duty_roster(inputs: Inputs, roster: Roster) -> List[Dict]:
             history[person][duty] += 1
             assigned_by_duty[duty] = person
 
-        # Pass 2: whatever's left over - a duty whose bucket came up short,
-        # or a person whose bucket had no duty left for them - paired up
-        # the same fair way, rather than left undone when the other still
-        # has an obvious match.
+        # Pass 2: the safe fallback, for whatever's still unfilled - anyone
+        # who finishes at least as late as the duty needs (DUTY_MIN_SLOT)
+        # can stand in, since they're there long enough to cover it; never
+        # someone finishing earlier, who'd have already left.
         for duty in pick_order:
             if duty in assigned_by_duty or not remaining:
                 continue
-            person = best_pick(remaining, duty)
+            min_index = SLOTS.index(DUTY_MIN_SLOT[duty])
+            eligible = [n for n in remaining if slot_of.get(n) and SLOTS.index(slot_of[n]) >= min_index]
+            if not eligible:
+                continue
+            person = best_pick(eligible, duty)
             remaining.remove(person)
             history[person][duty] += 1
             assigned_by_duty[duty] = person
