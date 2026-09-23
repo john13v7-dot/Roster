@@ -740,6 +740,92 @@
     return result;
   }
 
+  // Start from what this floor's rotation would look like at full
+  // strength (`idealBase` - everyone's slot as if this week's temporary
+  // absences hadn't happened) and move as few people off it as actually
+  // necessary to keep opening/closing cover met for who's really here.
+  // See _patch_weekly_base's docstring in engine.py for the full
+  // rationale - this is a straight port.
+  function patchWeeklyBase(members, idealBase, preCounts, needOpen, needClose, hist, lastSlot, weekIndex, roomOf, takenByRoom) {
+    roomOf = roomOf || {};
+    var takenCopy = {};
+    for (var r0 in (takenByRoom || {})) takenCopy[r0] = new Set(takenByRoom[r0]);
+    var externalTaken = {};
+    for (var r1 in takenCopy) externalTaken[r1] = new Set(takenCopy[r1]);
+
+    var result = {};
+    var displaced = [];
+    members.forEach(function (n) {
+      if (!(n in idealBase)) return;
+      var slot = idealBase[n];
+      var room = roomOf[n];
+      if (room && externalTaken[room] && externalTaken[room].has(slot)) {
+        displaced.push(n);
+        return;
+      }
+      result[n] = slot;
+      if (room) {
+        if (!takenCopy[room]) takenCopy[room] = new Set();
+        takenCopy[room].add(slot);
+      }
+    });
+
+    displaced.forEach(function (n) {
+      var room = roomOf[n];
+      var options = SLOTS.filter(function (sl) { return !(room && takenCopy[room] && takenCopy[room].has(sl)); });
+      if (!options.length) options = SLOTS.slice();
+      var target = minByKey(options, function (sl) {
+        return [g(hist[n], sl), sumAll(hist[n]), lastSlot[n] === sl ? 1 : 0];
+      });
+      result[n] = target;
+      if (room) {
+        if (!takenCopy[room]) takenCopy[room] = new Set();
+        takenCopy[room].add(target);
+      }
+    });
+
+    var need = { early: needOpen, late: needClose };
+    ['early', 'late'].forEach(function (target) {
+      while (g(preCounts, target) + Object.values(result).filter(function (s) { return s === target; }).length < need[target]) {
+        var cnt = {};
+        Object.values(result).forEach(function (s) { cnt[s] = (cnt[s] || 0) + 1; });
+        var donors = Object.keys(result).filter(function (n) {
+          var cur = result[n];
+          if (cur === target) return false;
+          if (cur in need && g(preCounts, cur) + (cnt[cur] || 0) <= need[cur]) return false;
+          return true;
+        });
+        if (!donors.length) break;
+        var safe = donors.filter(function (n) {
+          return !(roomOf[n] && takenCopy[roomOf[n]] && takenCopy[roomOf[n]].has(target));
+        });
+        var pool = safe.length ? safe : donors;
+        var n = minByKey(pool, function (n) {
+          return [
+            ['mid1', 'mid2'].indexOf(result[n]) !== -1 ? 0 : 1,
+            g(hist[n], 'early') + g(hist[n], 'late'),
+            g(hist[n], target),
+            sumAll(hist[n]),
+            lastSlot[n] === target ? 1 : 0,
+            (((members.indexOf(n) - weekIndex) % members.length) + members.length) % members.length,
+          ];
+        });
+        var old = result[n];
+        var oldRoom = roomOf[n];
+        if (oldRoom && takenCopy[oldRoom]) takenCopy[oldRoom].delete(old);
+        result[n] = target;
+        var newRoom = roomOf[n];
+        if (newRoom) {
+          if (!takenCopy[newRoom]) takenCopy[newRoom] = new Set();
+          takenCopy[newRoom].add(target);
+        }
+      }
+    });
+
+    resolveRoomClashes(result, roomOf, hist);
+    return result;
+  }
+
   function roomClashFree(assignment, roomOf) {
     var seen = new Set();
     for (var n in assignment) {
@@ -1110,7 +1196,7 @@
       for (var n5 in byName) present[n5] = days.filter(function (d) { return !leaveKind(n5, d); });
 
       // ---- weekly base ----
-      function computeBase(presentMap) {
+      function computeBase(presentMap, idealBase) {
         // An override that covers every day someone's in this week decides
         // their base slot for the whole week (an open-ended pinned shift,
         // say) - a shorter one only applies to the specific day(s) it
@@ -1168,20 +1254,36 @@
               var r = roomOf[nb];
               if (r) { if (!takenByRoom[r]) takenByRoom[r] = new Set(); takenByRoom[r].add(base[nb]); }
             }
-            Object.assign(base, assignWeeklyBase(members, pre, s.min_open[floor], minClose, hist, lastSlot, wi, roomOf, takenByRoom));
+            if (idealBase === undefined) {
+              Object.assign(base, assignWeeklyBase(members, pre, s.min_open[floor], minClose, hist, lastSlot, wi, roomOf, takenByRoom));
+            } else {
+              Object.assign(base, patchWeeklyBase(members, idealBase, pre, s.min_open[floor], minClose, hist, lastSlot, wi, roomOf, takenByRoom));
+            }
           }
         });
         return base;
       }
 
-      var base = computeBase(present);
-      // A second, counterfactual pass - "as if" nobody's temporary leave
-      // had happened this week - used only to work out whose weekly slot
-      // moved *because of* it, for the "changed to cover" highlight below.
-      // It never feeds the real schedule or fairness memory.
+      // Two different counterfactuals, for two different jobs:
+      //
+      // baseIfNobodyAway: bounded leave doesn't count as absence, open
+      // -ended does (creditedKind) - used only to decide who's "covering
+      // because of leave" for the highlight, below. Never feeds the real
+      // schedule.
+      //
+      // fullRotatingBase: the rotating pool at full strength (nobody in
+      // it ever absent this week), but fixed hours and the pair's
+      // presence are exactly the real week's - used as the patch
+      // baseline for the real schedule itself, so opening/closing
+      // requirements match the real week exactly and only the rotating
+      // pool's own actual absences get patched around.
       var presentCredit = {};
       for (var n5b in byName) presentCredit[n5b] = days.filter(function (d) { return !creditedKind(n5b, d); });
       var baseIfNobodyAway = computeBase(presentCredit);
+      var presentFullRotating = {};
+      for (var n5d in byName) presentFullRotating[n5d] = byName[n5d].role === 'rotating' ? days : present[n5d];
+      var fullRotatingBase = computeBase(presentFullRotating);
+      var base = computeBase(present, fullRotatingBase);
       var coveringBecauseOfLeave = new Set();
       for (var n5c in base) {
         if (byName[n5c].role === 'rotating' && baseIfNobodyAway[n5c] !== undefined && base[n5c] !== baseIfNobodyAway[n5c]) {

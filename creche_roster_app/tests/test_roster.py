@@ -400,6 +400,24 @@ class HardRules(unittest.TestCase):
                     f"{n} flagged as covering in week {wi + 1}, but nobody's on leave that week",
                 )
 
+    def test_full_week_leave_moves_at_most_one_other_person(self):
+        # Recomputing the whole floor from scratch every week used to mean
+        # one person's full week off could reshuffle several other
+        # people's slots too - not because their own cover was ever at
+        # risk, just because the fresh least-done-first solve happened to
+        # land differently with one fewer person in the pool. Only as many
+        # people should move as there are genuine cover gaps to fill - for
+        # one person's absence, that's one substitute, not several.
+        baseline = build_roster(inputs(weeks=4))
+        leave = [Leave("Irene", START, START + timedelta(days=4), "Holiday")]  # all of week 1
+        with_leave = build_roster(inputs(leave=leave, weeks=4))
+        self.assertEqual(with_leave.breaches, [])
+        changed = [
+            n for n in ROTATING
+            if n != "Irene" and texts(with_leave, 0, n) != texts(baseline, 0, n)
+        ]
+        self.assertLessEqual(len(changed), 1, changed)
+
     def test_bounded_override_highlights_the_persons_own_cell(self):
         # A manager's own one-off manual adjustment (a bounded override -
         # it has an end date) should highlight the adjusted person's own

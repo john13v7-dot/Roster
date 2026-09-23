@@ -271,6 +271,122 @@ def _assign_weekly_base(
     return result
 
 
+def _patch_weekly_base(
+    members: List[str],
+    ideal_base: Dict[str, str],
+    pre_counts: Counter,
+    need_open: int,
+    need_close: int,
+    hist: Dict[str, Counter],
+    last_slot: Dict[str, str],
+    week_index: int,
+    room_of: Optional[Dict[str, str]] = None,
+    taken_by_room: Optional[Dict[str, set]] = None,
+) -> Dict[str, str]:
+    """Start from what this floor's rotation would look like at full
+    strength (`ideal_base` - everyone's slot as if this week's temporary
+    absences hadn't happened) and move as few people off it as actually
+    necessary to keep opening/closing cover met for who's really here.
+
+    Recomputing the whole floor from scratch every week (what
+    `_assign_weekly_base` does) is right when there's no baseline to
+    diff against, but applied *every* week it means one person's leave
+    can reshuffle several other people's slots too, just because the
+    fresh least-done-first solve happened to land differently with one
+    fewer person in the pool - not because those other people's cover
+    was ever actually at risk. Patching from the full-strength baseline
+    instead means everyone keeps their normal slot unless the absence
+    genuinely leaves a cover gap, and even then only as many people move
+    as there are gaps to fill - one absence, one substitute, not a
+    cascade. Mirrors the daily repair pass's own donor rule: a mid1/mid2
+    sitter is asked before anyone already covering the other protected
+    slot, least fairness cost first, room-clash avoided unless every
+    remaining donor would cause one.
+    """
+    room_of = room_of or {}
+    taken_by_room = {r: set(slots) for r, slots in (taken_by_room or {}).items()}
+    # Claims that exist independently of this floor's rotating pool (fixed
+    # staff, the pair, manual overrides) - captured before any of our own
+    # members are seeded in, so a clash against one of *those* is
+    # detectable, not silently absorbed as if it were this pool's own.
+    external_taken = {r: set(slots) for r, slots in taken_by_room.items()}
+
+    result: Dict[str, str] = {}
+    displaced: List[str] = []
+    for n in members:
+        if n not in ideal_base:
+            continue
+        slot = ideal_base[n]
+        room = room_of.get(n)
+        # The room/slot picture outside this rotating pool isn't always the
+        # same between the full-strength baseline and this real week (e.g.
+        # a paired person's override only applies when their partner is
+        # genuinely away, which can differ from the baseline's own
+        # presence-only check) - so a member's ideal slot can land on a
+        # slot someone outside the pool already holds *this* week, even
+        # though it never clashed in the baseline itself. That has to be
+        # caught here, not left for the end-of-function cleanup below,
+        # which only ever looks at clashes between this pool's own members.
+        if room and slot in external_taken.get(room, ()):
+            displaced.append(n)
+            continue
+        result[n] = slot
+        if room:
+            taken_by_room.setdefault(room, set()).add(slot)
+
+    # Anyone displaced that way needs a genuinely different slot picked
+    # fresh - least fairness cost, still room-clash-free where at all
+    # possible - not just whatever's left over.
+    for n in displaced:
+        room = room_of.get(n)
+        options = [sl for sl in SLOTS if not (room and sl in taken_by_room.get(room, ()))]
+        if not options:
+            options = list(SLOTS)  # every slot in this room is already spoken for - unavoidable
+        target = min(
+            options,
+            key=lambda sl: (hist[n][sl], sum(hist[n].values()), 1 if last_slot.get(n) == sl else 0),
+        )
+        result[n] = target
+        if room:
+            taken_by_room.setdefault(room, set()).add(target)
+
+    need = {"early": need_open, "late": need_close}
+    for target in ("early", "late"):
+        while pre_counts.get(target, 0) + Counter(result.values())[target] < need[target]:
+            cnt = Counter(result.values())
+            donors = [
+                n for n in result
+                if result[n] != target
+                and not (result[n] in need and pre_counts.get(result[n], 0) + cnt[result[n]] <= need[result[n]])
+            ]
+            if not donors:
+                break
+            safe = [n for n in donors if not (room_of.get(n) and target in taken_by_room.get(room_of[n], ()))]
+            pool = safe or donors
+            n = min(
+                pool,
+                key=lambda n: (
+                    0 if result[n] in ("mid1", "mid2") else 1,
+                    hist[n]["early"] + hist[n]["late"],
+                    hist[n][target],
+                    sum(hist[n].values()),
+                    1 if last_slot.get(n) == target else 0,
+                    (members.index(n) - week_index) % len(members),
+                ),
+            )
+            old = result[n]
+            old_room = room_of.get(n)
+            if old_room:
+                taken_by_room.get(old_room, set()).discard(old)
+            result[n] = target
+            new_room = room_of.get(n)
+            if new_room:
+                taken_by_room.setdefault(new_room, set()).add(target)
+
+    _resolve_room_clashes(result, room_of, hist)
+    return result
+
+
 def _room_clash_free(assignment: Dict[str, str], room_of: Dict[str, str]) -> bool:
     seen: Dict[Tuple[str, str], str] = {}
     for n, slot in assignment.items():
@@ -472,7 +588,18 @@ def build_roster(inputs: Inputs) -> Roster:
         present = {n: [d for d in days if not leave_kind(n, d)] for n in by_name}
 
         # ---- weekly base -------------------------------------------------
-        def compute_base(present_map: Dict[str, List[date]]) -> Dict[str, str]:
+        def compute_base(
+            present_map: Dict[str, List[date]], ideal_base: Optional[Dict[str, str]] = None,
+        ) -> Dict[str, str]:
+            # `ideal_base`, when given, is each rotating person's slot at full
+            # strength (computed by a prior, baseline call to this same
+            # function) - the real week's rotating assignments are then
+            # patched from it (only as many people moved as this week's
+            # actual absences require) rather than solved fresh, so one
+            # person's leave doesn't reshuffle others who were never at risk.
+            # Fixed staff, the pair, and manual overrides are unaffected -
+            # those are already exact, not a fairness-driven solve.
+            #
             # An override that covers every day someone's in this week
             # decides their base slot for the whole week, same as before -
             # that's what an open-ended override (e.g. a permanent pinned
@@ -541,21 +668,49 @@ def build_roster(inputs: Inputs) -> Roster:
                         r = room_of.get(n)
                         if r:
                             taken_by_room.setdefault(r, set()).add(slot)
-                    base.update(
-                        _assign_weekly_base(
-                            members, pre, s.min_open[floor], min_close, hist, last_slot, wi,
-                            room_of, taken_by_room,
+                    if ideal_base is None:
+                        base.update(
+                            _assign_weekly_base(
+                                members, pre, s.min_open[floor], min_close, hist, last_slot, wi,
+                                room_of, taken_by_room,
+                            )
                         )
-                    )
+                    else:
+                        base.update(
+                            _patch_weekly_base(
+                                members, ideal_base, pre, s.min_open[floor], min_close, hist, last_slot, wi,
+                                room_of, taken_by_room,
+                            )
+                        )
             return base
 
-        base = compute_base(present)
-        # A second, counterfactual pass - "as if" nobody's temporary leave
-        # had happened this week - used only to work out whose weekly slot
-        # moved *because of* it, for the "changed to cover" highlight below.
-        # It never feeds the real schedule or fairness memory.
+        # Two different counterfactuals, for two different jobs - keep them
+        # separate rather than reusing one for both:
+        #
+        # `base_if_nobody_away`: bounded leave doesn't count as absence,
+        # open-ended does (credited_kind) - used only to decide who's
+        # "covering because of leave" for the highlight, below. Never feeds
+        # the real schedule.
+        #
+        # `full_rotating_base`: the rotating pool at full strength (nobody
+        # in it ever absent this week), but fixed hours and the pair's
+        # presence are exactly the real week's - used as the patch baseline
+        # for the real schedule itself. It has to match the real week's own
+        # opening/closing requirements exactly (not credited_kind's - a
+        # bounded absence elsewhere, e.g. suspending the pair, genuinely
+        # changes how many the rotating pool needs to supply this week),
+        # or "patch, don't reshuffle" ends up patching against the wrong
+        # target and can under- or over-supply cover, or hand someone a
+        # slot a real, non-rotating claim already holds. Only the rotating
+        # pool itself is forced "present" here - that's the one absence
+        # this patch is meant to absorb without disturbing anyone else.
         present_credit = {n: [d for d in days if not credited_kind(n, d)] for n in by_name}
         base_if_nobody_away = compute_base(present_credit)
+        present_full_rotating = {
+            n: (days if st.role == "rotating" else present[n]) for n, st in by_name.items()
+        }
+        full_rotating_base = compute_base(present_full_rotating)
+        base = compute_base(present, full_rotating_base)
         covering_because_of_leave = {
             n for n in base
             if by_name[n].role == "rotating"
