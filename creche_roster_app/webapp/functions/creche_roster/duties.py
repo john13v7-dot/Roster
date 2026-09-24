@@ -98,25 +98,33 @@ def duty_pool(inputs: Inputs) -> List[str]:
     return pool
 
 
-def _present_all_week(inputs: Inputs, name: str, days: List[date]) -> bool:
+def _present_most_of_week(inputs: Inputs, name: str, days: List[date]) -> bool:
+    """True if `name` is rostered for more than half of `days` - present
+    enough of the week to meaningfully take a duty for it. A single day
+    away (a one-off appointment, say) shouldn't drop someone out of the
+    whole week's duty rotation - only being away most or all of the week
+    should. A day doesn't count as present if it's before their start
+    date, after their end date, or covered by leave."""
     st = next((s for s in inputs.staff if s.name == name), None)
     if st is None:
         return False
+    present_days = 0
     for d in days:
         if st.start_date and d < st.start_date:
-            return False
+            continue
         if st.end_date and d > st.end_date:
-            return False
+            continue
         if any(lv.name == name and lv.covers(d) for lv in inputs.leave):
-            return False
-    return True
+            continue
+        present_days += 1
+    return present_days * 2 > len(days)
 
 
 def _weekly_slot(roster: Roster, week_index: int, name: str) -> Optional[str]:
     """The slot (early/mid1/mid2/late) `name` actually works on most days
     of week `week_index` - what decides their shift end time for duty
     purposes. None if they have no shift day that week (fully on leave,
-    already excluded from that week's duty pool by _present_all_week)."""
+    already excluded from that week's duty pool by _present_most_of_week)."""
     week = roster.weeks[week_index]
     cells = week.cells
     slots = [cells[(name, d)].slot for d in week.days if cells.get((name, d), None) and cells[(name, d)].kind == "shift"]
@@ -147,7 +155,7 @@ def build_duty_roster(inputs: Inputs, roster: Roster) -> List[Dict]:
     for wi in range(inputs.settings.weeks):
         monday = inputs.settings.roster_start + timedelta(weeks=wi)
         days = [monday + timedelta(days=i) for i in range(NDAYS)]
-        remaining = [n for n in pool if _present_all_week(inputs, n, days)]
+        remaining = [n for n in pool if _present_most_of_week(inputs, n, days)]
         slot_of = {n: _weekly_slot(roster, wi, n) for n in remaining}
         assigned_by_duty: Dict[str, str] = {}
 
@@ -233,7 +241,7 @@ def build_duty_roster(inputs: Inputs, roster: Roster) -> List[Dict]:
             for duty in DUTY_SLOTS
         ]
         for duty, names in FIXED_DUTIES:
-            present = [n for n in names if _present_all_week(inputs, n, days)]
+            present = [n for n in names if _present_most_of_week(inputs, n, days)]
             assignments.append({"duty": duty, "people": present or names})
         weeks_out.append({"monday": monday, "assignments": assignments, "unfilled": unfilled})
     return weeks_out

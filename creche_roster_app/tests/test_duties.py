@@ -179,6 +179,18 @@ class DutyRoster(unittest.TestCase):
         totals = duty_fairness(inp, weeks)
         self.assertEqual(totals["Hanny"], 3)  # only 3 of the 4 weeks
 
+    def test_one_day_away_still_gets_a_duty_that_week(self):
+        # The reported bug: someone away for just one day of the week used
+        # to drop out of that whole week's duty pool entirely (duty pool
+        # eligibility required being rostered every single day), which
+        # could tip an already-tight slot into "nobody free" even though
+        # the person was there for 4 of the 5 days.
+        leave = [Leave("Irene", START + timedelta(days=4), START + timedelta(days=4), "Holiday")]  # Friday only
+        inp, roster, weeks = build(leave=leave)
+        week0_people = [p for a in weeks[0]["assignments"] if a["duty"] in DUTY_SLOTS for p in a["people"]]
+        self.assertIn("Irene", week0_people)
+        self.assertEqual(weeks[0]["unfilled"], [])
+
     def test_someone_on_holiday_all_four_weeks_leaves_duties_unfilled(self):
         leave = [
             Leave(n, START, START + timedelta(days=27), "Holiday")

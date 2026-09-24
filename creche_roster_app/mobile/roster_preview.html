@@ -1448,16 +1448,22 @@
     });
     return pool;
   }
-  function presentAllWeek(inputs, name, days) {
+  // True if `name` is rostered for more than half of `days` - present
+  // enough of the week to meaningfully take a duty for it. A single day
+  // away shouldn't drop someone out of the whole week's duty rotation -
+  // only being away most or all of the week should.
+  function presentMostOfWeek(inputs, name, days) {
     var st = inputs.staff.filter(function (s) { return s.name === name; })[0];
     if (!st) return false;
+    var presentDays = 0;
     for (var i = 0; i < days.length; i++) {
       var d = days[i];
-      if (st.start_date && d < st.start_date) return false;
-      if (st.end_date && d > st.end_date) return false;
-      if (inputs.leave.some(function (lv) { return lv.name === name && lv.start <= d && (lv.end == null || d <= lv.end); })) return false;
+      if (st.start_date && d < st.start_date) continue;
+      if (st.end_date && d > st.end_date) continue;
+      if (inputs.leave.some(function (lv) { return lv.name === name && lv.start <= d && (lv.end == null || d <= lv.end); })) continue;
+      presentDays++;
     }
-    return true;
+    return presentDays * 2 > days.length;
   }
   function weeklySlot(roster, weekIndex, name) {
     var week = roster.weeks[weekIndex];
@@ -1481,7 +1487,7 @@
       var monday = addDays(inputs.settings.roster_start, wi * 7);
       var days = [];
       for (var i = 0; i < NDAYS; i++) days.push(addDays(monday, i));
-      var remaining = pool.filter(function (n) { return presentAllWeek(inputs, n, days); });
+      var remaining = pool.filter(function (n) { return presentMostOfWeek(inputs, n, days); });
       var slotOf = {};
       remaining.forEach(function (n) { slotOf[n] = weeklySlot(roster, wi, n); });
       var assignedByDuty = {};
@@ -1552,7 +1558,7 @@
       });
       FIXED_DUTIES.forEach(function (fd) {
         var duty = fd[0], names = fd[1];
-        var present = names.filter(function (n) { return presentAllWeek(inputs, n, days); });
+        var present = names.filter(function (n) { return presentMostOfWeek(inputs, n, days); });
         assignments.push({ duty: duty, people: present.length ? present : names });
       });
       weeksOut.push({ monday: monday, assignments: assignments, unfilled: unfilled });
@@ -1732,7 +1738,7 @@
     addDays: addDays,
     dutyPool: dutyPool,
     weeklySlot: weeklySlot,
-    presentAllWeek: presentAllWeek,
+    presentMostOfWeek: presentMostOfWeek,
     DUTY_SLOTS: DUTY_SLOTS,
     DUTY_ELIGIBLE_SLOTS: DUTY_ELIGIBLE_SLOTS,
   };
