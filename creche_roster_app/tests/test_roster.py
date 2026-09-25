@@ -463,6 +463,33 @@ class HardRules(unittest.TestCase):
             week1 = base_slot(r, 0, name)
             self.assertNotEqual(seeded, week1, f"{name} kept '{seeded}' from the seed into week 1")
 
+    def test_seeding_last_slot_alone_keeps_early_late_balanced_within_the_build(self):
+        # A manager's history seed only needs to cover "don't repeat what
+        # you just did" (that's entirely last_slot's job - see the test
+        # above); it should NOT also seed the cumulative history counter.
+        # Doing that once looked like the more complete seed, but every
+        # rotating pool member from a seeded slot then reads as already
+        # "owed" that slot's opposite for the rest of the *visible* build,
+        # skewing early/late toward whoever's seed slot wasn't early or
+        # late - some real people ended up with zero of a protected slot
+        # across all 4 displayed weeks even though a fair distribution was
+        # available. With only 2 extra opening and 2 extra closing seats a
+        # week, at most 8 of these 9 people can land on early at least
+        # once in 4 weeks (same for late) - so exactly one going without
+        # each is the mathematical floor, not a bug - but seeding history
+        # too made it worse than that floor.
+        seed_slot = {
+            "Hanny": "early", "Manuel": "mid1", "Irene": "late", "Deoshree": "early",
+            "Sandrine": "mid2", "Daniel": "mid1", "Arantza": "late", "David": "mid2",
+            "Usha": "late",
+        }
+        r = build_roster(inputs(weeks=4, last_slot=seed_slot))
+        self.assertEqual(r.breaches, [])
+        missing_early = [n for n in ROTATING if "early" not in {base_slot(r, wi, n) for wi in range(4)}]
+        missing_late = [n for n in ROTATING if "late" not in {base_slot(r, wi, n) for wi in range(4)}]
+        self.assertLessEqual(len(missing_early), 1, missing_early)
+        self.assertLessEqual(len(missing_late), 1, missing_late)
+
     def test_room_locked_out_of_half_the_protected_slots_still_gets_both(self):
         # ECEC 2's rotating members (David, Usha) share a room with Jason,
         # who's paired, not rotating - every week he claims one of early
