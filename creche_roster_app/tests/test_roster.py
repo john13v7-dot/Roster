@@ -3,6 +3,7 @@
 import shutil
 import tempfile
 import unittest
+from collections import Counter
 from datetime import date, time, timedelta
 from pathlib import Path
 
@@ -43,6 +44,14 @@ def slots(roster, wi, name):
 def kinds(roster, wi, name):
     w = roster.weeks[wi]
     return [w.cells[(name, d)].kind for d in w.days]
+
+
+def base_slot(roster, wi, name):
+    """The slot `name` works on most days of week `wi` - their weekly base
+    slot, same idea as duties.py's own _weekly_slot, for tests that care
+    about the week-to-week pattern rather than one specific day's cell."""
+    counts = Counter(s for s in slots(roster, wi, name) if s)
+    return max(counts, key=lambda sl: counts[sl]) if counts else None
 
 
 def texts(roster, wi, name):
@@ -417,6 +426,23 @@ class HardRules(unittest.TestCase):
             if n != "Irene" and texts(with_leave, 0, n) != texts(baseline, 0, n)
         ]
         self.assertLessEqual(len(changed), 1, changed)
+
+    def test_nobody_repeats_their_own_slot_from_the_week_before(self):
+        # Same-room clashes used to get cleaned up (_resolve_room_clashes)
+        # and mid1/mid2 got filled without ever weighing whether the result
+        # put someone straight back on the exact slot they'd just had -
+        # only a weak last-resort tie-break, easily overridden by an
+        # earlier-ranked key. With a fresh 9-person pool that stays fully
+        # present for 4 weeks, every week-to-week change should be a real
+        # one, for everybody, not just most of them.
+        r = build_roster(inputs(weeks=4))
+        self.assertEqual(r.breaches, [])
+        for name in ROTATING:
+            for wi in range(1, 4):
+                prev, cur = base_slot(r, wi - 1, name), base_slot(r, wi, name)
+                self.assertNotEqual(
+                    prev, cur, f"{name} kept '{cur}' from week {wi} into week {wi + 1}",
+                )
 
     def test_bounded_override_highlights_the_persons_own_cell(self):
         # A manager's own one-off manual adjustment (a bounded override -

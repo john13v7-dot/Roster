@@ -267,7 +267,8 @@ def _assign_weekly_base(
         claim(n, target)
         mid_counts[target] += 1
 
-    _resolve_room_clashes(result, room_of, hist)
+    _resolve_room_clashes(result, room_of, hist, last_slot)
+    _avoid_immediate_repeats(result, room_of, hist, last_slot)
     return result
 
 
@@ -383,7 +384,7 @@ def _patch_weekly_base(
             if new_room:
                 taken_by_room.setdefault(new_room, set()).add(target)
 
-    _resolve_room_clashes(result, room_of, hist)
+    _resolve_room_clashes(result, room_of, hist, last_slot)
     return result
 
 
@@ -400,17 +401,31 @@ def _room_clash_free(assignment: Dict[str, str], room_of: Dict[str, str]) -> boo
     return True
 
 
-def _resolve_room_clashes(result: Dict[str, str], room_of: Dict[str, str], hist: Dict[str, Counter]) -> None:
+def _resolve_room_clashes(
+    result: Dict[str, str],
+    room_of: Dict[str, str],
+    hist: Dict[str, Counter],
+    last_slot: Optional[Dict[str, str]] = None,
+) -> None:
     """Swap-based cleanup for whatever the least-done-first pass above
     couldn't avoid on its own - mainly a 3-person room whose members all
     land in the two flexible 8:00/8:30 slots the same week (only 2 slots
     for 3 people, so a clash there is arithmetically forced, not a bad
     pick). Trade one of the clashing pair with someone from a different
     room, in whichever direction - and with whichever swap partner -
-    actually clears it at the lowest fairness cost. A clash that can't be
-    resolved this way (every candidate swap partner would just create a
-    different clash) is left for the daily check to report, same as any
-    other hard-rule shortfall that's genuinely unavoidable that week."""
+    actually clears it at the lowest fairness cost, same as the daily
+    repair pass's own W_RECENT nudge away from a straight repeat of
+    whoever's own last-week slot. Candidates are tried in a fixed,
+    alphabetical order rather than whatever order they happen to sit in
+    `result` - the earlier pass always claims opening/closing seats
+    before the flexible ones, so iterating in that same order would let
+    whoever got picked first for opening or closing also win every tied
+    swap, quietly undoing the fairness that pick was for. A clash that
+    can't be resolved this way (every candidate swap partner would just
+    create a different clash) is left for the daily check to report,
+    same as any other hard-rule shortfall that's genuinely unavoidable
+    that week."""
+    last_slot = last_slot or {}
     for _ in range(20):
         clash = None
         seen: Dict[Tuple[str, str], str] = {}
@@ -429,7 +444,8 @@ def _resolve_room_clashes(result: Dict[str, str], room_of: Dict[str, str], hist:
         best: Optional[Tuple[float, str, str, str, str]] = None
         for mover in clash:
             cur = result[mover]
-            for other, oslot in result.items():
+            for other in sorted(result):
+                oslot = result[other]
                 if other == mover or oslot == cur or room_of.get(other) == room_of.get(mover):
                     continue
                 trial = dict(result)
@@ -437,12 +453,65 @@ def _resolve_room_clashes(result: Dict[str, str], room_of: Dict[str, str], hist:
                 if not _room_clash_free(trial, room_of):
                     continue
                 cost = hist[mover][oslot] + hist[other][cur]
+                if last_slot.get(mover) == oslot:
+                    cost += W_RECENT
+                if last_slot.get(other) == cur:
+                    cost += W_RECENT
                 if best is None or cost < best[0]:
                     best = (cost, mover, other, oslot, cur)
         if best is None:
             return  # genuinely unavoidable this week
         _, mover, other, oslot, cur = best
         result[mover], result[other] = oslot, cur
+
+
+def _avoid_immediate_repeats(
+    result: Dict[str, str],
+    room_of: Dict[str, str],
+    hist: Dict[str, Counter],
+    last_slot: Dict[str, str],
+) -> None:
+    """A last pass on top of `_resolve_room_clashes`: cover and same-room
+    clashes are settled by then, but the least-done-first pass above only
+    ever treats a straight repeat of someone's own last-week slot as a
+    weak, final tie-break - not strong enough to stop it when the rest of
+    the ranking already points at the same person again (e.g. two people
+    tied on everything else since the pool was fresh a few weeks back).
+    So make a second, explicit pass just for that: whoever's still sitting
+    on exactly their own last-week slot trades with whoever it costs least
+    to trade with - as long as that swap doesn't just hand the same
+    problem to the person on the other end of it, and doesn't introduce a
+    same-room clash the earlier pass had already avoided. Purely a swap
+    between two already-assigned people, never a new pick, so it can't
+    change how many people land on any slot - opening/closing cover,
+    already met before this runs, stays exactly as met afterwards. Some
+    weeks nobody can be freed this way (their only clash-free, non-repeat
+    swap partners are already claimed) - left as it is, same as any other
+    genuinely unavoidable shortfall."""
+    stuck = set()
+    for _ in range(len(result)):
+        n = next((n for n in sorted(result) if n not in stuck and last_slot.get(n) == result[n]), None)
+        if n is None:
+            return
+        cur = result[n]
+        best: Optional[Tuple[float, str, str]] = None
+        for other in sorted(result):
+            oslot = result[other]
+            if other == n or oslot == cur or last_slot.get(other) == cur:
+                continue
+            trial = dict(result)
+            trial[n], trial[other] = oslot, cur
+            if not _room_clash_free(trial, room_of):
+                continue
+            cost = hist[n][oslot] + hist[other][cur]
+            if best is None or cost < best[0]:
+                best = (cost, other, oslot)
+        if best is None:
+            stuck.add(n)
+            continue
+        _, other, oslot = best
+        result[other] = cur
+        result[n] = oslot
 
 
 def _choose_pair(

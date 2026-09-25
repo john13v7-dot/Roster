@@ -297,7 +297,8 @@
       midCounts[target] += 1;
     });
 
-    resolveRoomClashes(result, roomOf, hist);
+    resolveRoomClashes(result, roomOf, hist, lastSlot);
+    avoidImmediateRepeats(result, roomOf, hist, lastSlot);
     return result;
   }
 
@@ -383,7 +384,7 @@
       }
     });
 
-    resolveRoomClashes(result, roomOf, hist);
+    resolveRoomClashes(result, roomOf, hist, lastSlot);
     return result;
   }
 
@@ -400,7 +401,8 @@
     return true;
   }
 
-  function resolveRoomClashes(result, roomOf, hist) {
+  function resolveRoomClashes(result, roomOf, hist, lastSlot) {
+    lastSlot = lastSlot || {};
     for (var iter = 0; iter < 20; iter++) {
       var clash = null;
       var seen = {};
@@ -417,19 +419,59 @@
       var best = null;
       clash.forEach(function (mover) {
         var cur = result[mover];
-        for (var other in result) {
+        // Fixed, alphabetical order rather than whatever order `result`
+        // happens to hold - opening/closing seats are always claimed
+        // before the flexible ones, so iterating in that order would let
+        // whoever got picked first for opening or closing also win every
+        // tied swap, quietly undoing the fairness that pick was for.
+        Object.keys(result).sort().forEach(function (other) {
           var oslot = result[other];
-          if (other === mover || oslot === cur || roomOf[other] === roomOf[mover]) continue;
+          if (other === mover || oslot === cur || roomOf[other] === roomOf[mover]) return;
           var trial = Object.assign({}, result);
           trial[mover] = oslot; trial[other] = cur;
-          if (!roomClashFree(trial, roomOf)) continue;
+          if (!roomClashFree(trial, roomOf)) return;
           var c = g(hist[mover], oslot) + g(hist[other], cur);
+          if (lastSlot[mover] === oslot) c += W_RECENT;
+          if (lastSlot[other] === cur) c += W_RECENT;
           if (best === null || c < best[0]) best = [c, mover, other, oslot, cur];
-        }
+        });
       });
       if (best === null) return;
       result[best[1]] = best[3];
       result[best[2]] = best[4];
+    }
+  }
+
+  // A last pass on top of resolveRoomClashes: cover and same-room clashes
+  // are settled by then, but the least-done-first pass only ever treats a
+  // straight repeat of someone's own last-week slot as a weak, final
+  // tie-break - not strong enough when the rest of the ranking already
+  // points at the same person again. So make a second, explicit pass just
+  // for that: whoever's still sitting on exactly their own last-week slot
+  // trades with whoever it costs least to trade with, as long as that
+  // doesn't just hand the same problem to the other end of the swap or
+  // introduce a same-room clash. Purely a swap between two already-
+  // assigned people, so it can't change how many people land on any slot.
+  function avoidImmediateRepeats(result, roomOf, hist, lastSlot) {
+    var names = Object.keys(result).sort();
+    var stuck = {};
+    for (var iter = 0; iter < names.length; iter++) {
+      var n = names.find(function (x) { return !stuck[x] && lastSlot[x] === result[x]; });
+      if (!n) return;
+      var cur = result[n];
+      var best = null;
+      names.slice().sort().forEach(function (other) {
+        var oslot = result[other];
+        if (other === n || oslot === cur || lastSlot[other] === cur) return;
+        var trial = Object.assign({}, result);
+        trial[n] = oslot; trial[other] = cur;
+        if (!roomClashFree(trial, roomOf)) return;
+        var c = g(hist[n], oslot) + g(hist[other], cur);
+        if (best === null || c < best[0]) best = [c, other, oslot];
+      });
+      if (best === null) { stuck[n] = true; continue; }
+      result[best[1]] = cur;
+      result[n] = best[2];
     }
   }
 
