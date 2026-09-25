@@ -162,6 +162,7 @@ def _assign_weekly_base(
     week_index: int,
     room_of: Optional[Dict[str, str]] = None,
     taken_by_room: Optional[Dict[str, set]] = None,
+    total_weeks: int = 1,
 ) -> Dict[str, str]:
     """Each rotating member's weekly base slot for one floor.
 
@@ -197,14 +198,33 @@ def _assign_weekly_base(
     let the same person lose every tie, every week, for as long as the
     ties keep recurring - precisely how one person can end up with zero
     opens or closes over an otherwise well-balanced run.
+
+    That rotation cycles through the whole pool once every `len(members)`
+    weeks - fine for a build that long, but a short build (4 weeks, say,
+    against a 9-person pool) never completes even one full lap: whoever's
+    near the end of the staff list only ever sees the least-favoured end
+    of the rotation, build after build, the same as a fixed tie-break
+    would. `total_weeks` (the build's own length) sets a *second*,
+    shorter lap on top of the full one - short enough to actually
+    complete within the build - so everyone gets a real turn at the front
+    of a tie before the build's over; the full-length lap only settles
+    what's still tied after that.
     """
     remaining = list(members)
     result: Dict[str, str] = {}
     room_of = room_of or {}
     taken_by_room: Dict[str, set] = taken_by_room if taken_by_room is not None else {}
+    # Snapshot before this pool claims anything of its own, so the later
+    # swap passes can still tell "a non-rotating room-mate already has
+    # this slot" apart from "one of our own picks already has it" - the
+    # latter is exactly what those passes are trading between.
+    external_taken: Dict[str, set] = {r: set(slots) for r, slots in taken_by_room.items()}
 
-    def priority(n: str) -> int:
-        return (members.index(n) - week_index) % len(members)
+    def priority(n: str) -> Tuple[int, int]:
+        idx = members.index(n)
+        short = (idx - week_index) % max(1, min(total_weeks, len(members)))
+        full = (idx - week_index) % len(members)
+        return (short, full)
 
     def clashes(n: str, slot: str) -> bool:
         room = room_of.get(n)
@@ -267,8 +287,8 @@ def _assign_weekly_base(
         claim(n, target)
         mid_counts[target] += 1
 
-    _resolve_room_clashes(result, room_of, hist, last_slot)
-    _avoid_immediate_repeats(result, room_of, hist, last_slot)
+    _resolve_room_clashes(result, room_of, hist, last_slot, external_taken)
+    _avoid_immediate_repeats(result, room_of, hist, last_slot, external_taken)
     return result
 
 
@@ -283,6 +303,7 @@ def _patch_weekly_base(
     week_index: int,
     room_of: Optional[Dict[str, str]] = None,
     taken_by_room: Optional[Dict[str, set]] = None,
+    total_weeks: int = 1,
 ) -> Dict[str, str]:
     """Start from what this floor's rotation would look like at full
     strength (`ideal_base` - everyone's slot as if this week's temporary
@@ -302,7 +323,8 @@ def _patch_weekly_base(
     cascade. Mirrors the daily repair pass's own donor rule: a mid1/mid2
     sitter is asked before anyone already covering the other protected
     slot, least fairness cost first, room-clash avoided unless every
-    remaining donor would cause one.
+    remaining donor would cause one, and any remaining tie broken the same
+    short-build-aware way as `_assign_weekly_base` (see its docstring).
     """
     room_of = room_of or {}
     taken_by_room = {r: set(slots) for r, slots in (taken_by_room or {}).items()}
@@ -372,6 +394,7 @@ def _patch_weekly_base(
                     hist[n][target],
                     sum(hist[n].values()),
                     1 if last_slot.get(n) == target else 0,
+                    (members.index(n) - week_index) % max(1, min(total_weeks, len(members))),
                     (members.index(n) - week_index) % len(members),
                 ),
             )
@@ -384,12 +407,27 @@ def _patch_weekly_base(
             if new_room:
                 taken_by_room.setdefault(new_room, set()).add(target)
 
-    _resolve_room_clashes(result, room_of, hist, last_slot)
+    _resolve_room_clashes(result, room_of, hist, last_slot, external_taken)
     return result
 
 
-def _room_clash_free(assignment: Dict[str, str], room_of: Dict[str, str]) -> bool:
-    seen: Dict[Tuple[str, str], str] = {}
+def _room_clash_free(
+    assignment: Dict[str, str],
+    room_of: Dict[str, str],
+    external_taken: Optional[Dict[str, set]] = None,
+) -> bool:
+    """True if nobody in `assignment` shares a room+slot with another
+    member of `assignment`, NOR with a room's `external_taken` slots -
+    whoever holds those (fixed staff, the paired pair, a manual override)
+    isn't a rotating member of this pool and so never appears in
+    `assignment` itself; skipping that check would let a swap land a
+    rotating person on the exact slot their non-rotating room-mate (e.g.
+    Jason) already has, the same hard rule this function exists to
+    enforce."""
+    seen: Dict[Tuple[str, str], Optional[str]] = {}
+    for room, slots in (external_taken or {}).items():
+        for slot in slots:
+            seen[(room, slot)] = None
     for n, slot in assignment.items():
         room = room_of.get(n)
         if not room:
@@ -406,6 +444,7 @@ def _resolve_room_clashes(
     room_of: Dict[str, str],
     hist: Dict[str, Counter],
     last_slot: Optional[Dict[str, str]] = None,
+    external_taken: Optional[Dict[str, set]] = None,
 ) -> None:
     """Swap-based cleanup for whatever the least-done-first pass above
     couldn't avoid on its own - mainly a 3-person room whose members all
@@ -420,11 +459,16 @@ def _resolve_room_clashes(
     `result` - the earlier pass always claims opening/closing seats
     before the flexible ones, so iterating in that same order would let
     whoever got picked first for opening or closing also win every tied
-    swap, quietly undoing the fairness that pick was for. A clash that
-    can't be resolved this way (every candidate swap partner would just
-    create a different clash) is left for the daily check to report,
-    same as any other hard-rule shortfall that's genuinely unavoidable
-    that week."""
+    swap, quietly undoing the fairness that pick was for. `external_taken`
+    (a room's slots already held by someone outside this rotating pool -
+    fixed staff, the paired pair, a manual override) is checked on every
+    trial swap too, same as a clash against another rotating member - a
+    swap that's clash-free within the pool can still hand someone the
+    exact slot their non-rotating room-mate already has, which is just as
+    much a violation of the same-room rule. A clash that can't be
+    resolved this way (every candidate swap partner would just create a
+    different clash) is left for the daily check to report, same as any
+    other hard-rule shortfall that's genuinely unavoidable that week."""
     last_slot = last_slot or {}
     for _ in range(20):
         clash = None
@@ -450,7 +494,7 @@ def _resolve_room_clashes(
                     continue
                 trial = dict(result)
                 trial[mover], trial[other] = oslot, cur
-                if not _room_clash_free(trial, room_of):
+                if not _room_clash_free(trial, room_of, external_taken):
                     continue
                 cost = hist[mover][oslot] + hist[other][cur]
                 if last_slot.get(mover) == oslot:
@@ -470,6 +514,7 @@ def _avoid_immediate_repeats(
     room_of: Dict[str, str],
     hist: Dict[str, Counter],
     last_slot: Dict[str, str],
+    external_taken: Optional[Dict[str, set]] = None,
 ) -> None:
     """A last pass on top of `_resolve_room_clashes`: cover and same-room
     clashes are settled by then, but the least-done-first pass above only
@@ -481,13 +526,15 @@ def _avoid_immediate_repeats(
     on exactly their own last-week slot trades with whoever it costs least
     to trade with - as long as that swap doesn't just hand the same
     problem to the person on the other end of it, and doesn't introduce a
-    same-room clash the earlier pass had already avoided. Purely a swap
-    between two already-assigned people, never a new pick, so it can't
-    change how many people land on any slot - opening/closing cover,
-    already met before this runs, stays exactly as met afterwards. Some
-    weeks nobody can be freed this way (their only clash-free, non-repeat
-    swap partners are already claimed) - left as it is, same as any other
-    genuinely unavoidable shortfall."""
+    same-room clash (against another rotating member, or - `external_taken`
+    - a non-rotating one, e.g. the paired staff, who never appears in
+    `result` itself to be caught by an internal-only check) the earlier
+    pass had already avoided. Purely a swap between two already-assigned
+    people, never a new pick, so it can't change how many people land on
+    any slot - opening/closing cover, already met before this runs, stays
+    exactly as met afterwards. Some weeks nobody can be freed this way
+    (their only clash-free, non-repeat swap partners are already claimed)
+    - left as it is, same as any other genuinely unavoidable shortfall."""
     stuck = set()
     for _ in range(len(result)):
         n = next((n for n in sorted(result) if n not in stuck and last_slot.get(n) == result[n]), None)
@@ -501,7 +548,7 @@ def _avoid_immediate_repeats(
                 continue
             trial = dict(result)
             trial[n], trial[other] = oslot, cur
-            if not _room_clash_free(trial, room_of):
+            if not _room_clash_free(trial, room_of, external_taken):
                 continue
             cost = hist[n][oslot] + hist[other][cur]
             if best is None or cost < best[0]:
@@ -741,14 +788,14 @@ def build_roster(inputs: Inputs) -> Roster:
                         base.update(
                             _assign_weekly_base(
                                 members, pre, s.min_open[floor], min_close, hist, last_slot, wi,
-                                room_of, taken_by_room,
+                                room_of, taken_by_room, s.weeks,
                             )
                         )
                     else:
                         base.update(
                             _patch_weekly_base(
                                 members, ideal_base, pre, s.min_open[floor], min_close, hist, last_slot, wi,
-                                room_of, taken_by_room,
+                                room_of, taken_by_room, s.weeks,
                             )
                         )
             return base

@@ -444,6 +444,25 @@ class HardRules(unittest.TestCase):
                     prev, cur, f"{name} kept '{cur}' from week {wi} into week {wi + 1}",
                 )
 
+    def test_room_locked_out_of_half_the_protected_slots_still_gets_both(self):
+        # ECEC 2's rotating members (David, Usha) share a room with Jason,
+        # who's paired, not rotating - every week he claims one of early
+        # or late outright, so whichever of the two it isn't is the only
+        # protected seat David/Usha can even compete for that week. The
+        # old week-index-mod-pool-size tie-break only ever favoured
+        # whoever's early in the staff list within a build this short
+        # (4 weeks against a 9-person pool never completes one lap), so
+        # David and Usha - both near the end of it - lost that tie-break
+        # every single week and could go the whole build without ever
+        # landing on early or late at all. A fair build gives a
+        # structurally-squeezed person like Usha at least one of each
+        # over 4 weeks, same as anyone else.
+        r = build_roster(inputs(weeks=4))
+        self.assertEqual(r.breaches, [])
+        usha_slots = {base_slot(r, wi, "Usha") for wi in range(4)}
+        self.assertIn("early", usha_slots)
+        self.assertIn("late", usha_slots)
+
     def test_bounded_override_highlights_the_persons_own_cell(self):
         # A manager's own one-off manual adjustment (a bounded override -
         # it has an end date) should highlight the adjusted person's own
@@ -602,6 +621,19 @@ class RoomRule(unittest.TestCase):
     def test_no_clash_when_a_roommate_is_on_leave(self):
         leave = [Leave("Irene", START + timedelta(days=7), START + timedelta(days=25), "Holiday")]
         r = build_roster(inputs(weeks=12, leave=leave))
+        self.assertEqual(r.breaches, [])
+        self.assertEqual(_room_clashes(r, ROOMS), [])
+
+    def test_repeat_avoiding_swap_never_lands_on_a_pinned_roommates_slot(self):
+        # _avoid_immediate_repeats trades two rotating people's slots to
+        # stop one of them repeating last week's - but David and Usha's
+        # own room-mate, Jason, is paired (never in that rotating pool at
+        # all), so a swap validated only against the pool's own picks
+        # could still hand one of them the exact slot Jason already has.
+        # A fresh, empty-history build (weeks=4) is exactly where ties are
+        # common enough for that swap to actually fire.
+        leave = [Leave("Manuel", START, START + timedelta(days=4), "Holiday")]  # all of week 1
+        r = build_roster(inputs(weeks=4, leave=leave))
         self.assertEqual(r.breaches, [])
         self.assertEqual(_room_clashes(r, ROOMS), [])
 

@@ -234,15 +234,31 @@
     return c;
   }
 
-  function assignWeeklyBase(members, preCounts, needOpen, needClose, hist, lastSlot, weekIndex, roomOf, takenByRoom) {
+  function assignWeeklyBase(members, preCounts, needOpen, needClose, hist, lastSlot, weekIndex, roomOf, takenByRoom, totalWeeks) {
     var remaining = members.slice();
     var result = {};
     roomOf = roomOf || {};
     takenByRoom = takenByRoom || {};
+    // Snapshot before this pool claims anything of its own, so the later
+    // swap passes can still tell "a non-rotating room-mate already has
+    // this slot" apart from "one of our own picks already has it".
+    var externalTaken = {};
+    for (var re0 in takenByRoom) externalTaken[re0] = new Set(takenByRoom[re0]);
 
+    // The rotation cycles through the whole pool once every members.length
+    // weeks - fine for a build that long, but a short build never
+    // completes even one full lap, so whoever's near the end of the staff
+    // list only ever sees the least-favoured end of it. `totalWeeks` (the
+    // build's own length) sets a second, shorter lap on top of the full
+    // one so everyone gets a real turn at the front of a tie before the
+    // build's over; the full-length lap only settles what's still tied
+    // after that.
     function priority(n) {
       var idx = members.indexOf(n);
-      return (((idx - weekIndex) % members.length) + members.length) % members.length;
+      var shortLen = Math.max(1, Math.min(totalWeeks || 1, members.length));
+      var short = (((idx - weekIndex) % shortLen) + shortLen) % shortLen;
+      var full = (((idx - weekIndex) % members.length) + members.length) % members.length;
+      return [short, full];
     }
     function clashes(n, slot) {
       var room = roomOf[n];
@@ -264,12 +280,13 @@
         var safe = remaining.filter(function (n) { return !clashes(n, slot); });
         var pool = safe.length ? safe : remaining;
         var n = minByKey(pool, function (n) {
+          var p = priority(n);
           return [
             g(hist[n], 'early') + g(hist[n], 'late'),
             g(hist[n], slot),
             sumAll(hist[n]),
             lastSlot[n] === slot ? 1 : 0,
-            priority(n),
+            p[0], p[1],
           ];
         });
         remaining = remaining.filter(function (x) { return x !== n; });
@@ -284,7 +301,8 @@
     take('late', lateK);
 
     var order = sortByKey(remaining, function (n) {
-      return [g(hist[n], 'mid1') + g(hist[n], 'mid2'), sumAll(hist[n]), priority(n)];
+      var p = priority(n);
+      return [g(hist[n], 'mid1') + g(hist[n], 'mid2'), sumAll(hist[n]), p[0], p[1]];
     });
     var midCounts = { mid1: 0, mid2: 0 };
     order.forEach(function (n) {
@@ -297,8 +315,8 @@
       midCounts[target] += 1;
     });
 
-    resolveRoomClashes(result, roomOf, hist, lastSlot);
-    avoidImmediateRepeats(result, roomOf, hist, lastSlot);
+    resolveRoomClashes(result, roomOf, hist, lastSlot, externalTaken);
+    avoidImmediateRepeats(result, roomOf, hist, lastSlot, externalTaken);
     return result;
   }
 
@@ -308,7 +326,7 @@
   // necessary to keep opening/closing cover met for who's really here.
   // See _patch_weekly_base's docstring in engine.py for the full
   // rationale - this is a straight port.
-  function patchWeeklyBase(members, idealBase, preCounts, needOpen, needClose, hist, lastSlot, weekIndex, roomOf, takenByRoom) {
+  function patchWeeklyBase(members, idealBase, preCounts, needOpen, needClose, hist, lastSlot, weekIndex, roomOf, takenByRoom, totalWeeks) {
     roomOf = roomOf || {};
     var takenCopy = {};
     for (var r0 in (takenByRoom || {})) takenCopy[r0] = new Set(takenByRoom[r0]);
@@ -363,13 +381,17 @@
         });
         var pool = safe.length ? safe : donors;
         var n = minByKey(pool, function (n) {
+          var idx = members.indexOf(n);
+          var shortLen = Math.max(1, Math.min(totalWeeks || 1, members.length));
+          var pShort = (((idx - weekIndex) % shortLen) + shortLen) % shortLen;
+          var pFull = (((idx - weekIndex) % members.length) + members.length) % members.length;
           return [
             ['mid1', 'mid2'].indexOf(result[n]) !== -1 ? 0 : 1,
             g(hist[n], 'early') + g(hist[n], 'late'),
             g(hist[n], target),
             sumAll(hist[n]),
             lastSlot[n] === target ? 1 : 0,
-            (((members.indexOf(n) - weekIndex) % members.length) + members.length) % members.length,
+            pShort, pFull,
           ];
         });
         var old = result[n];
@@ -384,12 +406,17 @@
       }
     });
 
-    resolveRoomClashes(result, roomOf, hist, lastSlot);
+    resolveRoomClashes(result, roomOf, hist, lastSlot, externalTaken);
     return result;
   }
 
-  function roomClashFree(assignment, roomOf) {
+  function roomClashFree(assignment, roomOf, externalTaken) {
     var seen = new Set();
+    if (externalTaken) {
+      for (var room in externalTaken) {
+        externalTaken[room].forEach(function (slot) { seen.add(room + '|' + slot); });
+      }
+    }
     for (var n in assignment) {
       var slot = assignment[n];
       var room = roomOf[n];
@@ -401,7 +428,7 @@
     return true;
   }
 
-  function resolveRoomClashes(result, roomOf, hist, lastSlot) {
+  function resolveRoomClashes(result, roomOf, hist, lastSlot, externalTaken) {
     lastSlot = lastSlot || {};
     for (var iter = 0; iter < 20; iter++) {
       var clash = null;
@@ -429,7 +456,11 @@
           if (other === mover || oslot === cur || roomOf[other] === roomOf[mover]) return;
           var trial = Object.assign({}, result);
           trial[mover] = oslot; trial[other] = cur;
-          if (!roomClashFree(trial, roomOf)) return;
+          // externalTaken catches a swap that would hand `mover` (or
+          // `other`) the exact slot a non-rotating room-mate (e.g. the
+          // paired staff) already has - they never appear in `result`
+          // itself, so an internal-only clash check would miss it.
+          if (!roomClashFree(trial, roomOf, externalTaken)) return;
           var c = g(hist[mover], oslot) + g(hist[other], cur);
           if (lastSlot[mover] === oslot) c += W_RECENT;
           if (lastSlot[other] === cur) c += W_RECENT;
@@ -452,7 +483,7 @@
   // doesn't just hand the same problem to the other end of the swap or
   // introduce a same-room clash. Purely a swap between two already-
   // assigned people, so it can't change how many people land on any slot.
-  function avoidImmediateRepeats(result, roomOf, hist, lastSlot) {
+  function avoidImmediateRepeats(result, roomOf, hist, lastSlot, externalTaken) {
     var names = Object.keys(result).sort();
     var stuck = {};
     for (var iter = 0; iter < names.length; iter++) {
@@ -465,7 +496,7 @@
         if (other === n || oslot === cur || lastSlot[other] === cur) return;
         var trial = Object.assign({}, result);
         trial[n] = oslot; trial[other] = cur;
-        if (!roomClashFree(trial, roomOf)) return;
+        if (!roomClashFree(trial, roomOf, externalTaken)) return;
         var c = g(hist[n], oslot) + g(hist[other], cur);
         if (best === null || c < best[0]) best = [c, other, oslot];
       });
@@ -858,9 +889,9 @@
               if (r) { if (!takenByRoom[r]) takenByRoom[r] = new Set(); takenByRoom[r].add(base[nb]); }
             }
             if (idealBase === undefined) {
-              Object.assign(base, assignWeeklyBase(members, pre, s.min_open[floor], minClose, hist, lastSlot, wi, roomOf, takenByRoom));
+              Object.assign(base, assignWeeklyBase(members, pre, s.min_open[floor], minClose, hist, lastSlot, wi, roomOf, takenByRoom, s.weeks));
             } else {
-              Object.assign(base, patchWeeklyBase(members, idealBase, pre, s.min_open[floor], minClose, hist, lastSlot, wi, roomOf, takenByRoom));
+              Object.assign(base, patchWeeklyBase(members, idealBase, pre, s.min_open[floor], minClose, hist, lastSlot, wi, roomOf, takenByRoom, s.weeks));
             }
           }
         });
