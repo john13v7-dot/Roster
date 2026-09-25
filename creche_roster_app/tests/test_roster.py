@@ -444,6 +444,25 @@ class HardRules(unittest.TestCase):
                     prev, cur, f"{name} kept '{cur}' from week {wi} into week {wi + 1}",
                 )
 
+    def test_seeded_last_slot_stops_week_one_repeating_it_too(self):
+        # inputs.history/last_slot aren't only carried forward inside a
+        # build - a manager can seed them from what the team actually just
+        # finished working (the paper roster for the week right before
+        # this build's own start), so week 1 gets the same "don't repeat
+        # what you just did" treatment every later week already gets from
+        # its own predecessor.
+        seed_slot = {
+            "Hanny": "early", "Manuel": "mid1", "Irene": "late", "Deoshree": "early",
+            "Sandrine": "mid2", "Daniel": "mid1", "Arantza": "late", "David": "mid2",
+            "Usha": "late",
+        }
+        history = {n: {sl: 5} for n, sl in seed_slot.items()}
+        r = build_roster(inputs(weeks=4, history=history, last_slot=seed_slot))
+        self.assertEqual(r.breaches, [])
+        for name, seeded in seed_slot.items():
+            week1 = base_slot(r, 0, name)
+            self.assertNotEqual(seeded, week1, f"{name} kept '{seeded}' from the seed into week 1")
+
     def test_room_locked_out_of_half_the_protected_slots_still_gets_both(self):
         # ECEC 2's rotating members (David, Usha) share a room with Jason,
         # who's paired, not rotating - every week he claims one of early

@@ -1586,15 +1586,21 @@
       var pickOrder = DUTY_SLOTS.slice(offset).concat(DUTY_SLOTS.slice(0, offset));
 
       // Pass 0: the manager's manual picks for this week, honoured only
-      // when the person's actually working that week and the duty still
-      // matches the shift they're actually on now - a pick that's gone
-      // stale (their shift changed since) is dropped silently and falls
-      // back to the normal fair pick below, rather than forcing a
-      // mismatch through or leaving the build broken.
+      // when the person's actually working that week and they're there
+      // long enough to actually do it - the same "finishes at least as
+      // late as the duty needs" standard Pass 2's own fallback uses
+      // below, not the narrower ideal-match set Pass 1 reaches for first.
+      // A manual pick is a deliberate choice, not a fairness ranking, so
+      // it only needs to be physically possible, same as the automatic
+      // fallback already allows; a pick that's gone properly stale (they
+      // now finish before the duty could even start) is dropped silently
+      // and falls back to the normal fair pick below, rather than
+      // forcing a mismatch through or leaving the build broken.
       (inputs.duty_overrides || []).forEach(function (ov) {
         if (ov.week !== monday || DUTY_SLOTS.indexOf(ov.duty) === -1) return;
         if (assignedByDuty[ov.duty] || remaining.indexOf(ov.name) === -1) return;
-        if (!DUTY_ELIGIBLE_SLOTS[ov.duty].has(slotOf[ov.name])) return;
+        var ovSlot = slotOf[ov.name];
+        if (!ovSlot || SLOTS.indexOf(ovSlot) < SLOTS.indexOf(DUTY_MIN_SLOT[ov.duty])) return;
         remaining = remaining.filter(function (x) { return x !== ov.name; });
         history[ov.name][ov.duty] = (history[ov.name][ov.duty] || 0) + 1;
         assignedByDuty[ov.duty] = ov.name;
@@ -1758,9 +1764,15 @@
   }
 
   // ---------------------------------------------------------------- top-level build + diff
-  function build(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs) {
+  // `historySeed`/`lastSlotSeed` default to empty - each build's 4 weeks
+  // balanced fairly among themselves, matching the app's own Fairness
+  // screen - but a manager can hand in what the team actually just
+  // finished working (the paper roster from the week right before this
+  // build's own start) so week 1 doesn't blindly repeat it. Same shape as
+  // Inputs.history/last_slot: {name: {slot: count}} and {name: slot}.
+  function build(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed) {
     var settings = buildSettings(rosterStartIso);
-    var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, {}, {}, dutyOverrideDocs);
+    var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs);
     var roster = buildRoster(inputs);
     var dutyWeeks = buildDutyRoster(inputs, roster);
     var summary = summaryJson(inputs, roster);
@@ -2286,16 +2298,26 @@
 
   var db = null;
   var staffDocs = [], leaveDocs = [], transferDocs = [], changeLogDocs = [], dutyOverrideDocs = [];
+  // The team's own fairness state as of right before this build's roster
+  // window starts (e.g. the paper roster for the week just before it) -
+  // {history: {name: {slot: count}}, lastSlot: {name: slot}}, from the
+  // settings/startingHistory doc. Empty until that doc's read, same as
+  // any other collection - a build's own 4 weeks stay balanced among
+  // themselves either way, this just stops week 1 blindly repeating
+  // whatever the team was actually just doing.
+  var startingHistoryDoc = null;
   var logNoteTarget = null;
 
   // ---------- instant client-side rebuild (no waiting on Claude) ----------
   var lastBuildOut = null; // {inputs, roster, dutyWeeks, summary} from the last successful build
-  var staffLoaded = false, leaveLoaded = false, transferLoaded = false, dutyOverrideLoaded = false;
+  var staffLoaded = false, leaveLoaded = false, transferLoaded = false, dutyOverrideLoaded = false, historyLoaded = false;
   var buildErrorEl = $('buildError');
 
   function computeBuild(){
     var rosterStart = rosterStartAnchor || RosterEngine.mondayOfWeek(todayISO());
-    return RosterEngine.build(staffDocs, leaveDocs, transferDocs, rosterStart, dutyOverrideDocs);
+    var historySeed = (startingHistoryDoc && startingHistoryDoc.history) || {};
+    var lastSlotSeed = (startingHistoryDoc && startingHistoryDoc.lastSlot) || {};
+    return RosterEngine.build(staffDocs, leaveDocs, transferDocs, rosterStart, dutyOverrideDocs, historySeed, lastSlotSeed);
   }
   var lastBuildErrorMessage = null;
   function applyBuild(out){
@@ -2314,7 +2336,7 @@
     buildErrorEl.style.display = '';
   }
   function recompute(){
-    if(!(staffLoaded && leaveLoaded && transferLoaded && dutyOverrideLoaded)) return null;
+    if(!(staffLoaded && leaveLoaded && transferLoaded && dutyOverrideLoaded && historyLoaded)) return null;
     try{
       var out = computeBuild();
       applyBuild(out);
@@ -2592,6 +2614,12 @@
       renderAdjustList();
       recompute();
     });
+    db.collection('settings').onSnapshot(function(snap){
+      var doc = snap.docs.find(function(d){ return d.id === 'startingHistory'; });
+      startingHistoryDoc = doc ? doc.data() : null;
+      historyLoaded = true;
+      recompute();
+    }, function(){ historyLoaded = true; recompute(); });
     db.collection('changelog').orderBy('createdAt', 'desc').limit(20).onSnapshot(function(snap){
       changeLogDocs = snap.docs.map(function(d){ return Object.assign({}, d.data() || {}, { _id: d.id }); });
       renderChangeLog(changeLogDocs);

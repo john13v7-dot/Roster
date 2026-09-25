@@ -1143,15 +1143,21 @@
       var pickOrder = DUTY_SLOTS.slice(offset).concat(DUTY_SLOTS.slice(0, offset));
 
       // Pass 0: the manager's manual picks for this week, honoured only
-      // when the person's actually working that week and the duty still
-      // matches the shift they're actually on now - a pick that's gone
-      // stale (their shift changed since) is dropped silently and falls
-      // back to the normal fair pick below, rather than forcing a
-      // mismatch through or leaving the build broken.
+      // when the person's actually working that week and they're there
+      // long enough to actually do it - the same "finishes at least as
+      // late as the duty needs" standard Pass 2's own fallback uses
+      // below, not the narrower ideal-match set Pass 1 reaches for first.
+      // A manual pick is a deliberate choice, not a fairness ranking, so
+      // it only needs to be physically possible, same as the automatic
+      // fallback already allows; a pick that's gone properly stale (they
+      // now finish before the duty could even start) is dropped silently
+      // and falls back to the normal fair pick below, rather than
+      // forcing a mismatch through or leaving the build broken.
       (inputs.duty_overrides || []).forEach(function (ov) {
         if (ov.week !== monday || DUTY_SLOTS.indexOf(ov.duty) === -1) return;
         if (assignedByDuty[ov.duty] || remaining.indexOf(ov.name) === -1) return;
-        if (!DUTY_ELIGIBLE_SLOTS[ov.duty].has(slotOf[ov.name])) return;
+        var ovSlot = slotOf[ov.name];
+        if (!ovSlot || SLOTS.indexOf(ovSlot) < SLOTS.indexOf(DUTY_MIN_SLOT[ov.duty])) return;
         remaining = remaining.filter(function (x) { return x !== ov.name; });
         history[ov.name][ov.duty] = (history[ov.name][ov.duty] || 0) + 1;
         assignedByDuty[ov.duty] = ov.name;
@@ -1315,9 +1321,15 @@
   }
 
   // ---------------------------------------------------------------- top-level build + diff
-  function build(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs) {
+  // `historySeed`/`lastSlotSeed` default to empty - each build's 4 weeks
+  // balanced fairly among themselves, matching the app's own Fairness
+  // screen - but a manager can hand in what the team actually just
+  // finished working (the paper roster from the week right before this
+  // build's own start) so week 1 doesn't blindly repeat it. Same shape as
+  // Inputs.history/last_slot: {name: {slot: count}} and {name: slot}.
+  function build(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed) {
     var settings = buildSettings(rosterStartIso);
-    var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, {}, {}, dutyOverrideDocs);
+    var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs);
     var roster = buildRoster(inputs);
     var dutyWeeks = buildDutyRoster(inputs, roster);
     var summary = summaryJson(inputs, roster);

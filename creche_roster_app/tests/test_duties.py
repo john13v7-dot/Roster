@@ -226,19 +226,33 @@ class DutyRoster(unittest.TestCase):
                 self.assertLessEqual(len(a["people"]), 1)
 
     def test_manual_duty_pick_is_dropped_silently_when_it_no_longer_matches(self):
-        # Hanny's week-1 slot is "late", but Staff Room needs mid1 - a
-        # stale or wrong pick like this should be ignored, not forced
-        # through or left to break the build.
-        over = [DutyOverride("Hanny", START, "Staff Room")]
+        # Manuel's week-1 slot is "early", but Kitchen needs at least mid2
+        # (DUTY_MIN_SLOT) - he'd have already left before it could even
+        # start, so a stale or wrong pick like this should be ignored, not
+        # forced through or left to break the build.
+        over = [DutyOverride("Manuel", START, "Kitchen")]
         inp, roster, weeks = build(duty_overrides=over)
         by_duty = {a["duty"]: a["people"] for a in weeks[0]["assignments"]}
-        self.assertNotIn("Hanny", by_duty["Staff Room"])
+        self.assertNotIn("Manuel", by_duty["Kitchen"])
         self.assertEqual(weeks[0]["unfilled"], [])
-        # Hanny still gets some other duty that week - dropping the
+        # Manuel still gets some other duty that week - dropping the
         # invalid pick falls back to the normal fair assignment, not to
-        # leaving her without one.
+        # leaving him without one.
         assigned_names = {p for a in weeks[0]["assignments"] if a["duty"] in DUTY_SLOTS for p in a["people"]}
-        self.assertIn("Hanny", assigned_names)
+        self.assertIn("Manuel", assigned_names)
+
+    def test_manual_duty_pick_is_honoured_when_they_finish_later_than_the_ideal_match(self):
+        # Hanny's week-1 slot is "mid1", which finishes later than Staff
+        # Toilet upstairs (an early-finishers duty) actually needs - she's
+        # there plenty long enough to cover it, so a manager's own pick
+        # should be honoured on the same "finishes at least as late as
+        # needed" standard the automatic fallback (Pass 2) already uses,
+        # not held to the narrower ideal-match set Pass 1 reaches for
+        # first.
+        over = [DutyOverride("Hanny", START, "Staff Toilet upstairs")]
+        inp, roster, weeks = build(duty_overrides=over)
+        by_duty = {a["duty"]: a["people"] for a in weeks[0]["assignments"]}
+        self.assertIn("Hanny", by_duty["Staff Toilet upstairs"])
 
     def test_manual_duty_pick_only_assigns_its_own_week(self):
         # A pick written for week 1's Monday shouldn't itself assign

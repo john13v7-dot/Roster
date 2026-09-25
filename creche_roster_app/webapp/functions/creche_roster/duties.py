@@ -184,17 +184,23 @@ def build_duty_roster(inputs: Inputs, roster: Roster) -> List[Dict]:
         pick_order = DUTY_SLOTS[offset:] + DUTY_SLOTS[:offset]
 
         # Pass 0: the manager's manual picks for this week, honoured only
-        # when the person's actually working that week and the duty still
-        # matches the shift they're actually on now - a pick that's gone
-        # stale (their shift changed since) is dropped silently and falls
-        # back to the normal fair pick below, rather than forcing a
-        # mismatch through or leaving the build broken.
+        # when the person's actually working that week and they're there
+        # long enough to actually do it - the same "finishes at least as
+        # late as the duty needs" standard Pass 2's own fallback uses
+        # below, not the narrower ideal-match set Pass 1 reaches for first.
+        # A manual pick is a deliberate choice, not a fairness ranking, so
+        # it only needs to be physically possible, same as the automatic
+        # fallback already allows; a pick that's gone properly stale (they
+        # now finish before the duty could even start) is dropped silently
+        # and falls back to the normal fair pick below, rather than
+        # forcing a mismatch through or leaving the build broken.
         for ov in inputs.duty_overrides:
             if ov.week != monday or ov.duty not in DUTY_SLOTS:
                 continue
             if ov.duty in assigned_by_duty or ov.name not in remaining:
                 continue
-            if slot_of.get(ov.name) not in DUTY_ELIGIBLE_SLOTS[ov.duty]:
+            ov_slot = slot_of.get(ov.name)
+            if not ov_slot or SLOTS.index(ov_slot) < SLOTS.index(DUTY_MIN_SLOT[ov.duty]):
                 continue
             remaining.remove(ov.name)
             history[ov.name][ov.duty] += 1
