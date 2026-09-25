@@ -5,8 +5,8 @@ range, then one table with the columns
 
     No | Name | Mon | Tue | Wed | Thu | Fri | break | (empty)
 
-Leave is coloured: Holiday orange-red, Maternity Leave green, OFF light
-green. A shift is coloured amber when that day it was moved to cover for a
+Leave is coloured: Holiday orange-red, Maternity Leave green, Sick blue, OFF
+light green. A shift is coloured amber when that day it was moved to cover for a
 colleague's leave (the "Cover adjusted" / "Closing fallback" checks) -
 otherwise shifts carry no colour. Times are shown 12-hour style (7:30 - 4:30).
 
@@ -45,6 +45,7 @@ STYLES: Dict[str, dict] = {
     "plain": _style(),
     "holiday": _style(fill="C65B35", color="F4CCB8"),
     "maternity": _style(fill="2E9E57", color="BFE6CB"),
+    "sick": _style(fill="3D7EA6", color="C7E1EF"),
     "off": _style(fill="A9D18E"),
     "leave": _style(fill="D9D9D9"),
     "adjusted": _style(fill="FCE4A0", color="7F5F00", bold=True),
@@ -78,6 +79,8 @@ def leave_style(text: str) -> str:
         return "holiday"
     if "maternity" in t:
         return "maternity"
+    if "sick" in t:
+        return "sick"
     return "leave"
 
 

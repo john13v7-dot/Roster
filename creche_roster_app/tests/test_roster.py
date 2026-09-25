@@ -13,7 +13,7 @@ from pypdf import PdfReader
 from creche_roster.duties import DUTY_SLOTS, FIXED_DUTIES, build_duty_roster
 from creche_roster.engine import build_roster
 from creche_roster.excel_io import make_template, read_inputs, write_roster_only, write_workbook
-from creche_roster.layout import NCOLS, date_range_text, week_grid
+from creche_roster.layout import NCOLS, date_range_text, leave_style, week_grid
 from creche_roster.models import InputError, Leave, Override, Shift, t12
 from creche_roster.parsing import norm_hours, parse_date, parse_time
 from creche_roster.pdf_out import write_duties_pdf, write_pdf
@@ -676,6 +676,10 @@ class OldLayout(unittest.TestCase):
         self.assertEqual(by_name["Shehnaz"].cells[2].style, "holiday")
         self.assertEqual(by_name["Eirini"].cells[2].style, "maternity")
         self.assertEqual(by_name["Jason"].cells[2].style, "plain")  # shifts are not coloured
+
+    def test_sick_leave_has_its_own_colour(self):
+        self.assertEqual(leave_style("Sick"), "sick")
+        self.assertNotIn(leave_style("Sick"), ("holiday", "maternity", "off"))
 
     def test_numbering_and_spacer(self):
         rows = [row for row in self.grid[3:] if not row.merged]

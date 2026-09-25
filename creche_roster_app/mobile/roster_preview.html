@@ -9,6 +9,7 @@
     --chip-bg:#f1e9df;
     --holiday-bg:#C65B35; --holiday-ink:#fdece3;
     --maternity-bg:#2E9E57; --maternity-ink:#e7f7ee;
+    --sick-bg:#3D7EA6; --sick-ink:#e6f2f8;
     --off-bg:#A9D18E; --off-ink:#2c4a1e;
     --adjusted-bg:#FCE4A0; --adjusted-ink:#7f5f00;
     --duties-btn:#3f6b52; --requests-btn:#3a6ea5; --fairness-btn:#7d5ba6;
@@ -134,6 +135,8 @@
   .daypill-holiday .dtext, .daypill-holiday .dlabel{color:var(--holiday-ink);}
   .daypill-maternity{background:var(--maternity-bg); border-color:var(--maternity-bg);}
   .daypill-maternity .dtext, .daypill-maternity .dlabel{color:var(--maternity-ink);}
+  .daypill-sick{background:var(--sick-bg); border-color:var(--sick-bg);}
+  .daypill-sick .dtext, .daypill-sick .dlabel{color:var(--sick-ink);}
   .daypill-vacant{background:transparent; border-style:dashed;}
   .daypill-vacant .dtext{color:var(--ink-dim); font-style:italic;}
   .daypill-adjusted{background:var(--adjusted-bg); border-color:var(--adjusted-bg);}
@@ -351,6 +354,7 @@
       <button class="actionbtn" data-action="add-staff" disabled>+ Add Staff</button>
       <button class="actionbtn" data-action="transfer" disabled>Transfer</button>
       <button class="actionbtn" data-action="add-holiday" disabled>+ Add Holiday</button>
+      <button class="actionbtn" data-action="add-sick" disabled>+ Add Sick</button>
       <button class="actionbtn" data-action="add-maternity" disabled>+ Add Maternity Leave</button>
       <button class="actionbtn" data-action="adjust-shift" disabled>Adjust Shift</button>
       <button class="actionbtn" data-action="adjust-duty" disabled>Adjust Duty</button>
@@ -384,7 +388,7 @@
       <li>Closing cover: Jason-or-Shehnaz plus 2 more staff, 3 in total. If neither is closing, Priscilla covers it automatically every day this applies (her displayed hours stay as typed - she updates them herself if she wants that shown).</li>
       <li>Sue, Laura, Megan and Priscilla keep their own manually-set hours.</li>
       <li>The vacant seat (row 3) shows with no shift and isn't counted toward cover.</li>
-      <li>Holiday and Maternity Leave are picked up automatically for the dates you give them.</li>
+      <li>Holiday, Sick and Maternity Leave are picked up automatically for the dates you give them.</li>
       <li>A shift shown in amber is a colleague covering that day because someone else is on leave — so it's clear at a glance who was affected and why, on screen and on the printed Excel/PDF alike.</li>
       <li>Joiners and leavers: a new staff member's Start date (set when you Add Staff) means they're not scheduled before it; an End date works the same way for someone leaving.</li>
       <li>Same room, same shift is never allowed: Toddlers Room, Preschoolers Room, ECEC 1 and ECEC 2 each keep their staff on different start times from each other, every day.</li>
@@ -1848,6 +1852,7 @@
       if(t === 'off') return 'daypill-off';
       if(t.indexOf('holiday') !== -1) return 'daypill-holiday';
       if(t.indexOf('maternity') !== -1) return 'daypill-maternity';
+      if(t.indexOf('sick') !== -1) return 'daypill-sick';
       return 'daypill-off';
     }
     if(kind === 'shift' && adjusted) return 'daypill-adjusted';
@@ -2058,6 +2063,7 @@
       if(t === 'off') return {bg:[169,209,142], ink:[44,74,30]};
       if(t.indexOf('holiday') !== -1) return {bg:[198,91,53], ink:[253,236,227]};
       if(t.indexOf('maternity') !== -1) return {bg:[46,158,87], ink:[231,247,238]};
+      if(t.indexOf('sick') !== -1) return {bg:[61,126,166], ink:[230,242,248]};
       return {bg:[169,209,142], ink:[44,74,30]};
     }
     if(kind === 'shift' && adjusted) return {bg:[252,228,160], ink:[127,95,0]};
@@ -2617,6 +2623,7 @@
   var FLOOR_OPTS = [['All','All / not split yet'],['down','Ground floor'],['up','1st floor']];
   var ROOM_OPTS = [['','Not placed yet'],['Toddlers Room','Toddlers Room'],['Preschoolers Room','Preschoolers Room'],
                     ['ECEC 1','ECEC 1'],['ECEC 2','ECEC 2']];
+  var LEAVE_KIND_BY_ACTION = {'add-holiday':'Holiday','add-sick':'Sick','add-maternity':'Maternity Leave'};
 
   function field(labelText, inner){
     return '<div class="field"><label>'+labelText+'</label>'+inner+'</div>';
@@ -2656,8 +2663,8 @@
       $('f_start').oninput = renderShiftHint;
       refreshTransferRoomField();
       renderShiftHint();
-    } else if(action === 'add-holiday' || action === 'add-maternity'){
-      var kind = action === 'add-holiday' ? 'Holiday' : 'Maternity Leave';
+    } else if(action in LEAVE_KIND_BY_ACTION){
+      var kind = LEAVE_KIND_BY_ACTION[action];
       formTitle.textContent = 'Add ' + kind;
       formBody.innerHTML =
         field('Staff', '<select id="f_staff">'+staffOptionsHTML()+'</select>') +
@@ -2827,8 +2834,8 @@
           ', from ' + start2 + ' onward (past weeks unchanged).';
         await logChange(summary2, staff, beforeRoster2);
         toast('Transfer recorded for ' + staff + '.');
-      } else if(currentAction === 'add-holiday' || currentAction === 'add-maternity'){
-        var kindWord = currentAction === 'add-holiday' ? 'Holiday' : 'Maternity Leave';
+      } else if(currentAction in LEAVE_KIND_BY_ACTION){
+        var kindWord = LEAVE_KIND_BY_ACTION[currentAction];
         var staff3 = $('f_staff').value, start3 = $('f_start').value, end3 = $('f_end').value || null;
         if(!staff3){ formErr.textContent = 'Pick a staff member.'; formSave.disabled=false; return; }
         if(end3 && end3 < start3){
