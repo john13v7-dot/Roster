@@ -1043,6 +1043,22 @@
         }
       }
 
+      // fullBase: like fullRotatingBase, but the pair is forced "present"
+      // too - a second, deliberately unused-by-the-real-build
+      // counterfactual ("if literally nobody was away this week, what
+      // would everyone's slot be"), kept only for exports that show a
+      // person's intended shift straight through their own holiday/sick
+      // week instead of blanking it. Computed separately from
+      // fullRotatingBase (which only forces the rotating pool) so
+      // widening it here can never change what "patch, don't reshuffle"
+      // patches the real schedule against.
+      var presentEveryoneRotationDriven = {};
+      for (var n5e in byName) {
+        var role5e = byName[n5e].role;
+        presentEveryoneRotationDriven[n5e] = (role5e === 'rotating' || role5e === 'paired') ? days : present[n5e];
+      }
+      var fullBase = computeBase(presentEveryoneRotationDriven);
+
       // ---- daily pass ----
       var cells = new Map();
       var ignoredOverride = {};
@@ -1118,7 +1134,7 @@
 
       if (pair.length) reportPairing(pair, days, cells, leaveKind, ignoredOverride, checks, wi);
 
-      weeks.push({ monday: monday, days: days, cells: cells });
+      weeks.push({ monday: monday, days: days, cells: cells, full_base: fullBase });
 
       for (var n8 in byName) {
         var slots = days.map(function (d) { return cells.get(cellKey(n8, d)); })
@@ -1511,6 +1527,7 @@
     dutyPool: dutyPool,
     weeklySlot: weeklySlot,
     presentMostOfWeek: presentMostOfWeek,
+    shiftLabel: shiftLabel,
     DUTY_SLOTS: DUTY_SLOTS,
     DUTY_ELIGIBLE_SLOTS: DUTY_ELIGIBLE_SLOTS,
   };

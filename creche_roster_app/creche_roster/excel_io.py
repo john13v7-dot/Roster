@@ -20,7 +20,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.properties import PageSetupProperties
 
-from .layout import COL_WIDTHS_CHARS, NCOLS, STYLES, ordinal_runs, week_grid
+from .layout import COL_WIDTHS_CHARS, NCOLS, STYLES, date_range_text, ordinal_runs, week_grid
 from .models import (
     NDAYS,
     ROLES,
@@ -39,7 +39,7 @@ from .parsing import fmt_day, is_blank, norm_hours, parse_date, parse_time
 from .sample import sample_inputs
 
 FONT = "Arial"
-GENERATED = re.compile(r"^(Week \d+|Checks|Totals)$")
+GENERATED = re.compile(r"^(Week \d+|Checks|Totals|Weekly Summary)$")
 THIN = Side(style="thin", color="808080")
 BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
@@ -416,6 +416,65 @@ def _write_totals(ws, roster: Roster) -> None:
     )
 
 
+def _intended_shift_text(roster: Roster, wi: int, st: Staff) -> str:
+    """What `st` was supposed to work in week `wi`, regardless of any
+    holiday/sick/maternity leave that week - the Weekly Summary sheet's
+    whole point is to never blank this out just because they were away."""
+    if st.role in ("rotating", "paired"):
+        slot = roster.weeks[wi].full_base.get(st.name)
+        return roster.inputs.settings.shifts[slot].label if slot else ""
+    if st.role == "fixed":
+        return roster.inputs.settings.shifts[st.fixed_slot].label if st.fixed_slot else ""
+    # static or vacant: their own recorded hours - not leave-driven to begin
+    # with, so there's nothing to look past; the same note every week.
+    return st.note
+
+
+def _write_summary_by_week(ws, roster: Roster) -> None:
+    """One row per person, one column per week: the shift they were
+    supposed to work that week - shown straight through a holiday, sick
+    day or maternity leave that week rather than blanked out by it (see
+    WeekRoster.full_base). For a single-page view of the whole rotation."""
+    ws.sheet_view.showGridLines = False
+    n_weeks = len(roster.weeks)
+    widths = [22] + [18] * n_weeks
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+
+    ws["A1"] = "Weekly Summary"
+    ws["A1"].font = Font(name=FONT, size=16, bold=True)
+    ws["A2"] = (
+        "Each person's shift for the week - shown even through a holiday, sick day or "
+        "maternity leave that week, never left blank because of it."
+    )
+    ws["A2"].font = Font(name=FONT, size=9, italic=True, color="404040")
+
+    r = 4
+    headers = ["Name"] + [
+        f"Week {wi + 1} ({date_range_text(week.days[0], week.days[-1])})"
+        for wi, week in enumerate(roster.weeks)
+    ]
+    for i, h in enumerate(headers, start=1):
+        _apply(ws.cell(r, i, h), "header")
+
+    for _, st in roster.staff_keys:
+        if st.role == "blank":
+            continue
+        r += 1
+        label = st.name or ("Vacant post" if st.role == "vacant" else "")
+        _apply(ws.cell(r, 1, label), "plain")
+        for wi in range(n_weeks):
+            _apply(ws.cell(r, wi + 2, _intended_shift_text(roster, wi, st)), "plain")
+
+    ws.freeze_panes = "B5"
+    ws.print_area = f"A1:{get_column_letter(len(headers))}{r}"
+
+
 def write_roster_only(roster: Roster, output_path) -> Path:
     """A clean, printable workbook with just the roster weeks - no input
     tabs (Staff/Leave/Overrides/Settings/History) and no Checks/Totals.
@@ -426,6 +485,7 @@ def write_roster_only(roster: Roster, output_path) -> Path:
     wb.remove(wb.active)
     for wi in range(len(roster.weeks)):
         _write_week(wb.create_sheet(f"Week {wi + 1}"), roster, wi)
+    _write_summary_by_week(wb.create_sheet("Weekly Summary"), roster)
     wb.save(output_path)
     return output_path
 
@@ -441,6 +501,7 @@ def write_workbook(input_path, roster: Roster, output_path=None, backup: bool = 
             wb.remove(ws)
     for wi in range(len(roster.weeks)):
         _write_week(wb.create_sheet(f"Week {wi + 1}"), roster, wi)
+    _write_summary_by_week(wb.create_sheet("Weekly Summary"), roster)
     _write_checks(wb.create_sheet("Checks"), roster)
     _write_totals(wb.create_sheet("Totals"), roster)
     wb.save(output_path)

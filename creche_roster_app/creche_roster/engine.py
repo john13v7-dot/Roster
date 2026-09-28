@@ -969,6 +969,20 @@ def build_roster(inputs: Inputs) -> Roster:
         }
         full_rotating_base = compute_base(present_full_rotating)
         base = compute_base(present, full_rotating_base)
+
+        # `full_base`: like `full_rotating_base`, but the pair is forced
+        # "present" too - a second, deliberately unused-by-the-real-build
+        # counterfactual ("if literally nobody was away this week, what
+        # would everyone's slot be"), kept only for exports that show a
+        # person's intended shift straight through their own holiday/sick
+        # week instead of blanking it. Computed separately from
+        # `full_rotating_base` (which only forces the rotating pool) so
+        # widening it here can never change what "patch, don't reshuffle"
+        # patches the real schedule against.
+        present_everyone_rotation_driven = {
+            n: (days if st.role in ("rotating", "paired") else present[n]) for n, st in by_name.items()
+        }
+        full_base = compute_base(present_everyone_rotation_driven)
         covering_because_of_leave = {
             n for n in base
             if by_name[n].role == "rotating"
@@ -1082,7 +1096,7 @@ def build_roster(inputs: Inputs) -> Roster:
         if pair:
             _report_pairing(pair, days, cells, leave_kind, ignored_override, checks, wi)
 
-        weeks.append(WeekRoster(monday, days, cells))
+        weeks.append(WeekRoster(monday, days, cells, full_base=full_base))
 
         # ---- update fairness memory ------------------------------------
         for n in by_name:

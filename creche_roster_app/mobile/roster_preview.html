@@ -1486,6 +1486,22 @@
         }
       }
 
+      // fullBase: like fullRotatingBase, but the pair is forced "present"
+      // too - a second, deliberately unused-by-the-real-build
+      // counterfactual ("if literally nobody was away this week, what
+      // would everyone's slot be"), kept only for exports that show a
+      // person's intended shift straight through their own holiday/sick
+      // week instead of blanking it. Computed separately from
+      // fullRotatingBase (which only forces the rotating pool) so
+      // widening it here can never change what "patch, don't reshuffle"
+      // patches the real schedule against.
+      var presentEveryoneRotationDriven = {};
+      for (var n5e in byName) {
+        var role5e = byName[n5e].role;
+        presentEveryoneRotationDriven[n5e] = (role5e === 'rotating' || role5e === 'paired') ? days : present[n5e];
+      }
+      var fullBase = computeBase(presentEveryoneRotationDriven);
+
       // ---- daily pass ----
       var cells = new Map();
       var ignoredOverride = {};
@@ -1561,7 +1577,7 @@
 
       if (pair.length) reportPairing(pair, days, cells, leaveKind, ignoredOverride, checks, wi);
 
-      weeks.push({ monday: monday, days: days, cells: cells });
+      weeks.push({ monday: monday, days: days, cells: cells, full_base: fullBase });
 
       for (var n8 in byName) {
         var slots = days.map(function (d) { return cells.get(cellKey(n8, d)); })
@@ -1954,6 +1970,7 @@
     dutyPool: dutyPool,
     weeklySlot: weeklySlot,
     presentMostOfWeek: presentMostOfWeek,
+    shiftLabel: shiftLabel,
     DUTY_SLOTS: DUTY_SLOTS,
     DUTY_ELIGIBLE_SLOTS: DUTY_ELIGIBLE_SLOTS,
   };
@@ -2307,8 +2324,52 @@
       });
       ws.columns = [{width:20}].concat(week.day_names.map(function(){ return {width:16}; }));
     });
+    addWeeklySummarySheet(wb, weekIndices);
     var buffer = await wb.xlsx.writeBuffer();
     return new Blob([buffer], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  }
+
+  // What `st` was supposed to work in week `wi`, regardless of any
+  // holiday/sick/maternity leave that week - the Weekly Summary sheet's
+  // whole point is to never blank this out just because they were away.
+  // Mirrors creche_roster/excel_io.py's _intended_shift_text.
+  function intendedShiftText(wi, st){
+    var shifts = lastBuildOut.inputs.settings.shifts;
+    if(st.role === 'rotating' || st.role === 'paired'){
+      var slot = lastBuildOut.roster.weeks[wi].full_base[st.name];
+      return slot ? RosterEngine.shiftLabel(shifts[slot]) : '';
+    }
+    if(st.role === 'fixed'){
+      return st.fixed_slot ? RosterEngine.shiftLabel(shifts[st.fixed_slot]) : '';
+    }
+    // static or vacant: their own recorded hours - not leave-driven to
+    // begin with, so there's nothing to look past.
+    return st.note || '';
+  }
+
+  // One row per person, one column per printed week: the shift they were
+  // supposed to work that week - shown straight through a holiday, sick
+  // day or maternity leave rather than blanked out by it. Mirrors
+  // creche_roster/excel_io.py's _write_summary_by_week.
+  function addWeeklySummarySheet(wb, weekIndices){
+    var ws = wb.addWorksheet('Weekly Summary');
+    ws.addRow(['Weekly Summary']).font = {bold:true, size:14, color:{argb:'FFE04A32'}};
+    ws.addRow(["Each person's shift for the week - shown even through a holiday, sick day or maternity leave that week, never left blank because of it."]).font = {italic:true, size:9, color:{argb:'FF404040'}};
+    ws.addRow([]);
+    var headerRow = ws.addRow(['Name'].concat(weekIndices.map(function(wi){
+      return 'Week ' + (wi + 1) + ' (' + data.weeks[wi].label + ')';
+    })));
+    headerRow.eachCell(function(cell){
+      cell.font = {bold:true, color:{argb:'FFFFFFFF'}};
+      cell.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FF211C1A'}};
+    });
+    lastBuildOut.roster.staff_keys.forEach(function(ks){
+      var st = ks[1];
+      if(st.role === 'blank') return;
+      var label = st.name || (st.role === 'vacant' ? 'Vacant post' : '');
+      ws.addRow([label].concat(weekIndices.map(function(wi){ return intendedShiftText(wi, st); })));
+    });
+    ws.columns = [{width:22}].concat(weekIndices.map(function(){ return {width:22}; }));
   }
 
   function buildDutiesPdfBlob(weekIndices){

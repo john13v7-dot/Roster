@@ -139,6 +139,11 @@ class WeekRoster:
     monday: date
     days: List[date]
     cells: Dict[Tuple[str, date], Assignment]  # keyed by (staff key, day)
+    # Each rotating/paired person's slot this week if nobody had been away -
+    # what they were "supposed" to work, for exports that show it even
+    # through a holiday/sick week rather than blanking it out. Never used
+    # to decide the real, leave-adjusted schedule above.
+    full_base: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

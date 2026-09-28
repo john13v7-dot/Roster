@@ -841,14 +841,37 @@ class Files(unittest.TestCase):
             self.assertIn(n, wb.sheetnames)
 
     def test_roster_only_workbook_has_just_the_weeks(self):
-        # What the app's Print button hands someone: the roster pages only,
-        # not the editable planner's input tabs (Staff/Leave/Overrides/
-        # Settings/History) or the Checks/Totals sheets.
+        # What the app's Print button hands someone: the roster pages, plus
+        # the one-page Weekly Summary, not the editable planner's input
+        # tabs (Staff/Leave/Overrides/Settings/History) or Checks/Totals.
         roster = build_roster(sample_inputs(START))
         out = self.dir / "roster_only.xlsx"
         write_roster_only(roster, out)
         names = load_workbook(out).sheetnames
-        self.assertEqual(names, ["Week 1", "Week 2", "Week 3", "Week 4", "Week 5"])
+        self.assertEqual(names, ["Week 1", "Week 2", "Week 3", "Week 4", "Week 5", "Weekly Summary"])
+
+    def test_weekly_summary_shows_the_intended_shift_through_a_holiday(self):
+        # The whole point of this sheet: someone away all week (a rotating
+        # person on holiday, a static person on holiday) still shows the
+        # shift they'd have worked, not a blank or "Holiday" - one column
+        # per week, Week 1 first.
+        leave = [Leave("Hanny", START, START + timedelta(days=4), "Holiday"), Leave("Sue", START, START + timedelta(days=4), "Holiday")]
+        roster = build_roster(inputs(leave=leave, weeks=2))
+        out = self.dir / "weekly_summary.xlsx"
+        write_roster_only(roster, out)
+        ws = load_workbook(out)["Weekly Summary"]
+        header = [ws.cell(4, c).value for c in range(1, 4)]
+        self.assertIn("Week 1", header[1])
+        self.assertIn("Week 2", header[2])
+        rows = {ws.cell(r, 1).value: r for r in range(5, ws.max_row + 1)}
+        self.assertIn("Hanny", rows)
+        self.assertIn("Sue", rows)
+        hanny_week1 = ws.cell(rows["Hanny"], 2).value
+        self.assertTrue(hanny_week1, "Hanny's holiday week showed no intended shift")
+        # Confirm week 1 really was leave for Hanny (not accidentally leave-free).
+        self.assertEqual(roster.weeks[0].cells[("Hanny", START)].kind, "leave")
+        sue_week1 = ws.cell(rows["Sue"], 2).value
+        self.assertEqual(sue_week1, "8:30 – 1:30")
 
     def test_duties_pdf_has_one_page_per_week_with_every_duty(self):
         inp = sample_inputs(START)
