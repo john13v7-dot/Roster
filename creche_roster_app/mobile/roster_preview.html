@@ -1609,17 +1609,23 @@
     'Front creche',
     'Paper & Soap dispensers',
   ];
+  // Staff Room, Front creche and Paper & Soap dispensers also accept
+  // 'early' - the real printed roster (two weeks running) shows them going
+  // to whoever finishes at 16:30 too, not just 17:00 (Jason, always
+  // 7:30-4:30, rotates through Front creche and Paper & Soap dispensers;
+  // Staff Room went to an early finisher both weeks). Hallway downstairs
+  // also accepts 'mid1' for the same reason.
   var DUTY_ELIGIBLE_SLOTS = {
     'Kitchen': new Set(['mid2', 'late']),
-    'Hallway downstairs / windows / door handles': new Set(['mid2', 'late']),
+    'Hallway downstairs / windows / door handles': new Set(['mid1', 'mid2', 'late']),
     "Children's Toilets": new Set(['mid2', 'late']),
     'Back Garden & Bins': new Set(['early']),
     'Staff Toilet upstairs': new Set(['early']),
     'Staff Toilet': new Set(['early']),
     'Hallway upstairs / Hoover stairs upstairs': new Set(['mid1']),
-    'Staff Room': new Set(['mid1']),
-    'Front creche': new Set(['mid1']),
-    'Paper & Soap dispensers': new Set(['mid1']),
+    'Staff Room': new Set(['early', 'mid1']),
+    'Front creche': new Set(['early', 'mid1']),
+    'Paper & Soap dispensers': new Set(['early', 'mid1']),
   };
   var DUTY_MIN_SLOT = {};
   Object.keys(DUTY_ELIGIBLE_SLOTS).forEach(function (duty) {

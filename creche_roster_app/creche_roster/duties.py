@@ -45,23 +45,29 @@ DUTY_SLOTS: List[str] = [
 # children's toilets take longer, so they're best matched to whoever
 # finishes latest (17:30 or 18:00); bins/staff toilets are quick, best for
 # whoever finishes earliest (16:30); everything else best fits the 17:00
-# finishers. That's the first thing build_duty_roster() tries. Someone
-# finishing later than a duty needs is still there long enough to cover it
-# though, so when the ideal match for a duty isn't available that week
-# (someone on leave, an uneven shift mix), it falls back to whoever's free
-# and finishes at least that late - never to someone who'd already have
-# left before the duty's actually done.
+# finishers - except Staff Room, Front creche and Paper & Soap dispensers,
+# which the real printed roster (two weeks running) shows going to whoever
+# finishes at 16:30 too, not just 17:00 - Jason (always 7:30-4:30) rotates
+# through Front creche and Paper & Soap dispensers, and Staff Room went to
+# an early finisher (Hanny, then Manuel) both weeks - so 16:30 counts as an
+# ideal match for these three as well, not only a fallback. That's the
+# first thing build_duty_roster() tries. Someone finishing later than a
+# duty needs is still there long enough to cover it though, so when the
+# ideal match for a duty isn't available that week (someone on leave, an
+# uneven shift mix), it falls back to whoever's free and finishes at least
+# that late - never to someone who'd already have left before the duty's
+# actually done.
 DUTY_ELIGIBLE_SLOTS: Dict[str, FrozenSet[str]] = {
     "Kitchen": frozenset({"mid2", "late"}),
-    "Hallway downstairs / windows / door handles": frozenset({"mid2", "late"}),
+    "Hallway downstairs / windows / door handles": frozenset({"mid1", "mid2", "late"}),
     "Children's Toilets": frozenset({"mid2", "late"}),
     "Back Garden & Bins": frozenset({"early"}),
     "Staff Toilet upstairs": frozenset({"early"}),
     "Staff Toilet": frozenset({"early"}),
     "Hallway upstairs / Hoover stairs upstairs": frozenset({"mid1"}),
-    "Staff Room": frozenset({"mid1"}),
-    "Front creche": frozenset({"mid1"}),
-    "Paper & Soap dispensers": frozenset({"mid1"}),
+    "Staff Room": frozenset({"early", "mid1"}),
+    "Front creche": frozenset({"early", "mid1"}),
+    "Paper & Soap dispensers": frozenset({"early", "mid1"}),
 }
 
 # The earliest finish time that still covers each duty - the fallback

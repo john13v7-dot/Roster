@@ -77,30 +77,37 @@ class DutyRoster(unittest.TestCase):
             self.assertEqual(set(assigned), pool)  # everyone present gets exactly one
 
     def test_duties_match_who_finishes_when_headcount_lines_up(self):
-        # The actual rule: kitchen/hallway downstairs/children's toilets go
-        # to whoever finishes at 17:30 or 18:00 that week; bins/staff
-        # toilets to whoever finishes at 16:30; everything else to the
-        # 17:00 finishers. Jason pinned to "early" and Shehnaz away (the
-        # live mobile app's actual data) keeps the "early" bucket at
-        # exactly 2 rotating + Jason = 3 every week, matching its 3 duties
-        # exactly - checked here on its own, since it's the one bucket this
-        # scenario guarantees never needs the fallback pass. The other 7
-        # duties (3 "finishes late" + 4 "the rest") only balance in total
-        # (2 late + 5 mid1/mid2 = 7 people for 7 duties) - mid1 vs mid2
-        # can still split unevenly week to week (3-2 one week, 2-3 the
-        # next), which is exactly what the fallback pass is for; that's
-        # covered separately below, not asserted strictly here.
-        early_duties = [d for d, slots in DUTY_ELIGIBLE_SLOTS.items() if slots == {"early"}]
+        # The actual rule: kitchen/children's toilets go to whoever finishes
+        # at 17:30 or 18:00 that week; bins/staff toilets to whoever
+        # finishes at 16:30; everything else (including hallway downstairs,
+        # which also accepts 17:00, and Staff Room/Front creche/Paper &
+        # Soap dispensers, which - per the real printed roster - also
+        # accept 16:30) to the 17:00 finishers or later. Jason pinned to
+        # "early" and Shehnaz away (the live mobile app's actual data)
+        # keeps the "early" bucket at exactly 2 rotating + Jason = 3 every
+        # week - but 6 duties now list "early" as an ideal match (the 3
+        # early-only ones, plus Staff Room/Front creche/Paper & Soap
+        # dispensers), so those 3 people no longer map 1:1 onto just the
+        # 3 early-only duties; the fallback pass fills whichever of the 6
+        # didn't get one of the 3 that week. What still holds
+        # unconditionally - checked here - is that nothing goes unfilled
+        # in this scenario, and nobody's ever handed a duty they'd finish
+        # before covering (also checked, more generally, in
+        # test_fallback_never_assigns_someone_who_finishes_too_early).
         leave = [Leave("Shehnaz", START, START + timedelta(days=27), "Holiday")]
         over = [Override("Jason", START, START + timedelta(days=27), "early")]
         inp, roster, weeks = build(leave=leave, overrides=over)
         for wi, week in enumerate(weeks):
             self.assertEqual(week["unfilled"], [])
             for a in week["assignments"]:
-                if a["duty"] not in early_duties:
+                if a["duty"] not in DUTY_SLOTS or not a["people"]:
                     continue
                 person = a["people"][0]
-                self.assertEqual(_weekly_slot(roster, wi, person), "early", (a["duty"], wi))
+                slot = _weekly_slot(roster, wi, person)
+                self.assertGreaterEqual(
+                    SLOTS.index(slot), SLOTS.index(DUTY_MIN_SLOT[a["duty"]]),
+                    (a["duty"], wi, person, slot),
+                )
 
     def test_uneven_headcount_falls_back_but_never_double_books(self):
         # In the plain default scenario, Jason and Shehnaz alternate
