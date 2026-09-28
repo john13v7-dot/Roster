@@ -21,7 +21,14 @@ def sample_inputs(start: date) -> Inputs:
     settings = Settings(
         title="STAFF ROSTER",
         roster_start=start,
-        weeks=4,
+        # 5, not 4: with 3-person opening/closing cover and the pair
+        # covering one of those seats, only 2 extra opening + 2 extra
+        # closing seats exist per week for the 9-person rotating pool to
+        # share - over just 4 weeks that's 8 of each, one short of the 9
+        # needed for everyone to land on both at least once. 5 weeks (10
+        # of each) is the shortest window where that's actually possible
+        # for everybody, not just most.
+        weeks=5,
         floors=["All"],
         shifts={
             "early": Shift(time(7, 30), time(16, 30)),

@@ -602,6 +602,148 @@ def _most_common_slot(slots: List[str]) -> str:
     return max(c, key=lambda sl: (c[sl], SLOTS.index(sl)))
 
 
+def _balance_protected_slots(
+    weeks: List[WeekRoster],
+    by_name: Dict[str, Staff],
+    room_of: Dict[str, str],
+    period: Dict[str, Counter],
+    hist: Dict[str, Counter],
+    last_slot: Dict[str, str],
+    seed_last_slot: Dict[str, str],
+) -> None:
+    """A whole-build fairness backstop, run once the entire roster is
+    built. The week-by-week least-done-first solve is greedy - it decides
+    each week using only what's happened so far, so a room permanently
+    squeezed down to very few chances at a protected slot (early/late)
+    can watch one of those rare chances go to someone from an
+    unconstrained room instead, purely because that week's numbers
+    happened to favour them - leaving the squeezed room's own person with
+    none of that slot for the whole build, even though a fair split was
+    available (e.g. ECEC 2: Jason, paired not rotating, claims one of
+    early/late outright every week, so David and Usha are already down to
+    one shared opportunity at the other - wasting it on an outsider costs
+    one of them their only shot).
+
+    This looks at the finished build as a whole: for anyone who ended up
+    with zero of a protected slot across every week, it looks for another
+    rotating person who can swap a whole week with them - never a partial
+    week, so both keep a single, clean slot that week - subject to: the
+    donor keeps at least one of their own slot elsewhere (never just hands
+    their own zero-case to someone else), neither person's new slot
+    clashes with a same-room colleague that week, and neither person ends
+    up repeating their own adjacent week (or, at week one, a seeded
+    last_slot) - the fix this pass makes never reopens the ones the
+    normal week-to-week rotation and any seed already closed. A straight
+    swap between two people's weeks never changes how many people cover
+    any slot that week, so cover stays exactly as met as it already was.
+    Some builds have nobody who can be freed this way - left as is, same
+    as any other genuinely unavoidable shortfall.
+    """
+    pool = [n for n, st in by_name.items() if st.role == "rotating"]
+    n_weeks = len(weeks)
+
+    def week_slot(wi: int, name: str) -> Optional[str]:
+        # A day with its own manual override is never touched here, even
+        # if it happens to already match the week's uniform slot - it's
+        # the manager's own explicit pick for that specific day, not this
+        # week's ordinary rotation, and swapping it away would silently
+        # undo it.
+        week = weeks[wi]
+        cells = [week.cells.get((name, d)) for d in week.days]
+        if any(c is None or c.kind != "shift" or c.overridden for c in cells):
+            return None
+        slots = {c.slot for c in cells}
+        return next(iter(slots)) if len(slots) == 1 else None
+
+    def dominant_slot(wi: int, name: str) -> Optional[str]:
+        # What actually shows on screen for this person that week, same
+        # majority-of-days rule the roster view itself uses - unlike
+        # week_slot (which only trusts a fully clean week, for deciding
+        # whether it's *safe to swap*), a week with a day or two of leave
+        # still very much reads as "early" or "late" to whoever's looking
+        # at it, and the repeat check below has to see it that way too.
+        week = weeks[wi]
+        slots = [
+            week.cells[(name, d)].slot
+            for d in week.days
+            if week.cells.get((name, d)) and week.cells[(name, d)].kind == "shift"
+        ]
+        return _most_common_slot(slots) if slots else None
+
+    def room_clashes(week: WeekRoster, who: str, other: str, room: str, slot: str) -> bool:
+        if not room:
+            return False
+        for name, st in by_name.items():
+            if name in (who, other) or st.room != room:
+                continue
+            for d in week.days:
+                cell = week.cells.get((name, d))
+                if cell and cell.kind == "shift" and cell.slot == slot:
+                    return True
+        return False
+
+    def would_repeat(name: str, wi: int, slot: str) -> bool:
+        # Never trade someone straight into a repeat of their own
+        # adjacent week - this pass exists to fix a fairness gap, not to
+        # reopen the one this build's own week-to-week rotation (and any
+        # seeded last_slot at week 0) already closes.
+        prev = dominant_slot(wi - 1, name) if wi > 0 else seed_last_slot.get(name)
+        if prev == slot:
+            return True
+        if wi < n_weeks - 1 and dominant_slot(wi + 1, name) == slot:
+            return True
+        return False
+
+    def do_swap(wi: int, n: str, donor: str, target: str, n_slot: str) -> None:
+        week = weeks[wi]
+        for d in week.days:
+            nc, dc = week.cells[(n, d)], week.cells[(donor, d)]
+            week.cells[(n, d)] = Assignment("shift", target, dc.text)
+            week.cells[(donor, d)] = Assignment("shift", n_slot, nc.text)
+        period[n][n_slot] -= NDAYS
+        period[n][target] += NDAYS
+        period[donor][target] -= NDAYS
+        period[donor][n_slot] += NDAYS
+        hist[n][n_slot] -= NDAYS
+        hist[n][target] += NDAYS
+        hist[donor][target] -= NDAYS
+        hist[donor][n_slot] += NDAYS
+        if wi == n_weeks - 1:
+            last_slot[n] = target
+            last_slot[donor] = n_slot
+
+    for target in ("early", "late"):
+        missing = [n for n in pool if not any(week_slot(wi, n) == target for wi in range(n_weeks))]
+        for n in missing:
+            best: Optional[Tuple[float, int, str, str]] = None
+            for wi in range(n_weeks):
+                n_slot = week_slot(wi, n)
+                if n_slot is None or n_slot == target:
+                    continue
+                week = weeks[wi]
+                room_n = room_of.get(n)
+                for donor in pool:
+                    if donor == n or week_slot(wi, donor) != target:
+                        continue
+                    room_d = room_of.get(donor)
+                    if room_n and room_n == room_d:
+                        continue  # same room: not a real reassignment, skip rather than special-case it
+                    if would_repeat(n, wi, target) or would_repeat(donor, wi, n_slot):
+                        continue
+                    donor_total = sum(1 for w2 in range(n_weeks) if week_slot(w2, donor) == target)
+                    if donor_total < 2:
+                        continue  # would just hand the donor a new zero-case
+                    if room_clashes(week, n, donor, room_n, target) or room_clashes(week, donor, n, room_d, n_slot):
+                        continue
+                    cost = hist[n][target] + hist[donor][n_slot]
+                    if best is None or cost < best[0]:
+                        best = (cost, wi, donor, n_slot)
+            if best is None:
+                continue  # genuinely unavoidable
+            _, wi, donor, n_slot = best
+            do_swap(wi, n, donor, target, n_slot)
+
+
 # --------------------------------------------------------------------------
 # Main entry point
 # --------------------------------------------------------------------------
@@ -969,6 +1111,8 @@ def build_roster(inputs: Inputs) -> Roster:
             else:
                 for sl in slots:
                     hist[n][sl] += 1
+
+    _balance_protected_slots(weeks, by_name, room_of, period, hist, last_slot, inputs.last_slot)
 
     return Roster(
         inputs=inputs,

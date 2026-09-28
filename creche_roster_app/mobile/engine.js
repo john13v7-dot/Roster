@@ -116,6 +116,117 @@
     return maxByKey(Object.keys(c), function (sl) { return [c[sl], SLOTS.indexOf(sl)]; });
   }
 
+  // A whole-build fairness backstop, run once the entire roster is built.
+  // See creche_roster/engine.py's _balance_protected_slots for the full
+  // rationale (a room permanently squeezed down to very few chances at a
+  // protected slot - early/late - can still lose one of those rare chances
+  // to someone from an unconstrained room, purely because that week's
+  // numbers happened to favour them). Looks at the finished build as a
+  // whole: for anyone with zero of a protected slot across every week,
+  // looks for another rotating person who can swap a whole clean week with
+  // them, never touching a day with its own manual override, subject to
+  // the donor keeping at least one of their own slot elsewhere, no new
+  // same-day room clash, and neither person repeating their own adjacent
+  // week (or, at week one, a seeded last_slot). Some builds have nobody who
+  // can be freed this way - left as is, same as any other genuinely
+  // unavoidable shortfall.
+  function balanceProtectedSlots(weeks, byName, roomOf, period, hist, lastSlot, seedLastSlot) {
+    var pool = [];
+    for (var n in byName) if (byName[n].role === 'rotating') pool.push(n);
+    var nWeeks = weeks.length;
+
+    function weekSlot(wi, name) {
+      var week = weeks[wi];
+      var cellsList = week.days.map(function (d) { return week.cells.get(cellKey(name, d)); });
+      if (cellsList.some(function (c) { return !c || c.kind !== 'shift' || c.overridden; })) return null;
+      var slotsSet = {};
+      cellsList.forEach(function (c) { slotsSet[c.slot] = true; });
+      var keys = Object.keys(slotsSet);
+      return keys.length === 1 ? keys[0] : null;
+    }
+
+    function dominantSlot(wi, name) {
+      var week = weeks[wi];
+      var slots = week.days.map(function (d) { return week.cells.get(cellKey(name, d)); })
+        .filter(function (c) { return c && c.kind === 'shift'; })
+        .map(function (c) { return c.slot; });
+      return slots.length ? mostCommonSlot(slots) : null;
+    }
+
+    function roomClashes(week, who, other, room, slot) {
+      if (!room) return false;
+      for (var name in byName) {
+        if (name === who || name === other) continue;
+        if (byName[name].room !== room) continue;
+        for (var i = 0; i < week.days.length; i++) {
+          var cell = week.cells.get(cellKey(name, week.days[i]));
+          if (cell && cell.kind === 'shift' && cell.slot === slot) return true;
+        }
+      }
+      return false;
+    }
+
+    function wouldRepeat(name, wi, slot) {
+      var prev = wi > 0 ? dominantSlot(wi - 1, name) : seedLastSlot[name];
+      if (prev === slot) return true;
+      if (wi < nWeeks - 1 && dominantSlot(wi + 1, name) === slot) return true;
+      return false;
+    }
+
+    function doSwap(wi, n, donor, target, nSlot) {
+      var week = weeks[wi];
+      week.days.forEach(function (d) {
+        var nc = week.cells.get(cellKey(n, d));
+        var dc = week.cells.get(cellKey(donor, d));
+        week.cells.set(cellKey(n, d), { kind: 'shift', slot: target, text: dc.text, overridden: false, adjusted: false });
+        week.cells.set(cellKey(donor, d), { kind: 'shift', slot: nSlot, text: nc.text, overridden: false, adjusted: false });
+      });
+      period[n][nSlot] = (period[n][nSlot] || 0) - NDAYS;
+      period[n][target] = (period[n][target] || 0) + NDAYS;
+      period[donor][target] = (period[donor][target] || 0) - NDAYS;
+      period[donor][nSlot] = (period[donor][nSlot] || 0) + NDAYS;
+      hist[n][nSlot] = (hist[n][nSlot] || 0) - NDAYS;
+      hist[n][target] = (hist[n][target] || 0) + NDAYS;
+      hist[donor][target] = (hist[donor][target] || 0) - NDAYS;
+      hist[donor][nSlot] = (hist[donor][nSlot] || 0) + NDAYS;
+      if (wi === nWeeks - 1) {
+        lastSlot[n] = target;
+        lastSlot[donor] = nSlot;
+      }
+    }
+
+    ['early', 'late'].forEach(function (target) {
+      var missing = pool.filter(function (n) {
+        for (var wi = 0; wi < nWeeks; wi++) if (weekSlot(wi, n) === target) return false;
+        return true;
+      });
+      missing.forEach(function (n) {
+        var best = null;
+        for (var wi = 0; wi < nWeeks; wi++) {
+          var nSlot = weekSlot(wi, n);
+          if (nSlot === null || nSlot === target) continue;
+          var week = weeks[wi];
+          var roomN = roomOf[n];
+          for (var di = 0; di < pool.length; di++) {
+            var donor = pool[di];
+            if (donor === n || weekSlot(wi, donor) !== target) continue;
+            var roomD = roomOf[donor];
+            if (roomN && roomN === roomD) continue; // same room: not a real reassignment, skip rather than special-case it
+            if (wouldRepeat(n, wi, target) || wouldRepeat(donor, wi, nSlot)) continue;
+            var donorTotal = 0;
+            for (var w2 = 0; w2 < nWeeks; w2++) if (weekSlot(w2, donor) === target) donorTotal++;
+            if (donorTotal < 2) continue; // would just hand the donor a new zero-case
+            if (roomClashes(week, n, donor, roomN, target) || roomClashes(week, donor, n, roomD, nSlot)) continue;
+            var cost = (hist[n][target] || 0) + (hist[donor][nSlot] || 0);
+            if (best === null || cost < best[0]) best = [cost, wi, donor, nSlot];
+          }
+        }
+        if (best === null) return; // genuinely unavoidable
+        doSwap(best[1], n, best[2], target, best[3]);
+      });
+    });
+  }
+
   // ---------------------------------------------------------------- settings
   var SHIFTS = {
     early: { start: 450, end: 990 },   // 7:30 - 16:30
@@ -127,7 +238,14 @@
     return {
       title: 'STAFF ROSTER',
       roster_start: rosterStartIso,
-      weeks: 4,
+      // 5, not 4: with 3-person opening/closing cover and the pair
+      // covering one of those seats, only 2 extra opening + 2 extra
+      // closing seats exist per week for the 9-person rotating pool to
+      // share - over just 4 weeks that's 8 of each, one short of the 9
+      // needed for everyone to land on both at least once. 5 weeks (10 of
+      // each) is the shortest window where that's actually possible for
+      // everybody, not just most.
+      weeks: 5,
       floors: ['All'],
       shifts: SHIFTS,
       min_open: { All: 3 },
@@ -1026,6 +1144,8 @@
         }
       }
     }
+
+    balanceProtectedSlots(weeks, byName, roomOf, period, hist, lastSlot, inputs.last_slot);
 
     return {
       inputs: inputs, staff_keys: staffKeys, weeks: weeks, checks: checks,

@@ -509,6 +509,33 @@ class HardRules(unittest.TestCase):
         self.assertIn("early", usha_slots)
         self.assertIn("late", usha_slots)
 
+    def test_balance_pass_narrows_a_5_week_builds_protected_slot_gaps_to_the_structural_floor(self):
+        # With 5 weeks (10 opening + 10 closing seats for 9 rotating
+        # people) everyone landing on both early and late is mathematically
+        # possible, but the per-week greedy solve alone doesn't reliably
+        # find that outcome - it decides each week from what's happened so
+        # far, with no view of the build as a whole. _balance_protected_slots
+        # runs once the build is finished and swaps whole clean weeks
+        # between people to close any zero-of-a-protected-slot gaps it can
+        # safely close. Even with that pass, ECEC 2 (David, Usha - sharing
+        # their room with Jason, who's paired and claims one of early/late
+        # outright every week) and ECEC 1 (Sandrine, Daniel, Arantza - three
+        # rotating people sharing the room's other protected seat) stay
+        # structurally squeezed enough that one of them can still end up
+        # without a safe swap available - same "genuinely unavoidable
+        # shortfall" the 4-week case already accepts, just smaller.
+        seed_slot = {
+            "Hanny": "early", "Manuel": "mid1", "Irene": "late", "Deoshree": "early",
+            "Sandrine": "mid2", "Daniel": "mid1", "Arantza": "late", "David": "mid2",
+            "Usha": "late",
+        }
+        r = build_roster(inputs(weeks=5, last_slot=seed_slot))
+        self.assertEqual(r.breaches, [])
+        missing_early = [n for n in ROTATING if "early" not in {base_slot(r, wi, n) for wi in range(5)}]
+        missing_late = [n for n in ROTATING if "late" not in {base_slot(r, wi, n) for wi in range(5)}]
+        self.assertLessEqual(len(missing_early), 1, missing_early)
+        self.assertLessEqual(len(missing_late), 1, missing_late)
+
     def test_bounded_override_highlights_the_persons_own_cell(self):
         # A manager's own one-off manual adjustment (a bounded override -
         # it has an end date) should highlight the adjusted person's own
@@ -821,7 +848,7 @@ class Files(unittest.TestCase):
         out = self.dir / "roster_only.xlsx"
         write_roster_only(roster, out)
         names = load_workbook(out).sheetnames
-        self.assertEqual(names, ["Week 1", "Week 2", "Week 3", "Week 4"])
+        self.assertEqual(names, ["Week 1", "Week 2", "Week 3", "Week 4", "Week 5"])
 
     def test_duties_pdf_has_one_page_per_week_with_every_duty(self):
         inp = sample_inputs(START)
@@ -844,7 +871,7 @@ class Files(unittest.TestCase):
         self.build()
         names = load_workbook(self.xlsx).sheetnames
         self.assertEqual(len(names), len(set(names)))
-        self.assertEqual(sum(n.startswith("Week ") for n in names), 4)
+        self.assertEqual(sum(n.startswith("Week ") for n in names), 5)
 
     def test_input_tabs_untouched(self):
         def snap():
