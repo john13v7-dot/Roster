@@ -23,7 +23,7 @@ from typing import Dict, List, Tuple
 from datetime import date, timedelta
 
 from .duties import CONTEXT_ROWS
-from .models import DAY_NAMES, NDAYS, Inputs, Roster
+from .models import DAY_NAMES, NDAYS, Inputs, Roster, Staff
 
 NCOLS = 2 + NDAYS + 2  # No, Name, Mon..Fri, break, empty
 COL_WIDTHS_CHARS = [5, 18] + [16] * NDAYS + [10, 10]  # Excel column widths
@@ -214,3 +214,36 @@ def duties_grid(inputs: Inputs, duty_week: dict) -> List[Row]:
         style = "plain"
         rows.append(Row([LCell(duty, style), LCell(text, style)], height=1.4))
     return rows
+
+
+WEEKLY_SUMMARY_NOTE = (
+    "Each person's shift for the week - shown even through a holiday, sick day or "
+    "maternity leave that week, never left blank because of it."
+)
+
+
+def intended_shift_text(roster: Roster, wi: int, st: Staff) -> str:
+    """What `st` was supposed to work in week `wi`, regardless of any
+    holiday/sick/maternity leave that week - the Weekly Summary's whole
+    point is to never blank this out just because they were away. Shared
+    by both the Excel and PDF writers, same as week_grid/duties_grid."""
+    if st.role in ("rotating", "paired"):
+        slot = roster.weeks[wi].full_base.get(st.name)
+        return roster.inputs.settings.shifts[slot].label if slot else ""
+    if st.role == "fixed":
+        return roster.inputs.settings.shifts[st.fixed_slot].label if st.fixed_slot else ""
+    # static or vacant: their own recorded hours - not leave-driven to
+    # begin with, so there's nothing to look past.
+    return st.note
+
+
+def weekly_summary_rows(roster: Roster) -> List[Tuple[str, List[str]]]:
+    """(label, [shift text per week]) for everyone who'd show on the
+    Weekly Summary - everyone except the true spacer "blank" rows."""
+    out: List[Tuple[str, List[str]]] = []
+    for _, st in roster.staff_keys:
+        if st.role == "blank":
+            continue
+        label = st.name or ("Vacant post" if st.role == "vacant" else "")
+        out.append((label, [intended_shift_text(roster, wi, st) for wi in range(len(roster.weeks))]))
+    return out

@@ -2293,7 +2293,34 @@
         },
       });
     });
+    addWeeklySummaryPdfPage(doc, weekIndices);
     return doc.output('blob');
+  }
+
+  // One page: one row per person, one column per printed week - the shift
+  // they were supposed to work that week, shown straight through a
+  // holiday, sick day or maternity leave rather than blanked out by it.
+  // Mirrors creche_roster/pdf_out.py's _summary_table.
+  function addWeeklySummaryPdfPage(doc, weekIndices){
+    doc.addPage();
+    doc.setFontSize(16); doc.setTextColor(224,74,50);
+    doc.text('WEEKLY SUMMARY', 40, 42);
+    doc.setFontSize(9); doc.setTextColor(64,64,64);
+    doc.text("Each person's shift for the week - shown even through a holiday, sick day or maternity leave that week, never left blank because of it.", 40, 58, {maxWidth: 515});
+    var body = [];
+    lastBuildOut.roster.staff_keys.forEach(function(ks){
+      var st = ks[1];
+      if(st.role === 'blank') return;
+      var label = st.name || (st.role === 'vacant' ? 'Vacant post' : '');
+      body.push([label].concat(weekIndices.map(function(wi){ return intendedShiftText(wi, st); })));
+    });
+    doc.autoTable({
+      startY: 74,
+      head: [['Name'].concat(weekIndices.map(function(wi){ return 'Week ' + (wi + 1) + ' (' + data.weeks[wi].label + ')'; }))],
+      body: body,
+      styles: {fontSize:9, cellPadding:5, lineColor:[231,221,212], lineWidth:0.5},
+      headStyles: {fillColor:[33,28,26], textColor:255, fontStyle:'bold'},
+    });
   }
 
   async function buildRosterXlsxBlob(weekIndices){

@@ -9,7 +9,19 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Table, TableStyle
 
-from .layout import COL_WIDTHS_CHARS, DUTY_COL_WIDTHS_CHARS, DUTY_NCOLS, NCOLS, STYLES, duties_grid, ordinal_runs, week_grid
+from .layout import (
+    COL_WIDTHS_CHARS,
+    DUTY_COL_WIDTHS_CHARS,
+    DUTY_NCOLS,
+    NCOLS,
+    STYLES,
+    WEEKLY_SUMMARY_NOTE,
+    date_range_text,
+    duties_grid,
+    ordinal_runs,
+    week_grid,
+    weekly_summary_rows,
+)
 from .models import Inputs, Roster
 
 MARGIN = 30
@@ -144,6 +156,52 @@ def _duties_table(inputs: Inputs, duty_week: dict, avail_w: float, avail_h: floa
     return Table(data, colWidths=[w * unit for w in DUTY_COL_WIDTHS_CHARS], rowHeights=heights, style=TableStyle(cmds))
 
 
+def _summary_table(roster: Roster, avail_w: float, avail_h: float) -> Table:
+    n_weeks = len(roster.weeks)
+    ncols = 1 + n_weeks
+    rows_data = weekly_summary_rows(roster)
+
+    rel_heights = [1.6, 1.3, 0.5, 1.8] + [1.25] * len(rows_data)
+    total = sum(BASE_ROW * h for h in rel_heights)
+    scale = min(1.0, avail_h / total * 0.97)
+    heights = [BASE_ROW * h * scale for h in rel_heights]
+
+    def para(text: str, spec, align: int = 1) -> Paragraph:
+        size = _size(spec)
+        style = ParagraphStyle(
+            "p", fontName=_font_name(spec), fontSize=size, leading=size + 2,
+            textColor=_hex(spec["color"]), alignment=align,
+        )
+        return Paragraph(escape(text), style)
+
+    title_spec, note_spec, header_spec, plain_spec = STYLES["title"], STYLES["note"], STYLES["header"], STYLES["plain"]
+    data = [
+        [para("Weekly Summary", title_spec, align=0)] + [""] * (ncols - 1),
+        [para(WEEKLY_SUMMARY_NOTE, note_spec, align=0)] + [""] * (ncols - 1),
+        [""] * ncols,
+        [para("Name", header_spec)] + [
+            para(f"Week {wi + 1} ({date_range_text(week.days[0], week.days[-1])})", header_spec)
+            for wi, week in enumerate(roster.weeks)
+        ],
+    ]
+    cmds = [
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("SPAN", (0, 0), (ncols - 1, 0)),
+        ("SPAN", (0, 1), (ncols - 1, 1)),
+        ("SPAN", (0, 2), (ncols - 1, 2)),
+        ("BACKGROUND", (0, 3), (ncols - 1, 3), _hex(header_spec["fill"])),
+        ("BOX", (0, 3), (ncols - 1, 3), 0.5, GRID),
+    ]
+    for ri, (label, shifts) in enumerate(rows_data, start=4):
+        data.append([para(label, plain_spec, align=0)] + [para(t, plain_spec) for t in shifts])
+        for ci in range(ncols):
+            cmds.append(("BOX", (ci, ri), (ci, ri), 0.5, GRID))
+
+    return Table(data, colWidths=[avail_w / ncols] * ncols, rowHeights=heights, style=TableStyle(cmds))
+
+
 def write_duties_pdf(inputs: Inputs, duty_weeks: list, path) -> None:
     page = A4
     avail_w = page[0] - 2 * MARGIN
@@ -183,6 +241,6 @@ def write_pdf(roster: Roster, path) -> None:
     n = len(roster.weeks)
     for wi in range(n):
         story.append(_week_table(roster, wi, avail_w, avail_h))
-        if wi < n - 1:
-            story.append(PageBreak())
+        story.append(PageBreak())
+    story.append(_summary_table(roster, avail_w, avail_h))
     doc.build(story)

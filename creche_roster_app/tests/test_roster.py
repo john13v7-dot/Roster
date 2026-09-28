@@ -873,6 +873,20 @@ class Files(unittest.TestCase):
         sue_week1 = ws.cell(rows["Sue"], 2).value
         self.assertEqual(sue_week1, "8:30 – 1:30")
 
+    def test_weekly_summary_pdf_page_shows_the_same_intended_shifts(self):
+        # Same content as the Excel Weekly Summary sheet, as a page appended
+        # to the roster PDF - Sue's holiday week still shows her hours.
+        leave = [Leave("Sue", START, START + timedelta(days=4), "Holiday")]
+        roster = build_roster(inputs(leave=leave, weeks=2))
+        out = self.dir / "weekly_summary.pdf"
+        write_pdf(roster, out)
+        reader = PdfReader(str(out))
+        self.assertEqual(len(reader.pages), 3)  # 2 week pages + summary
+        text = "".join(reader.pages[2].extract_text().split())
+        self.assertIn("WeeklySummary", text)
+        self.assertIn("Sue", text)
+        self.assertIn("".join("8:30 – 1:30".split()), text)
+
     def test_duties_pdf_has_one_page_per_week_with_every_duty(self):
         inp = sample_inputs(START)
         roster = build_roster(inp)
@@ -909,7 +923,8 @@ class Files(unittest.TestCase):
         roster, pdf = self.build()
         wb = load_workbook(self.xlsx)
         reader = PdfReader(str(pdf))
-        self.assertEqual(len(reader.pages), len(roster.weeks))
+        # One page per week, plus the Weekly Summary page appended at the end.
+        self.assertEqual(len(reader.pages), len(roster.weeks) + 1)
         for wi in range(len(roster.weeks)):
             grid = week_grid(roster, wi)
             ws = wb[f"Week {wi + 1}"]
