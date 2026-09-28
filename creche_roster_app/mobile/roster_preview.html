@@ -2260,7 +2260,7 @@
   }
   function rgbToArgb(rgb){ return 'FF' + rgbToHex(rgb); }
 
-  function buildRosterPdfBlob(weekIndices){
+  function buildRosterPdfBlob(weekIndices, includeSummary){
     var doc = new window.jspdf.jsPDF({unit:'pt', format:'a4'});
     weekIndices.forEach(function(wi, idx){
       var week = data.weeks[wi];
@@ -2293,7 +2293,7 @@
         },
       });
     });
-    addWeeklySummaryPdfPage(doc, weekIndices);
+    if(includeSummary) addWeeklySummaryPdfPage(doc, weekIndices);
     return doc.output('blob');
   }
 
@@ -2323,7 +2323,7 @@
     });
   }
 
-  async function buildRosterXlsxBlob(weekIndices){
+  async function buildRosterXlsxBlob(weekIndices, includeSummary){
     var wb = new ExcelJS.Workbook();
     weekIndices.forEach(function(wi){
       var week = data.weeks[wi];
@@ -2351,7 +2351,7 @@
       });
       ws.columns = [{width:20}].concat(week.day_names.map(function(){ return {width:16}; }));
     });
-    addWeeklySummarySheet(wb, weekIndices);
+    if(includeSummary) addWeeklySummarySheet(wb, weekIndices);
     var buffer = await wb.xlsx.writeBuffer();
     return new Blob([buffer], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
   }
@@ -2440,9 +2440,15 @@
     printMode = mode;
     var weeks = mode === 'roster' ? (data.weeks || []) : (data.duties || []);
     printDialogTitle.textContent = mode === 'roster' ? 'Print roster' : 'Print duty rota';
-    printWeekPicker.innerHTML = weeks.map(function(w, i){
+    var weekBoxes = weeks.map(function(w, i){
       return '<label><input type="checkbox" class="printweekcb" value="' + i + '" checked> ' + esc(w.label) + '</label>';
     }).join('');
+    var summaryBox = mode === 'roster'
+      ? '<hr style="border:none;border-top:1px solid var(--line);margin:10px 0;">'
+        + '<label style="align-items:flex-start;"><input type="checkbox" id="printSummaryCb" checked style="margin-top:2px;"> '
+        + '<span>Weekly Summary<br><span style="font-weight:400;font-size:12px;color:var(--ink-dim);">Everyone\'s shift for each week, even through a holiday, sick day or maternity leave</span></span></label>'
+      : '';
+    printWeekPicker.innerHTML = weekBoxes + summaryBox;
     printXlsxBtn.style.display = mode === 'roster' ? '' : 'none';
     printDialog.showModal();
   }
@@ -2476,22 +2482,28 @@
     }
   }
 
+  function summaryWanted(){
+    var cb = $('printSummaryCb');
+    return printMode === 'roster' && !!(cb && cb.checked);
+  }
   printXlsxBtn.onclick = async function(){
     var idxs = selectedWeekIndices();
     if(!idxs.length){ toast('Choose at least one week.'); return; }
+    var withSummary = summaryWanted();
     printDialog.close();
     printBtn.disabled = true;
-    var blob = await buildRosterXlsxBlob(idxs);
+    var blob = await buildRosterXlsxBlob(idxs, withSummary);
     await saveBlob('Roster_Planner' + weekSuffix(idxs, data.weeks.length) + '.xlsx', blob);
     printBtn.disabled = false;
   };
   $('printPdfBtn').onclick = async function(){
     var idxs = selectedWeekIndices();
     if(!idxs.length){ toast('Choose at least one week.'); return; }
+    var withSummary = summaryWanted();
     printDialog.close();
     if(printMode === 'roster'){
       printBtn.disabled = true;
-      var blob = buildRosterPdfBlob(idxs);
+      var blob = buildRosterPdfBlob(idxs, withSummary);
       await saveBlob('Roster_Planner' + weekSuffix(idxs, data.weeks.length) + '.pdf', blob);
       printBtn.disabled = false;
     } else {
