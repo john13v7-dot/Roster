@@ -12,7 +12,7 @@
     --sick-bg:#3D7EA6; --sick-ink:#e6f2f8;
     --off-bg:#A9D18E; --off-ink:#2c4a1e;
     --adjusted-bg:#FCE4A0; --adjusted-ink:#7f5f00;
-    --duties-btn:#3f6b52; --requests-btn:#3a6ea5; --fairness-btn:#7d5ba6;
+    --duties-btn:#3f6b52; --requests-btn:#3a6ea5; --fairness-btn:#7d5ba6; --history-btn:#8a6a3d;
     --info-bg:#e4eef8; --info-ink:#2c567e; --info-line:#c5dcef;
     --fair-bar-bg:#efe8f6;
   }
@@ -24,7 +24,7 @@
       --warn-bg:#3a3013; --warn-ink:#f0cf6e;
       --bad-bg:#3d1e19; --bad-ink:#ff9c8c;
       --chip-bg:#2c2721;
-      --duties-btn:#5c9877; --requests-btn:#6ba0d8; --fairness-btn:#a888d1;
+      --duties-btn:#5c9877; --requests-btn:#6ba0d8; --fairness-btn:#a888d1; --history-btn:#c8a06a;
       --info-bg:#1c2e3f; --info-ink:#8fc0ec; --info-line:#2c455c;
       --fair-bar-bg:#332a3d;
     }
@@ -36,7 +36,7 @@
     --warn-bg:#3a3013; --warn-ink:#f0cf6e;
     --bad-bg:#3d1e19; --bad-ink:#ff9c8c;
     --chip-bg:#2c2721;
-    --duties-btn:#5c9877; --requests-btn:#6ba0d8; --fairness-btn:#a888d1;
+    --duties-btn:#5c9877; --requests-btn:#6ba0d8; --fairness-btn:#a888d1; --history-btn:#c8a06a;
     --info-bg:#1c2e3f; --info-ink:#8fc0ec; --info-line:#2c455c;
     --fair-bar-bg:#332a3d;
   }
@@ -72,6 +72,7 @@
   #dutiesTopBtn{background:var(--duties-btn);}
   #requestsTopBtn{background:var(--requests-btn);}
   #fairnessTopBtn{background:var(--fairness-btn);}
+  #historyTopBtn{background:var(--history-btn);}
   .backbtn{
     display:inline-flex; align-items:center; gap:5px; background:none; border:none;
     color:var(--accent); font-size:14px; font-weight:700; padding:6px 0; cursor:pointer;
@@ -167,12 +168,13 @@
   .dot.on{background:var(--ok-ink);}
   .dot.off{background:var(--bad-ink);}
   .btnrow{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
-  .actionbtn{
+  .actionbtn, #startNextWeekBtn{
     font-size:12.5px; font-weight:700; color:#fff; background:var(--accent);
     border:none; border-radius:10px; padding:10px 13px; cursor:pointer;
     flex:1 1 auto; min-width:120px;
   }
-  .actionbtn:disabled{background:var(--chip-bg); color:var(--ink-dim); cursor:not-allowed;}
+  .actionbtn:disabled, #startNextWeekBtn:disabled{background:var(--chip-bg); color:var(--ink-dim); cursor:not-allowed;}
+  #startNextWeekBtn{background:var(--history-btn);}
   .rowlist{display:flex; flex-direction:column; gap:0;}
   .rowlist .item{
     display:flex; justify-content:space-between; align-items:center; gap:10px;
@@ -291,6 +293,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-6 4 3 5-8"/></svg>
         Fair
       </button>
+      <button id="historyTopBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
+        History
+      </button>
     </div>
     <div class="tabs" id="tabs"></div>
   </div>
@@ -337,6 +343,27 @@
     <h2>Duties fairness · last 4 weeks</h2>
     <p class="note" style="margin-top:0;">How many rotating cleaning duties each person has done. Jason takes a turn here even though his shift itself follows the separate pairing rota; Sue and Shehnaz/Priscilla are fixed to their own duty every week, so they're not counted here. (Duty tracking only just started, so this is still the full history so far.)</p>
     <div id="dutyFairTable"></div>
+  </div>
+</div>
+
+<!-- ============================== HISTORY SCREEN ============================== -->
+<div class="screen" id="historyScreen">
+  <div class="topbar">
+    <button class="backbtn" data-back="homeScreen">‹ Roster</button>
+    <div class="pagetitle" style="margin-top:2px;">History</div>
+  </div>
+
+  <div class="card panel">
+    <h2>Start next week</h2>
+    <p class="note" style="margin-top:0;">Archives Week 1 of the roster below into history, then moves the whole 5-week window forward by one week - a new Week 5 appears, built using what Week 1 actually was as its starting point. This is how the roster keeps going month after month (November, December, ...) without anyone having to reset it by hand. The roster you're already looking at doesn't change until you do this.</p>
+    <div id="historyCurrentWeek1" class="note" style="margin-top:0;"></div>
+    <button id="startNextWeekBtn" style="margin-top:10px;" disabled>Start next week →</button>
+  </div>
+
+  <div class="card panel">
+    <h2>Previous months</h2>
+    <p class="note" style="margin-top:0;">Every week once it's been archived, grouped by month - a record of what was actually worked, not a plan.</p>
+    <div id="historyMonths"></div>
   </div>
 </div>
 
@@ -2024,12 +2051,14 @@
   $('requestsTopBtn').onclick = function(){ showScreen('requestsScreen'); };
   $('dutiesTopBtn').onclick = function(){ showScreen('dutiesScreen'); };
   $('fairnessTopBtn').onclick = function(){ showScreen('fairnessScreen'); };
+  $('historyTopBtn').onclick = function(){ showScreen('historyScreen'); renderHistory(); };
   document.querySelectorAll('.backbtn').forEach(function(btn){
     btn.onclick = function(){ showScreen(btn.dataset.back); };
   });
 
   // ---------- roster (home screen) ----------
   var tabsEl = $('tabs'), weeksEl = $('weeks'), dutyTabsEl = $('dutyTabs');
+  var historyDocs = []; // archived weeks, from the rosterHistory collection
 
   function pillClass(kind, text, adjusted){
     if(kind === 'vacant') return 'daypill-vacant';
@@ -2226,6 +2255,111 @@
     else { dutyHost.innerHTML = '<div class="empty">No duty rota to show yet.</div>'; }
   }
   renderFairness();
+
+  // ---------- history: archived weeks, and moving the window forward ----------
+  var DAY_NAMES_HISTORY = ['Mon','Tue','Wed','Thu','Fri'];
+  var MONTH_NAMES_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  function monthLabel(iso){
+    var parts = iso.split('-');
+    return MONTH_NAMES_FULL[parseInt(parts[1], 10) - 1] + ' ' + parts[0];
+  }
+  function weekCardHtml(label, people){
+    var rows = (people || []).map(function(p){
+      var pills = (p.days || []).map(function(dcell, di){
+        return '<div class="daypill ' + pillClass(dcell.kind, dcell.text, dcell.adjusted) + '">'
+          + '<div class="dlabel">' + esc(DAY_NAMES_HISTORY[di] || '') + '</div>'
+          + '<div class="dtext">' + esc(dcell.text || '—') + '</div></div>';
+      }).join('');
+      return '<div class="personrow"><div class="personhead"><span class="personname">' + esc(p.name)
+        + '</span>' + (p.role === 'vacant' ? '<span class="personrole">vacant</span>' : '') + '</div>'
+        + '<div class="daypills">' + pills + '</div></div>';
+    }).join('');
+    return '<div class="week card" style="margin-top:10px;">'
+      + '<div style="font-size:13px; font-weight:800; margin-bottom:10px;">' + esc(label) + '</div>' + rows + '</div>';
+  }
+  function renderHistory(){
+    var week0 = data.weeks && data.weeks[0];
+    var cw = $('historyCurrentWeek1');
+    if(week0){
+      cw.textContent = 'Week 1 right now: ' + week0.label + '.';
+    } else {
+      cw.textContent = 'No roster built yet.';
+    }
+    $('startNextWeekBtn').style.display = week0 ? '' : 'none';
+
+    var host = $('historyMonths');
+    if(!historyDocs.length){
+      host.innerHTML = '<div class="empty">Nothing archived yet - click "Start next week" once a week is done to begin building history.</div>';
+      return;
+    }
+    var byMonth = {};
+    var order = [];
+    historyDocs.forEach(function(doc){
+      var key = doc.monday.slice(0, 7);
+      if(!byMonth[key]){ byMonth[key] = []; order.push(key); }
+      byMonth[key].push(doc);
+    });
+    host.innerHTML = order.map(function(key, i){
+      var docs = byMonth[key];
+      var weeksHtml = docs.map(function(doc){ return weekCardHtml(doc.label || doc.monday, doc.people); }).join('');
+      return '<details' + (i === 0 ? ' open' : '') + ' style="margin-top:' + (i ? '14px' : '0') + ';">'
+        + '<summary style="font-weight:800; cursor:pointer;">' + esc(monthLabel(key + '-01')) + ' (' + docs.length + ' week' + (docs.length > 1 ? 's' : '') + ')</summary>'
+        + weeksHtml + '</details>';
+    }).join('');
+  }
+  renderHistory();
+
+  $('startNextWeekBtn').onclick = async function(){
+    if(!db || !lastBuildOut || !data.weeks || !data.weeks[0]) return;
+    var week0 = data.weeks[0];
+    var ok = await askConfirm(
+      'Archives Week 1 (' + week0.label + ') into History, then moves the whole roster forward one week - a new Week 5 appears. The roster you\'re looking at now stays exactly as it is until this finishes.',
+      {title: 'Start next week?', okLabel: 'Start next week', okColor: 'var(--history-btn)'}
+    );
+    if(!ok) return;
+    var btn = $('startNextWeekBtn');
+    btn.disabled = true;
+    try{
+      var roster = lastBuildOut.roster;
+      var lastSlotUpdate = {};
+      roster.staff_keys.forEach(function(ks){
+        var st2 = ks[1];
+        if(st2.role !== 'rotating' && st2.role !== 'paired') return;
+        var slot = RosterEngine.weeklySlot(roster, 0, st2.name);
+        if(slot) lastSlotUpdate[st2.name] = slot;
+      });
+      var archiveDoc = {
+        monday: week0.monday,
+        label: week0.label,
+        people: week0.people,
+        duties: (data.duties && data.duties[0]) ? data.duties[0].assignments : null,
+        lastSlot: lastSlotUpdate,
+        archivedAt: todayISO(),
+      };
+      await db.collection('rosterHistory').doc(week0.monday).set(archiveDoc);
+
+      var mergedLastSlot = Object.assign({}, (startingHistoryDoc && startingHistoryDoc.lastSlot) || {}, lastSlotUpdate);
+      await db.collection('settings').doc('startingHistory').set({
+        history: {},
+        lastSlot: mergedLastSlot,
+        note: 'Auto-updated when Week 1 (' + week0.label + ') was archived via Start next week.',
+        sourcedFrom: 'Archived roster history (rosterHistory/' + week0.monday + ')',
+      });
+
+      var newStart = RosterEngine.addDays(week0.monday, 7);
+      await db.collection('settings').doc('rosterWindow').set({ start: newStart });
+      rosterStartAnchor = newStart;
+
+      var beforeRoster = roster;
+      recompute();
+      await logChange('Started next week: archived ' + week0.label + '; the roster now starts ' + fmtDate(newStart) + '.', null, beforeRoster);
+      toast('Archived ' + week0.label + '. Roster moved forward.');
+      renderHistory();
+    } catch(e){
+      toast('Could not start next week: ' + (e && e.message ? e.message : 'try again.'));
+    }
+    btn.disabled = false;
+  };
 
   // ---------- print: built live in the browser, from whatever `data` (the
   // same object driving the Roster/Duties screens) holds right now - never
@@ -2750,8 +2884,13 @@
   confirmDialog.addEventListener('close', function(){
     if(confirmResolve){ confirmResolve(confirmDialog.returnValue === 'yes'); confirmResolve = null; }
   });
-  function askConfirm(message){
+  function askConfirm(message, opts){
+    opts = opts || {};
+    $('confirmTitle').textContent = opts.title || 'Remove this?';
     $('confirmBody').textContent = message;
+    var okBtn = $('confirmOk');
+    okBtn.textContent = opts.okLabel || 'Remove';
+    okBtn.style.background = opts.okColor || 'var(--bad-ink)';
     confirmDialog.returnValue = '';
     try{
       confirmDialog.showModal();
@@ -2815,6 +2954,7 @@
     $('syncDot').className = 'dot on';
     $('syncText').textContent = 'Connected — the roster rebuilds itself instantly here, no waiting on Claude.';
     document.querySelectorAll('.actionbtn').forEach(function(b){ b.disabled = false; });
+    $('startNextWeekBtn').disabled = false;
 
     db.collection('staff').onSnapshot(function(snap){
       staffDocs = snap.docs.map(function(d){ return Object.assign({}, d.data() || {}, { _id: d.id }); });
@@ -2845,6 +2985,11 @@
     db.collection('settings').onSnapshot(function(snap){
       var doc = snap.docs.find(function(d){ return d.id === 'startingHistory'; });
       startingHistoryDoc = doc ? doc.data() : null;
+      // rosterWindow, when it exists, is the live, persisted anchor - it
+      // wins over whatever the last-published static snapshot said, so
+      // "Start next week" sticks for every viewer, not just this tab.
+      var rw = snap.docs.find(function(d){ return d.id === 'rosterWindow'; });
+      if(rw && rw.data().start) rosterStartAnchor = rw.data().start;
       historyLoaded = true;
       recompute();
     }, function(){ historyLoaded = true; recompute(); });
@@ -2852,6 +2997,10 @@
       changeLogDocs = snap.docs.map(function(d){ return Object.assign({}, d.data() || {}, { _id: d.id }); });
       renderChangeLog(changeLogDocs);
     }, function(){ $('changeLogList').innerHTML = '<div class="empty">Could not load the change log.</div>'; });
+    db.collection('rosterHistory').orderBy('monday', 'desc').onSnapshot(function(snap){
+      historyDocs = snap.docs.map(function(d){ return Object.assign({}, d.data() || {}, { _id: d.id }); });
+      renderHistory();
+    }, function(){ $('historyMonths').innerHTML = '<div class="empty">Could not load history.</div>'; });
   }
   init();
 

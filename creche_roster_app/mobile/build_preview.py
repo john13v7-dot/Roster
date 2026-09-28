@@ -153,12 +153,22 @@ def fairness_json(inputs, roster, duty_weeks) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--db-export", required=True, help="JSON file: {staff: [...], leave: [...], transfers: [...]}")
-    ap.add_argument("--start", default="2026-09-28", help="Roster start Monday, YYYY-MM-DD")
+    ap.add_argument(
+        "--start", default=None,
+        help="Roster start Monday, YYYY-MM-DD. Defaults to the export's settings/rosterWindow.start "
+        "(set by the app's own 'Start next week' button), or 2026-09-28 if that's not there either.",
+    )
     ap.add_argument("--out-dir", default="out", help="Where to write the html/xlsx/pdf")
     args = ap.parse_args()
 
-    roster_start = date.fromisoformat(args.start)
     db_export = json.loads(Path(args.db_export).read_text())
+    start_arg = args.start
+    if start_arg is None:
+        window_doc = next(
+            (d for d in db_export.get("settings", []) if d.get("id") == "rosterWindow"), None
+        )
+        start_arg = (window_doc or {}).get("start") or "2026-09-28"
+    roster_start = date.fromisoformat(start_arg)
     inputs, roster = build(db_export, roster_start)
 
     out_dir = Path(args.out_dir)
