@@ -2262,6 +2262,7 @@
 
   function buildRosterPdfBlob(weekIndices, includeSummary){
     var doc = new window.jspdf.jsPDF({unit:'pt', format:'a4'});
+    doc.setFont(undefined, 'bold');
     weekIndices.forEach(function(wi, idx){
       var week = data.weeks[wi];
       if(idx > 0) doc.addPage();
@@ -2278,7 +2279,7 @@
         startY: 74,
         head: [['Name'].concat(week.day_names)],
         body: body,
-        styles: {fontSize:9, cellPadding:5, lineColor:[231,221,212], lineWidth:0.5},
+        styles: {fontSize:9, cellPadding:5, lineColor:[231,221,212], lineWidth:0.5, fontStyle:'bold'},
         headStyles: {fillColor:[33,28,26], textColor:255, fontStyle:'bold'},
         didParseCell: function(hook){
           if(hook.section !== 'body' || hook.column.index === 0) return;
@@ -2318,7 +2319,7 @@
       startY: 74,
       head: [['Name'].concat(weekIndices.map(function(wi){ return 'Week ' + (wi + 1) + ' (' + data.weeks[wi].label + ')'; }))],
       body: body,
-      styles: {fontSize:9, cellPadding:5, lineColor:[231,221,212], lineWidth:0.5},
+      styles: {fontSize:9, cellPadding:5, lineColor:[231,221,212], lineWidth:0.5, fontStyle:'bold'},
       headStyles: {fillColor:[33,28,26], textColor:255, fontStyle:'bold'},
     });
   }
@@ -2401,6 +2402,7 @@
 
   function buildDutiesPdfBlob(weekIndices){
     var doc = new window.jspdf.jsPDF({unit:'pt', format:'a4'});
+    doc.setFont(undefined, 'bold');
     var used = 0;
     weekIndices.forEach(function(wi){
       var week = (data.duties || [])[wi];
@@ -2424,7 +2426,7 @@
         startY: 74,
         head: [['Duty', 'Assigned']],
         body: body,
-        styles: {fontSize:10, cellPadding:6, lineColor:[231,221,212], lineWidth:0.5},
+        styles: {fontSize:10, cellPadding:6, lineColor:[231,221,212], lineWidth:0.5, fontStyle:'bold'},
         headStyles: {fillColor:[63,107,82], textColor:255, fontStyle:'bold'},
       });
     });

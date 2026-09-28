@@ -31,15 +31,12 @@ GRID = colors.HexColor("#808080")
 
 
 def _font_name(spec) -> str:
+    # Every PDF page is printed bold throughout, regardless of a style's own
+    # `bold` flag - Excel (which shares STYLES with these PDFs) keeps its
+    # normal/bold distinction; only the printed page goes all-bold.
     if spec.get("serif"):
-        return "Times-Bold" if spec["bold"] else "Times-Roman"
-    if spec["bold"] and spec["italic"]:
-        return "Helvetica-BoldOblique"
-    if spec["bold"]:
-        return "Helvetica-Bold"
-    if spec["italic"]:
-        return "Helvetica-Oblique"
-    return "Helvetica"
+        return "Times-Bold"
+    return "Helvetica-BoldOblique" if spec["italic"] else "Helvetica-Bold"
 
 
 def _hex(h: str):
