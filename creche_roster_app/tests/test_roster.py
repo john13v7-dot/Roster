@@ -1013,6 +1013,47 @@ class ProtectedRoster(unittest.TestCase):
         for wi in range(len(baseline.weeks)):
             self.assertEqual(self._week_slots(protected, wi), self._week_slots(baseline, wi))
 
+    def test_already_locked_days_stop_showing_the_adjusted_highlight(self):
+        # A cell's "adjusted" flag means "different from the normal
+        # rotation" - a one-time heads-up the day it's new. Left alone,
+        # that comparison is against a counterfactual (as if the leave
+        # never happened) that never changes, so it would keep showing
+        # amber on every future rebuild, long after the week it flagged
+        # was already shared and settled - not "just adjusted", just
+        # permanently flagged. Once a day is locked in (touched_ranges
+        # doesn't cover it any more - exactly what happens once whatever
+        # caused it has itself become old news), the highlight should have
+        # expired along with that day's right to rebalance.
+        leave = [Leave("Manuel", START, START + timedelta(days=4), "Holiday")]
+        already_locked = build_roster(inputs(leave=leave))
+        week0 = already_locked.weeks[0]
+        daniel_cells = [week0.cells[("Daniel", d)] for d in week0.days]
+        self.assertTrue(
+            any(c.adjusted for c in daniel_cells),
+            "fixture assumption broke: Manuel's week-1 leave no longer flags Daniel as adjusted",
+        )
+        locked = extract_locked_slots(already_locked)
+
+        # touched_ranges=[] - nothing new since this got locked in, same as
+        # the live app once a leave is a few builds old.
+        protected = build_protected_roster(inputs(leave=leave), locked, [])
+        week0p = protected.weeks[0]
+        self.assertEqual(
+            [week0p.cells[("Daniel", d)].slot for d in week0p.days],
+            [c.slot for c in daniel_cells],
+        )
+        self.assertTrue(all(not week0p.cells[("Daniel", d)].adjusted for d in week0p.days))
+
+    def test_touched_days_keep_the_adjusted_highlight(self):
+        leave = [Leave("Manuel", START, START + timedelta(days=4), "Holiday")]
+        already_locked = build_roster(inputs(leave=leave))
+        locked = extract_locked_slots(already_locked)
+        # This time the leave's own week is still open (touched) - the
+        # highlight is live news there, so it should survive.
+        protected = build_protected_roster(inputs(leave=leave), locked, [(START, START + timedelta(days=4))])
+        week0p = protected.weeks[0]
+        self.assertTrue(any(week0p.cells[("Daniel", d)].adjusted for d in week0p.days))
+
     def test_a_day_with_no_lock_entry_is_left_as_freshly_computed(self):
         baseline = build_roster(inputs())
         # An empty lock: nothing's ever been pinned, so a touched_ranges

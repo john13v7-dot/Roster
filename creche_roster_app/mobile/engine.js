@@ -1513,16 +1513,37 @@
       return corrections;
     }
 
+    // A cell's `adjusted` highlight flags "different from the normal
+    // rotation" against a fixed counterfactual (as if the leave/override
+    // never happened), which never expires on its own - every cell a
+    // leave ever touched would stay highlighted on every future rebuild,
+    // not just the day it was new. A day outside touchedRanges is, by
+    // definition, already-shared old news (that's the point of locking
+    // it), so its highlight should have expired along with its right to
+    // rebalance.
+    function clearStaleAdjusted(roster) {
+      roster.weeks.forEach(function (week) {
+        week.days.forEach(function (d) {
+          if (isTouched(d)) return;
+          roster.staff_keys.forEach(function (ks) {
+            var cell = week.cells.get(cellKey(ks[0], d));
+            if (cell && cell.adjusted) cell.adjusted = false;
+          });
+        });
+      });
+    }
+
     var MAX_ROUNDS = 10;
     var pins = [];
     var roster = buildRoster(inputs);
     for (var i = 0; i < MAX_ROUNDS; i++) {
       var newCorrections = findCorrections(roster);
-      if (!newCorrections.length) return roster;
+      if (!newCorrections.length) { clearStaleAdjusted(roster); return roster; }
       pins = pins.concat(newCorrections);
       var protectedInputs = Object.assign({}, inputs, { overrides: inputs.overrides.concat(pins) });
       roster = buildRoster(protectedInputs);
     }
+    clearStaleAdjusted(roster);
     return roster;
   }
 

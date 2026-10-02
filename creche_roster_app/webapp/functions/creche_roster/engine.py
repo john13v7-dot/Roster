@@ -1235,16 +1235,40 @@ def build_protected_roster(
                         corrections.append(Override(name=st.name, start=d, end=d, slot=locked_slot))
         return corrections
 
+    def clear_stale_adjusted(roster: Roster) -> None:
+        """A cell's `adjusted` highlight means "this is different from what
+        the normal rotation would have given them" - a deliberate heads-up
+        the day it's new. Left as the engine computes it, that comparison
+        is against a fixed, never-changing counterfactual (this person's
+        slot had no one ever gone on leave), so once a leave/override is a
+        few builds old, every cell it ever touched would stay highlighted
+        forever - not "just changed", just permanently flagged. A day
+        outside touched_ranges is, by definition, already-shared old news
+        (that's the whole point of locking it), so its highlight should
+        have expired along with its right to rebalance; clear it in place
+        rather than leave stale amber on a settled week.
+        """
+        for week in roster.weeks:
+            for d in week.days:
+                if is_touched(d):
+                    continue
+                for key, _ in roster.staff_keys:
+                    cell = week.cells.get((key, d))
+                    if cell is not None and cell.adjusted:
+                        cell.adjusted = False
+
     _MAX_ROUNDS = 10
     pins: List[Override] = []
     roster = build_roster(inputs)
     for _ in range(_MAX_ROUNDS):
         new_corrections = find_corrections(roster)
         if not new_corrections:
+            clear_stale_adjusted(roster)
             return roster
         pins = pins + new_corrections
         protected_inputs = dataclasses.replace(inputs, overrides=list(inputs.overrides) + pins)
         roster = build_roster(protected_inputs)
+    clear_stale_adjusted(roster)
     return roster
 
 
