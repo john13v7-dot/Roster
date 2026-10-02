@@ -30,6 +30,7 @@ How it works
 
 from __future__ import annotations
 
+import dataclasses
 from collections import Counter
 from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -44,6 +45,7 @@ from .models import (
     Check,
     InputError,
     Inputs,
+    Override,
     Roster,
     Staff,
     WeekRoster,
@@ -1137,6 +1139,113 @@ def build_roster(inputs: Inputs) -> Roster:
         cumulative_counts={n: dict(c) for n, c in hist.items()},
         last_slot=dict(last_slot),
     )
+
+
+# --------------------------------------------------------------------------
+# Protected (locked) weeks - keeping an already-shared roster from
+# rippling when an unrelated later change comes in
+# --------------------------------------------------------------------------
+def extract_locked_slots(
+    roster: Roster, days: Optional[set] = None
+) -> Dict[str, Dict[str, str]]:
+    """Each rotating/paired person's actual slot, keyed by ISO date, across
+    `roster` - the shape settings/lockedRoster stores. `days` (a set of
+    `date`), when given, limits this to just those calendar dates - the
+    usual case, since the whole point of locking is that a day nobody
+    asked to change keeps whatever it was already locked to, not whatever
+    this particular build happened to compute."""
+    out: Dict[str, Dict[str, str]] = {}
+    for week in roster.weeks:
+        for d in week.days:
+            if days is not None and d not in days:
+                continue
+            for _, st in roster.staff_keys:
+                if st.role not in ("rotating", "paired") or not st.name:
+                    continue
+                cell = week.cells.get((st.name, d))
+                if cell is not None and cell.kind == "shift":
+                    out.setdefault(st.name, {})[d.isoformat()] = cell.slot
+    return out
+
+
+def build_protected_roster(
+    inputs: Inputs,
+    locked_roster: Dict[str, Dict[str, str]],
+    touched_ranges: List[Tuple[date, date]],
+) -> Roster:
+    """Build the roster, then pin every rotating/paired person's day back
+    to `locked_roster` (their last known-good slot: {name: {iso_date:
+    slot}}) for any day that falls outside `touched_ranges` - so one new
+    leave or override only ever changes the week(s) its own dates
+    actually cover, never the fairness rebalancing rippling into weeks
+    already shared with staff. `touched_ranges` is a list of (start, end)
+    date pairs, inclusive both ends; an empty list protects every locked
+    day, a single (date.min, date.max) pair opens everything (e.g. after
+    a staff change, which can legitimately need to reach every week).
+
+    A day with no entry in `locked_roster` yet (nothing's ever locked it)
+    is left exactly as freshly computed - there's nothing to protect it
+    against. A day inside `touched_ranges` is also left exactly as
+    computed, for everyone, not just whoever's leave/override put it
+    there - that's deliberate: a day genuinely open to a new change needs
+    its normal cover-adjustment freedom (e.g. someone else picking up an
+    opening shift the day a colleague's new leave falls on), not a
+    half-protected state where the person on leave can move but nobody
+    else can adjust around them.
+
+    Callers that want this build's results to become the NEW lock for
+    the days that were open should call extract_locked_slots(result,
+    days=<the touched calendar dates>) and merge that into their stored
+    lockedRoster - never the whole roster, which would just overwrite the
+    lock with this build's output and silently stop protecting anything.
+
+    Pinning one day's rotation back to its locked slot is itself a change
+    to who's "already used" that slot that week, so it can nudge the
+    rotating pool's room-clash/least-done-first logic to reassign some
+    OTHER, previously-matching day away from its own locked slot - the
+    same joint, non-decomposable behaviour that makes a partial override
+    ripple in build_roster() generally. So this corrects in rounds: build,
+    find every locked day that doesn't match, pin those via overrides,
+    rebuild, and repeat until a round finds nothing left to fix. Each
+    round's pins are cumulative (on top of every earlier round's), and the
+    loop is capped (`_MAX_ROUNDS`) so a locked_roster that can never be
+    fully honoured (e.g. it contradicts a hard pairing/cover rule for an
+    open day) can't spin forever - that unlikely case returns the last
+    round's roster, which is still a valid, checked build, just not a
+    perfect match to every locked day.
+    """
+
+    def is_touched(d: date) -> bool:
+        return any(a <= d <= b for a, b in touched_ranges)
+
+    def find_corrections(roster: Roster) -> List[Override]:
+        corrections: List[Override] = []
+        for week in roster.weeks:
+            for d in week.days:
+                if is_touched(d):
+                    continue
+                for _, st in roster.staff_keys:
+                    if st.role not in ("rotating", "paired") or not st.name:
+                        continue
+                    locked_slot = locked_roster.get(st.name, {}).get(d.isoformat())
+                    if locked_slot is None:
+                        continue
+                    cell = week.cells.get((st.name, d))
+                    if cell is not None and cell.kind == "shift" and cell.slot != locked_slot:
+                        corrections.append(Override(name=st.name, start=d, end=d, slot=locked_slot))
+        return corrections
+
+    _MAX_ROUNDS = 10
+    pins: List[Override] = []
+    roster = build_roster(inputs)
+    for _ in range(_MAX_ROUNDS):
+        new_corrections = find_corrections(roster)
+        if not new_corrections:
+            return roster
+        pins = pins + new_corrections
+        protected_inputs = dataclasses.replace(inputs, overrides=list(inputs.overrides) + pins)
+        roster = build_roster(protected_inputs)
+    return roster
 
 
 # --------------------------------------------------------------------------

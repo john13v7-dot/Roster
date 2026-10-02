@@ -1462,6 +1462,70 @@
     return { shifts: shiftRows, duties: dutyRows };
   }
 
+  // ---------------------------------------------------------------- protected (locked) weeks
+  // Port of engine.py's extract_locked_slots/build_protected_roster - keeps
+  // an already-shared roster from rippling when an unrelated later change
+  // comes in. See the Python docstrings for the full rationale; kept a
+  // faithful translation here, including the fixed-point correction loop
+  // (pinning one locked day can itself nudge the rotation on some OTHER
+  // day in the same rebuild, so one pass isn't always enough to converge).
+  function extractLockedSlots(roster, days) {
+    var daySet = days ? new Set(days) : null;
+    var out = {};
+    roster.weeks.forEach(function (week) {
+      week.days.forEach(function (d) {
+        if (daySet && !daySet.has(d)) return;
+        roster.staff_keys.forEach(function (ks) {
+          var st = ks[1];
+          if ((st.role !== 'rotating' && st.role !== 'paired') || !st.name) return;
+          var cell = week.cells.get(cellKey(st.name, d));
+          if (cell && cell.kind === 'shift') {
+            if (!out[st.name]) out[st.name] = {};
+            out[st.name][d] = cell.slot;
+          }
+        });
+      });
+    });
+    return out;
+  }
+
+  function buildProtectedRoster(inputs, lockedRoster, touchedRanges) {
+    function isTouched(d) {
+      return touchedRanges.some(function (r) { return r[0] <= d && d <= r[1]; });
+    }
+    function findCorrections(roster) {
+      var corrections = [];
+      roster.weeks.forEach(function (week) {
+        week.days.forEach(function (d) {
+          if (isTouched(d)) return;
+          roster.staff_keys.forEach(function (ks) {
+            var st = ks[1];
+            if ((st.role !== 'rotating' && st.role !== 'paired') || !st.name) return;
+            var lockedSlot = (lockedRoster[st.name] || {})[d];
+            if (lockedSlot == null) return;
+            var cell = week.cells.get(cellKey(st.name, d));
+            if (cell && cell.kind === 'shift' && cell.slot !== lockedSlot) {
+              corrections.push({ name: st.name, start: d, end: d, slot: lockedSlot, text: '' });
+            }
+          });
+        });
+      });
+      return corrections;
+    }
+
+    var MAX_ROUNDS = 10;
+    var pins = [];
+    var roster = buildRoster(inputs);
+    for (var i = 0; i < MAX_ROUNDS; i++) {
+      var newCorrections = findCorrections(roster);
+      if (!newCorrections.length) return roster;
+      pins = pins.concat(newCorrections);
+      var protectedInputs = Object.assign({}, inputs, { overrides: inputs.overrides.concat(pins) });
+      roster = buildRoster(protectedInputs);
+    }
+    return roster;
+  }
+
   // ---------------------------------------------------------------- top-level build + diff
   // `historySeed`/`lastSlotSeed` default to empty - each build's 4 weeks
   // balanced fairly among themselves, matching the app's own Fairness
@@ -1473,6 +1537,22 @@
     var settings = buildSettings(rosterStartIso);
     var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs);
     var roster = buildRoster(inputs);
+    var dutyWeeks = buildDutyRoster(inputs, roster);
+    var summary = summaryJson(inputs, roster);
+    summary.duties = dutiesJson(inputs, dutyWeeks);
+    summary.fairness = fairnessJson(inputs, roster, dutyWeeks);
+    return { inputs: inputs, roster: roster, dutyWeeks: dutyWeeks, summary: summary };
+  }
+
+  // Same as build(), but pins every day outside touchedRanges back to
+  // lockedRoster (see buildProtectedRoster above) - the normal path once
+  // the app has a lockedRoster to protect; build() stays as-is for
+  // callers (e.g. a staff add/remove, which deliberately reopens
+  // everything) that want the plain, unprotected computation.
+  function buildProtected(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, lockedRoster, touchedRanges) {
+    var settings = buildSettings(rosterStartIso);
+    var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs);
+    var roster = buildProtectedRoster(inputs, lockedRoster || {}, touchedRanges || []);
     var dutyWeeks = buildDutyRoster(inputs, roster);
     var summary = summaryJson(inputs, roster);
     summary.duties = dutiesJson(inputs, dutyWeeks);
@@ -1514,9 +1594,12 @@
 
   global.RosterEngine = {
     build: build,
+    buildProtected: buildProtected,
     buildSettings: buildSettings,
     buildInputsFromDb: buildInputsFromDb,
     buildRoster: buildRoster,
+    buildProtectedRoster: buildProtectedRoster,
+    extractLockedSlots: extractLockedSlots,
     buildDutyRoster: buildDutyRoster,
     summaryJson: summaryJson,
     dutiesJson: dutiesJson,

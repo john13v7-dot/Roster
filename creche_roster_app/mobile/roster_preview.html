@@ -1932,6 +1932,70 @@
     return { shifts: shiftRows, duties: dutyRows };
   }
 
+  // ---------------------------------------------------------------- protected (locked) weeks
+  // Port of engine.py's extract_locked_slots/build_protected_roster - keeps
+  // an already-shared roster from rippling when an unrelated later change
+  // comes in. See the Python docstrings for the full rationale; kept a
+  // faithful translation here, including the fixed-point correction loop
+  // (pinning one locked day can itself nudge the rotation on some OTHER
+  // day in the same rebuild, so one pass isn't always enough to converge).
+  function extractLockedSlots(roster, days) {
+    var daySet = days ? new Set(days) : null;
+    var out = {};
+    roster.weeks.forEach(function (week) {
+      week.days.forEach(function (d) {
+        if (daySet && !daySet.has(d)) return;
+        roster.staff_keys.forEach(function (ks) {
+          var st = ks[1];
+          if ((st.role !== 'rotating' && st.role !== 'paired') || !st.name) return;
+          var cell = week.cells.get(cellKey(st.name, d));
+          if (cell && cell.kind === 'shift') {
+            if (!out[st.name]) out[st.name] = {};
+            out[st.name][d] = cell.slot;
+          }
+        });
+      });
+    });
+    return out;
+  }
+
+  function buildProtectedRoster(inputs, lockedRoster, touchedRanges) {
+    function isTouched(d) {
+      return touchedRanges.some(function (r) { return r[0] <= d && d <= r[1]; });
+    }
+    function findCorrections(roster) {
+      var corrections = [];
+      roster.weeks.forEach(function (week) {
+        week.days.forEach(function (d) {
+          if (isTouched(d)) return;
+          roster.staff_keys.forEach(function (ks) {
+            var st = ks[1];
+            if ((st.role !== 'rotating' && st.role !== 'paired') || !st.name) return;
+            var lockedSlot = (lockedRoster[st.name] || {})[d];
+            if (lockedSlot == null) return;
+            var cell = week.cells.get(cellKey(st.name, d));
+            if (cell && cell.kind === 'shift' && cell.slot !== lockedSlot) {
+              corrections.push({ name: st.name, start: d, end: d, slot: lockedSlot, text: '' });
+            }
+          });
+        });
+      });
+      return corrections;
+    }
+
+    var MAX_ROUNDS = 10;
+    var pins = [];
+    var roster = buildRoster(inputs);
+    for (var i = 0; i < MAX_ROUNDS; i++) {
+      var newCorrections = findCorrections(roster);
+      if (!newCorrections.length) return roster;
+      pins = pins.concat(newCorrections);
+      var protectedInputs = Object.assign({}, inputs, { overrides: inputs.overrides.concat(pins) });
+      roster = buildRoster(protectedInputs);
+    }
+    return roster;
+  }
+
   // ---------------------------------------------------------------- top-level build + diff
   // `historySeed`/`lastSlotSeed` default to empty - each build's 4 weeks
   // balanced fairly among themselves, matching the app's own Fairness
@@ -1943,6 +2007,22 @@
     var settings = buildSettings(rosterStartIso);
     var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs);
     var roster = buildRoster(inputs);
+    var dutyWeeks = buildDutyRoster(inputs, roster);
+    var summary = summaryJson(inputs, roster);
+    summary.duties = dutiesJson(inputs, dutyWeeks);
+    summary.fairness = fairnessJson(inputs, roster, dutyWeeks);
+    return { inputs: inputs, roster: roster, dutyWeeks: dutyWeeks, summary: summary };
+  }
+
+  // Same as build(), but pins every day outside touchedRanges back to
+  // lockedRoster (see buildProtectedRoster above) - the normal path once
+  // the app has a lockedRoster to protect; build() stays as-is for
+  // callers (e.g. a staff add/remove, which deliberately reopens
+  // everything) that want the plain, unprotected computation.
+  function buildProtected(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, lockedRoster, touchedRanges) {
+    var settings = buildSettings(rosterStartIso);
+    var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs);
+    var roster = buildProtectedRoster(inputs, lockedRoster || {}, touchedRanges || []);
     var dutyWeeks = buildDutyRoster(inputs, roster);
     var summary = summaryJson(inputs, roster);
     summary.duties = dutiesJson(inputs, dutyWeeks);
@@ -1984,9 +2064,12 @@
 
   global.RosterEngine = {
     build: build,
+    buildProtected: buildProtected,
     buildSettings: buildSettings,
     buildInputsFromDb: buildInputsFromDb,
     buildRoster: buildRoster,
+    buildProtectedRoster: buildProtectedRoster,
+    extractLockedSlots: extractLockedSlots,
     buildDutyRoster: buildDutyRoster,
     summaryJson: summaryJson,
     dutiesJson: dutiesJson,
@@ -2669,17 +2752,158 @@
   // whatever the team was actually just doing.
   var startingHistoryDoc = null;
   var logNoteTarget = null;
+  // Protected-weeks locking (settings/lockedRoster, settings/changeWatermark)
+  // - keeps an already-shared roster from rippling when a later, unrelated
+  // change comes in. See the "protected (locked) weeks" section of
+  // engine.js/engine.py for the mechanism itself; these two docs are just
+  // its persisted state. lockedRosterDoc.slots: {name: {isoDate: slot}} -
+  // each rotating/paired person's last known-good slot per day.
+  // watermarkDoc: {staffFingerprint, events: [{id,name,start,end,...}]} -
+  // a fingerprint of the leave/transfer docs as of the last build, diffed
+  // against the current ones to find which date ranges a NEW change
+  // actually covers (computeTouchedRanges). Neither doc existing yet
+  // (lockedRosterDoc === null) means protection hasn't been bootstrapped -
+  // computeBuild() falls back to the plain, unprotected build, and the
+  // next successful change bootstraps both docs from its own result.
+  var lockedRosterDoc = null, watermarkDoc = null;
 
   // ---------- instant client-side rebuild (no waiting on Claude) ----------
   var lastBuildOut = null; // {inputs, roster, dutyWeeks, summary} from the last successful build
   var staffLoaded = false, leaveLoaded = false, transferLoaded = false, dutyOverrideLoaded = false, historyLoaded = false;
   var buildErrorEl = $('buildError');
 
+  function rosterWindowDays(rosterStart){
+    var settingsObj = RosterEngine.buildSettings(rosterStart);
+    var out = [];
+    for(var wi=0; wi<settingsObj.weeks; wi++){
+      for(var di=0; di<5; di++) out.push(RosterEngine.addDays(rosterStart, wi*7+di));
+    }
+    return out;
+  }
+  // Every leave doc and every transfer/override doc (both live in the
+  // transfers collection), each a {id, name, start, end, ...} fingerprint
+  // - what computeTouchedRanges() diffs against the last build's
+  // watermark to find which date ranges a NEW change actually covers.
+  function eventFingerprint(){
+    var leaveEvents = leaveDocs.map(function(d){
+      return {id: 'leave:'+d._id, name: d.name, start: d.start, end: d.end || null};
+    });
+    var transferEvents = transferDocs.map(function(d){
+      return {
+        id: 'transfer:'+d._id, name: d.name, start: d.start, end: d.end || null,
+        slot: d.slot || null, text: d.text || null, newFloor: d.newFloor || null,
+      };
+    });
+    return leaveEvents.concat(transferEvents);
+  }
+  function staffFingerprint(){
+    return JSON.stringify(
+      staffDocs.map(function(s){
+        return {id: s._id, name: s.name, role: s.role, room: s.room, floor: s.floor, startDate: s.startDate, endDate: s.endDate, active: s.active};
+      }).sort(function(a,b){ return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; })
+    );
+  }
+  // Which date ranges changed since the watermark's own snapshot: a new
+  // event opens its own [start, end] (open-ended leave clamped to the end
+  // of this build's own window - nothing beyond that is ever computed
+  // anyway); a changed event opens both its old and new range (the old
+  // range's cells may have moved when the event first applied, the new
+  // range needs its own freedom now); a removed event re-opens its old
+  // range (reverting a leave/override should let that range recompute
+  // too, not stay pinned to the now-stale correction that leave caused).
+  function computeTouchedRanges(prevEvents, rosterStart){
+    var windowEnd = rosterWindowDays(rosterStart).slice(-1)[0];
+    var prevById = {};
+    (prevEvents || []).forEach(function(e){ prevById[e.id] = e; });
+    var currEvents = eventFingerprint();
+    var currById = {};
+    currEvents.forEach(function(e){ currById[e.id] = e; });
+    var ranges = [];
+    function add(e){ ranges.push([e.start, e.end || windowEnd]); }
+    currEvents.forEach(function(e){
+      var p = prevById[e.id];
+      if(!p){ add(e); return; }
+      if(p.start !== e.start || p.end !== e.end || p.slot !== e.slot || p.text !== e.text || p.newFloor !== e.newFloor){
+        add(p); add(e);
+      }
+    });
+    (prevEvents || []).forEach(function(e){ if(!currById[e.id]) add(e); });
+    return ranges;
+  }
+  var LOCKED_FULL_RANGE = [['0000-01-01', '9999-12-31']];
   function computeBuild(){
     var rosterStart = rosterStartAnchor || RosterEngine.mondayOfWeek(todayISO());
     var historySeed = (startingHistoryDoc && startingHistoryDoc.history) || {};
     var lastSlotSeed = (startingHistoryDoc && startingHistoryDoc.lastSlot) || {};
-    return RosterEngine.build(staffDocs, leaveDocs, transferDocs, rosterStart, dutyOverrideDocs, historySeed, lastSlotSeed);
+    var currStaffFp = staffFingerprint();
+    var staffChanged = watermarkDoc && watermarkDoc.staffFingerprint !== currStaffFp;
+    if(!lockedRosterDoc || staffChanged){
+      // No lock to honour yet, or a staff add/remove/edit just happened -
+      // a structural change can legitimately need to reach every week
+      // (e.g. a new joiner reshuffling the whole rotation), so this one
+      // build is deliberately left open everywhere; persistLock() then
+      // relocks the *entire* freshly computed roster as the new baseline.
+      var out = RosterEngine.build(staffDocs, leaveDocs, transferDocs, rosterStart, dutyOverrideDocs, historySeed, lastSlotSeed);
+      out.touchedRanges = LOCKED_FULL_RANGE;
+      out.fullRelock = true;
+      out.rosterStart = rosterStart;
+      return out;
+    }
+    var touched = computeTouchedRanges(watermarkDoc.events || [], rosterStart);
+    var out2 = RosterEngine.buildProtected(
+      staffDocs, leaveDocs, transferDocs, rosterStart, dutyOverrideDocs, historySeed, lastSlotSeed,
+      lockedRosterDoc.slots || {}, touched
+    );
+    out2.touchedRanges = touched;
+    out2.fullRelock = false;
+    out2.rosterStart = rosterStart;
+    return out2;
+  }
+  // Persists this build's result as the new locked baseline: the ranges
+  // it actually touched (so the next unrelated change only opens ITS own
+  // ranges, not these), plus any day in the current window that isn't
+  // locked at all yet (a week that's just appeared, e.g. after "Start
+  // next week") - otherwise that week would stay perpetually open,
+  // re-rolling on every later change instead of becoming "shared" after
+  // its own first computation. Stale entries from before the current
+  // window (left over once "Start next week" moves the window forward)
+  // are dropped here too, so the doc doesn't grow forever.
+  async function persistLock(out){
+    if(!db || !out) return;
+    try{
+      var rosterStart = out.rosterStart;
+      if(out.fullRelock){
+        var allSlots = RosterEngine.extractLockedSlots(out.roster);
+        await db.collection('settings').doc('lockedRoster').set({slots: allSlots});
+      } else {
+        var existing = (lockedRosterDoc && lockedRosterDoc.slots) || {};
+        function hasAnyLock(d){
+          for(var name in existing){ if(existing[name] && existing[name][d] !== undefined) return true; }
+          return false;
+        }
+        var openDays = {};
+        out.touchedRanges.forEach(function(r){
+          var d = r[0];
+          var guard = 0;
+          while(d <= r[1] && guard < 400){ openDays[d] = true; d = RosterEngine.addDays(d, 1); guard++; }
+        });
+        rosterWindowDays(rosterStart).forEach(function(d){ if(!hasAnyLock(d)) openDays[d] = true; });
+        var newSlots = RosterEngine.extractLockedSlots(out.roster, Object.keys(openDays));
+        var merged = {};
+        for(var name2 in existing){
+          var kept = {};
+          for(var d2 in existing[name2]){ if(d2 >= rosterStart) kept[d2] = existing[name2][d2]; }
+          merged[name2] = kept;
+        }
+        for(var name3 in newSlots){
+          merged[name3] = Object.assign({}, merged[name3] || {}, newSlots[name3]);
+        }
+        await db.collection('settings').doc('lockedRoster').set({slots: merged});
+      }
+      await db.collection('settings').doc('changeWatermark').set({
+        staffFingerprint: staffFingerprint(), events: eventFingerprint(),
+      });
+    } catch(e){ /* best-effort - a missed lock update just means the next change re-diffs from a slightly stale watermark, not a correctness issue */ }
   }
   var lastBuildErrorMessage = null;
   function applyBuild(out){
@@ -2726,6 +2950,7 @@
         request: requestText, createdAt: new Date().toISOString(), breaches: breaches, impact: impact,
       });
     } catch(e){ /* the roster itself already saved; a missed log entry isn't worth failing the action over */ }
+    await persistLock(lastBuildOut);
   }
 
   function fmtDate(iso){
@@ -2990,6 +3215,10 @@
       // "Start next week" sticks for every viewer, not just this tab.
       var rw = snap.docs.find(function(d){ return d.id === 'rosterWindow'; });
       if(rw && rw.data().start) rosterStartAnchor = rw.data().start;
+      var lr = snap.docs.find(function(d){ return d.id === 'lockedRoster'; });
+      lockedRosterDoc = lr ? lr.data() : null;
+      var wm = snap.docs.find(function(d){ return d.id === 'changeWatermark'; });
+      watermarkDoc = wm ? wm.data() : null;
       historyLoaded = true;
       recompute();
     }, function(){ historyLoaded = true; recompute(); });

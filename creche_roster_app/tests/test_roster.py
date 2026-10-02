@@ -11,7 +11,7 @@ from openpyxl import load_workbook
 from pypdf import PdfReader
 
 from creche_roster.duties import DUTY_SLOTS, FIXED_DUTIES, build_duty_roster
-from creche_roster.engine import build_roster
+from creche_roster.engine import build_protected_roster, build_roster, extract_locked_slots
 from creche_roster.excel_io import make_template, read_inputs, write_roster_only, write_workbook
 from creche_roster.layout import NCOLS, date_range_text, leave_style, week_grid
 from creche_roster.models import InputError, Leave, Override, Shift, t12
@@ -958,6 +958,69 @@ class Files(unittest.TestCase):
         with self.assertRaises(InputError) as cm:
             read_inputs(self.xlsx)
         self.assertEqual(len(cm.exception.problems), 2)
+
+
+class ProtectedRoster(unittest.TestCase):
+    """build_protected_roster(): a new leave/override should only reach the
+    week(s) its own dates fall in - everything else should come out
+    exactly as it was before, not whatever the fairness rotation happens
+    to recompute for it."""
+
+    def _week_slots(self, r, wi):
+        w = r.weeks[wi]
+        return {
+            st.name: [w.cells[(st.name, d)].slot for d in w.days]
+            for _, st in r.staff_keys
+            if st.role in ("rotating", "paired") and st.name
+        }
+
+    def test_unrelated_weeks_stay_locked_to_the_baseline(self):
+        baseline = build_roster(inputs())
+        locked = extract_locked_slots(baseline)
+
+        # Irene off for all of week 3 (14-18 days in) naturally ripples
+        # into week 4's rotation too - exactly the kind of already-shared
+        # week that shouldn't move just because a later week changed.
+        leave_start, leave_end = START + timedelta(days=14), START + timedelta(days=18)
+        leave = [Leave("Irene", leave_start, leave_end, "Holiday")]
+        natural = build_roster(inputs(leave=leave))
+        self.assertNotEqual(
+            self._week_slots(natural, 3), self._week_slots(baseline, 3),
+            "fixture assumption broke: Irene's week-3 leave no longer ripples into week 4 unprotected",
+        )
+
+        protected = build_protected_roster(inputs(leave=leave), locked, [(leave_start, leave_end)])
+        for wi in (0, 1, 3):
+            self.assertEqual(self._week_slots(protected, wi), self._week_slots(baseline, wi), f"week {wi}")
+        self.assertEqual(protected.breaches, [])
+        self.assertEqual([c for c in protected.checks if c.level == "WARNING"], [])
+
+    def test_touched_week_is_left_free_to_adjust(self):
+        baseline = build_roster(inputs())
+        locked = extract_locked_slots(baseline)
+        leave_start, leave_end = START + timedelta(days=14), START + timedelta(days=18)
+        leave = [Leave("Irene", leave_start, leave_end, "Holiday")]
+        natural = build_roster(inputs(leave=leave))
+        protected = build_protected_roster(inputs(leave=leave), locked, [(leave_start, leave_end)])
+        # The touched week itself isn't pinned to the baseline - it's free
+        # to be whatever the natural (unprotected) recompute produces.
+        self.assertEqual(self._week_slots(protected, 2), self._week_slots(natural, 2))
+
+    def test_no_op_when_nothing_has_drifted(self):
+        baseline = build_roster(inputs())
+        locked = extract_locked_slots(baseline)
+        protected = build_protected_roster(inputs(), locked, [])
+        for wi in range(len(baseline.weeks)):
+            self.assertEqual(self._week_slots(protected, wi), self._week_slots(baseline, wi))
+
+    def test_a_day_with_no_lock_entry_is_left_as_freshly_computed(self):
+        baseline = build_roster(inputs())
+        # An empty lock: nothing's ever been pinned, so a touched_ranges
+        # of [] (protect everything) should still just match the natural
+        # build, since there's nothing recorded to pin anything to.
+        protected = build_protected_roster(inputs(), {}, [])
+        for wi in range(len(baseline.weeks)):
+            self.assertEqual(self._week_slots(protected, wi), self._week_slots(baseline, wi))
 
 
 if __name__ == "__main__":
