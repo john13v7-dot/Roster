@@ -2311,7 +2311,7 @@
         peopleText = 'Staff working in the room';
       } else if(unfilled[a.duty]){
         cls += ' unfilled';
-        peopleText = 'Nobody free this week';
+        peopleText = '';
       } else {
         peopleText = a.people.join(' / ') || '—';
         if(FIXED_DUTIES[a.duty]) cls += ' fixed';
@@ -2656,7 +2656,7 @@
       var body = week.assignments.map(function(a){
         var peopleText;
         if(CONTEXT_DUTIES[a.duty]) peopleText = 'Staff working in the room';
-        else if(unfilled[a.duty]) peopleText = 'Nobody free this week';
+        else if(unfilled[a.duty]) peopleText = '';
         else peopleText = a.people.join(' / ') || '—';
         return [a.duty, peopleText];
       });

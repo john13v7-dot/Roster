@@ -236,7 +236,7 @@ function startApp() {
       let cls = "dutyrow";
       let peopleText;
       if (CONTEXT_DUTIES[a.duty]) { cls += " context"; peopleText = "Staff working in the room"; }
-      else if (unfilled[a.duty]) { cls += " unfilled"; peopleText = "Nobody free this week"; }
+      else if (unfilled[a.duty]) { cls += " unfilled"; peopleText = ""; }
       else { peopleText = a.people.join(" / ") || "—"; if (FIXED_DUTIES[a.duty]) cls += " fixed"; }
       row.className = cls;
       row.innerHTML = '<div class="dname">' + esc(a.duty) + '</div><div class="dpeople">' + esc(peopleText) + "</div>";

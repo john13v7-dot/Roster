@@ -191,8 +191,9 @@ DUTY_COL_WIDTHS_CHARS = [34, 34]
 def duties_grid(inputs: Inputs, duty_week: dict) -> List[Row]:
     """One printable page for a single week's duty rota: Duty | Assigned to,
     in the same reading order and wording as the app's own Duties screen
-    (context rows say who's covering by room, an unfilled duty says so
-    plainly, fixed duties always show their pinned person)."""
+    (context rows say who's covering by room, an unfilled duty is left
+    blank rather than spelled out, fixed duties always show their pinned
+    person)."""
     monday: date = duty_week["monday"]
     days = [monday + timedelta(days=i) for i in range(NDAYS)]
     unfilled = set(duty_week["unfilled"])
@@ -208,7 +209,7 @@ def duties_grid(inputs: Inputs, duty_week: dict) -> List[Row]:
         if duty in CONTEXT_ROWS:
             text = "Staff working in the room"
         elif duty in unfilled:
-            text = "Nobody free this week"
+            text = ""
         else:
             text = " / ".join(a["people"]) or "—"
         style = "plain"
