@@ -11,10 +11,13 @@ duty that takes more time goes to whoever finishes latest that week,
 falling back to anyone who finishes at least that late when the ideal
 match isn't available - never to someone who'd have already left), and
 otherwise chosen to keep both duty-type variety and overall load fair over
-time. Which candidate is favoured on a tie rotates week to week too - a
-fixed tie-break would let the same structural shortfall (there are always
-more 17:00-finish duties than 17:00 finishers) land on the same person
-every single week instead of spreading it around.
+time: whoever's done that exact duty least goes first, a tie there goes to
+whoever's gone longest since they last did it (never done it beats having
+done it any number of weeks ago), and a further tie on total load rotates
+week to week too - a fixed tie-break would let the same structural
+shortfall (there are always more 17:00-finish duties than 17:00
+finishers) land on the same one or two people every time instead of
+spreading it around.
 """
 
 from __future__ import annotations
@@ -157,6 +160,15 @@ def build_duty_roster(inputs: Inputs, roster: Roster) -> List[Dict]:
     """
     pool = duty_pool(inputs)
     history: Dict[str, Counter] = {n: Counter() for n in pool}
+    # The week index each person most recently did each duty - a very
+    # negative sentinel (bigger than any real gap) for "never". Lets a
+    # tie on duty-specific and total history favour whoever's gone
+    # longest without this exact duty, so a chronically-tight slot (more
+    # duties need the same bucket than the rotation puts there most
+    # weeks) spreads its repeats out across weeks instead of letting two
+    # people trade it back and forth every other week.
+    last_done: Dict[str, Counter] = {n: Counter() for n in pool}
+    NEVER = -(inputs.settings.weeks + 1)
     weeks_out: List[Dict] = []
     for wi in range(inputs.settings.weeks):
         monday = inputs.settings.roster_start + timedelta(weeks=wi)
@@ -165,8 +177,9 @@ def build_duty_roster(inputs: Inputs, roster: Roster) -> List[Dict]:
         slot_of = {n: _weekly_slot(roster, wi, n) for n in remaining}
         assigned_by_duty: Dict[str, str] = {}
 
-        # Who wins a tie (same duty-specific and total history) rotates by
-        # week too. Total load tends to march in lockstep across the whole
+        # Who wins a tie (same duty-specific and total history, and the
+        # same gap since they last did this exact duty) rotates by week
+        # too. Total load tends to march in lockstep across the whole
         # pool - most weeks hand out almost exactly one duty each - so a
         # *fixed* tie-break would keep resolving the same tie the same way
         # every week, pinning whichever structural shortfall recurs (there
@@ -178,7 +191,12 @@ def build_duty_roster(inputs: Inputs, roster: Roster) -> List[Dict]:
         def best_pick(candidates: List[str], duty: str) -> str:
             return min(
                 candidates,
-                key=lambda n: (history[n][duty], sum(history[n].values()), tie_order.index(n)),
+                key=lambda n: (
+                    history[n][duty],
+                    -(wi - last_done[n].get(duty, NEVER)),
+                    sum(history[n].values()),
+                    tie_order.index(n),
+                ),
             )
 
         # Rotate which duty gets first pick within its own bucket each
@@ -210,6 +228,7 @@ def build_duty_roster(inputs: Inputs, roster: Roster) -> List[Dict]:
                 continue
             remaining.remove(ov.name)
             history[ov.name][ov.duty] += 1
+            last_done[ov.name][ov.duty] = wi
             assigned_by_duty[ov.duty] = ov.name
 
         # Pass 1: the ideal match - ties to the actual finish-time bucket
@@ -223,6 +242,7 @@ def build_duty_roster(inputs: Inputs, roster: Roster) -> List[Dict]:
             person = best_pick(eligible, duty)
             remaining.remove(person)
             history[person][duty] += 1
+            last_done[person][duty] = wi
             assigned_by_duty[duty] = person
 
         # Pass 2: the safe fallback, for whatever's still unfilled - anyone
@@ -239,6 +259,7 @@ def build_duty_roster(inputs: Inputs, roster: Roster) -> List[Dict]:
             person = best_pick(eligible, duty)
             remaining.remove(person)
             history[person][duty] += 1
+            last_done[person][duty] = wi
             assigned_by_duty[duty] = person
 
         unfilled = [duty for duty in DUTY_SLOTS if duty not in assigned_by_duty]

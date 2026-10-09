@@ -1258,6 +1258,16 @@
     var pool = dutyPool(inputs);
     var history = {};
     pool.forEach(function (n) { history[n] = {}; });
+    // The week index each person most recently did each duty - a very
+    // negative sentinel (bigger than any real gap) for "never". Lets a
+    // tie on duty-specific and total history favour whoever's gone
+    // longest without this exact duty, so a chronically-tight slot (more
+    // duties need the same bucket than the rotation puts there most
+    // weeks) spreads its repeats out across weeks instead of letting two
+    // people trade it back and forth every other week.
+    var lastDone = {};
+    pool.forEach(function (n) { lastDone[n] = {}; });
+    var NEVER = -(inputs.settings.weeks + 1);
     var weeksOut = [];
     for (var wi = 0; wi < inputs.settings.weeks; wi++) {
       var monday = addDays(inputs.settings.roster_start, wi * 7);
@@ -1268,17 +1278,21 @@
       remaining.forEach(function (n) { slotOf[n] = weeklySlot(roster, wi, n); });
       var assignedByDuty = {};
 
-      // Who wins a tie (same duty-specific and total history) rotates by
-      // week too - a fixed tie-break would keep resolving the same tie the
+      // Who wins a tie (same duty-specific and total history, and the
+      // same gap since they last did this exact duty) rotates by week
+      // too - a fixed tie-break would keep resolving the same tie the
       // same way every week, pinning whichever structural shortfall
       // recurs (there are always more 17:00-finish duties than 17:00
-      // finishers) onto one person permanently instead of spreading it
-      // around.
+      // finishers) onto one or two people permanently instead of
+      // spreading it around.
       var tieOffset = wi % pool.length;
       var tieOrder = pool.slice(tieOffset).concat(pool.slice(0, tieOffset));
 
       function bestPick(candidates, duty) {
-        return minByKey(candidates, function (n) { return [g(history[n], duty), sumAll(history[n]), tieOrder.indexOf(n)]; });
+        return minByKey(candidates, function (n) {
+          var lastWi = Object.prototype.hasOwnProperty.call(lastDone[n], duty) ? lastDone[n][duty] : NEVER;
+          return [g(history[n], duty), -(wi - lastWi), sumAll(history[n]), tieOrder.indexOf(n)];
+        });
       }
 
       var offset = wi % DUTY_SLOTS.length;
@@ -1302,6 +1316,7 @@
         if (!ovSlot || SLOTS.indexOf(ovSlot) < SLOTS.indexOf(DUTY_MIN_SLOT[ov.duty])) return;
         remaining = remaining.filter(function (x) { return x !== ov.name; });
         history[ov.name][ov.duty] = (history[ov.name][ov.duty] || 0) + 1;
+        lastDone[ov.name][ov.duty] = wi;
         assignedByDuty[ov.duty] = ov.name;
       });
 
@@ -1314,6 +1329,7 @@
         var person = bestPick(eligible, duty);
         remaining = remaining.filter(function (x) { return x !== person; });
         history[person][duty] = (history[person][duty] || 0) + 1;
+        lastDone[person][duty] = wi;
         assignedByDuty[duty] = person;
       });
 
@@ -1329,6 +1345,7 @@
         var person = bestPick(eligible, duty);
         remaining = remaining.filter(function (x) { return x !== person; });
         history[person][duty] = (history[person][duty] || 0) + 1;
+        lastDone[person][duty] = wi;
         assignedByDuty[duty] = person;
       });
 

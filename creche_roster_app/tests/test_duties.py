@@ -173,6 +173,52 @@ class DutyRoster(unittest.TestCase):
                 f"{len(duties_done)} weeks - never rotated to anything else",
             )
 
+    def test_tied_candidates_dont_trade_a_duty_back_to_back(self):
+        # The reported bug, this time two weeks running rather than every
+        # week: David did Hallway upstairs in back-to-back weeks because
+        # the tie-break, once duty-specific AND total history both came
+        # out equal, fell straight to the week's fixed rotation position -
+        # which has no memory of who did this exact duty most recently.
+        # Pin two people (Hanny, David) to the one slot this duty needs,
+        # with everyone else manually assigned elsewhere so the two of
+        # them are the only real candidates every week: duty-specific
+        # history ties again at week 3 (1 each), and the old tie-break
+        # would have hand it straight back to whoever was ahead in that
+        # week's rotation order (David) - repeating him two weeks running.
+        # Recency should instead favour whoever's gone longest without it.
+        weeks = 4
+        leave = [Leave("Shehnaz", START, START + timedelta(weeks=weeks) - timedelta(days=1), "Holiday")]
+        plan = {
+            "Manuel": ("Staff Toilet upstairs", "early"),
+            "Irene": ("Staff Room", "mid2"),
+            "Deoshree": ("Hallway downstairs / windows / door handles", "late"),
+            "Sandrine": ("Staff Toilet", "early"),
+            "Daniel": ("Back Garden & Bins", "mid2"),
+            "Arantza": ("Front creche", "late"),
+            "Usha": ("Paper & Soap dispensers", "early"),
+        }
+        over = [Override("Jason", START, START + timedelta(weeks=weeks) - timedelta(days=1), "late")]
+        duty_overrides = []
+        for wi in range(weeks):
+            monday = START + timedelta(weeks=wi)
+            end = monday + timedelta(days=4)
+            over += [Override("Hanny", monday, end, "mid1"), Override("David", monday, end, "mid1")]
+            for name, (duty, slot) in plan.items():
+                over.append(Override(name, monday, end, slot))
+                duty_overrides.append(DutyOverride(name=name, week=monday, duty=duty))
+        inp, roster, duty_weeks = build(leave=leave, overrides=over, duty_overrides=duty_overrides, weeks=weeks)
+        self.assertEqual(roster.breaches, [])
+        hallway = [
+            next(a["people"] for a in week["assignments"] if a["duty"] == "Hallway upstairs / Hoover stairs upstairs")
+            for week in duty_weeks
+        ]
+        for wi in range(len(hallway) - 1):
+            self.assertNotEqual(
+                hallway[wi], hallway[wi + 1],
+                f"{hallway[wi]} got Hallway upstairs in both week {wi + 1} and week {wi + 2} - "
+                "the tie-break repeated the same person instead of favouring whoever went longer without it",
+            )
+
     def test_load_is_equal_over_four_full_weeks(self):
         inp, roster, weeks = build()
         totals = duty_fairness(inp, weeks)
