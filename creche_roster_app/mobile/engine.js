@@ -1365,6 +1365,50 @@
     return weeksOut;
   }
 
+  // ---------------------------------------------------------------- protected (locked) duty weeks
+  // Port of duties.py's extract_locked_duties()/build_protected_duty_roster()
+  // - the duty-rota equivalent of engine.js's own buildProtectedRoster(),
+  // so a later, unrelated change doesn't reshuffle who's on which duty
+  // in a week already shared with staff. No correction-and-reconverge
+  // loop needed here (unlike the shift side): duty eligibility depends
+  // only on who's present (leave) and their weekly shift slot, both
+  // already frozen for any week the shift roster's own protection left
+  // untouched, so a locked duty assignment for an untouched week is
+  // still valid and can simply be substituted in.
+  function extractLockedDuties(dutyWeeks) {
+    var out = {};
+    dutyWeeks.forEach(function (dw) {
+      var week = {};
+      dw.assignments.forEach(function (a) {
+        if (DUTY_SLOTS.indexOf(a.duty) !== -1) week[a.duty] = a.people;
+      });
+      out[dw.monday] = week;
+    });
+    return out;
+  }
+
+  function buildProtectedDutyRoster(inputs, roster, lockedDuties, touchedRanges) {
+    var dutyWeeks = buildDutyRoster(inputs, roster);
+    function weekIsTouched(monday) {
+      var days = [];
+      for (var i = 0; i < NDAYS; i++) days.push(addDays(monday, i));
+      return touchedRanges.some(function (r) { return days.some(function (d) { return r[0] <= d && d <= r[1]; }); });
+    }
+    dutyWeeks.forEach(function (dw) {
+      if (weekIsTouched(dw.monday)) return;
+      var lockedWeek = lockedDuties[dw.monday];
+      if (!lockedWeek) return;
+      dw.assignments.forEach(function (a) {
+        if (Object.prototype.hasOwnProperty.call(lockedWeek, a.duty)) a.people = lockedWeek[a.duty];
+      });
+      dw.unfilled = DUTY_SLOTS.filter(function (duty) {
+        var a = dw.assignments.filter(function (x) { return x.duty === duty; })[0];
+        return !(a && a.people.length);
+      });
+    });
+    return dutyWeeks;
+  }
+
   function dutyFairness(inputs, weeks) {
     var totals = {};
     dutyPool(inputs).forEach(function (n) { totals[n] = 0; });
@@ -1587,11 +1631,11 @@
   // the app has a lockedRoster to protect; build() stays as-is for
   // callers (e.g. a staff add/remove, which deliberately reopens
   // everything) that want the plain, unprotected computation.
-  function buildProtected(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, lockedRoster, touchedRanges) {
+  function buildProtected(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, lockedRoster, touchedRanges, lockedDuties) {
     var settings = buildSettings(rosterStartIso);
     var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs);
     var roster = buildProtectedRoster(inputs, lockedRoster || {}, touchedRanges || []);
-    var dutyWeeks = buildDutyRoster(inputs, roster);
+    var dutyWeeks = buildProtectedDutyRoster(inputs, roster, lockedDuties || {}, touchedRanges || []);
     var summary = summaryJson(inputs, roster);
     summary.duties = dutiesJson(inputs, dutyWeeks);
     summary.fairness = fairnessJson(inputs, roster, dutyWeeks);
@@ -1639,6 +1683,8 @@
     buildProtectedRoster: buildProtectedRoster,
     extractLockedSlots: extractLockedSlots,
     buildDutyRoster: buildDutyRoster,
+    extractLockedDuties: extractLockedDuties,
+    buildProtectedDutyRoster: buildProtectedDutyRoster,
     summaryJson: summaryJson,
     dutiesJson: dutiesJson,
     fairnessJson: fairnessJson,

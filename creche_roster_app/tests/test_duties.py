@@ -13,8 +13,10 @@ from creche_roster.duties import (
     FIXED_DUTIES,
     _weekly_slot,
     build_duty_roster,
+    build_protected_duty_roster,
     duty_fairness,
     duty_pool,
+    extract_locked_duties,
 )
 from creche_roster.engine import build_roster
 from creche_roster.models import SLOTS, DutyOverride, Leave, Override
@@ -328,6 +330,68 @@ class DutyRoster(unittest.TestCase):
         inp, roster, weeks = build(leave=leave, overrides=over)
         for week in weeks:
             self.assertEqual(week["unfilled"], [])
+
+
+class ProtectedDutyRoster(unittest.TestCase):
+    """build_protected_duty_roster(): a new leave/override should only
+    reach the duty week(s) its own dates fall in - everything else
+    should come out exactly as it was before, not whatever the duty
+    history's carry-over happens to recompute for it."""
+
+    def _week_assignments(self, duty_week):
+        return {a["duty"]: a["people"] for a in duty_week["assignments"]}
+
+    def test_unrelated_weeks_stay_locked_to_the_baseline(self):
+        baseline_roster = build_roster(inputs())
+        baseline_weeks = build_duty_roster(inputs(), baseline_roster)
+        locked = extract_locked_duties(baseline_weeks)
+
+        # Manuel off for all of week 1 ripples into week 2's duty history
+        # even though week 2's own presence/slots are untouched by his
+        # leave - exactly the kind of already-shared week that shouldn't
+        # move just because an earlier week's leave changed who got what.
+        leave = [Leave("Manuel", START, START + timedelta(days=4), "Holiday")]
+        natural_roster = build_roster(inputs(leave=leave))
+        natural_weeks = build_duty_roster(inputs(leave=leave), natural_roster)
+        self.assertNotEqual(
+            self._week_assignments(natural_weeks[1]), self._week_assignments(baseline_weeks[1]),
+            "fixture assumption broke: Manuel's week-1 leave no longer ripples into week 2's duty rota unprotected",
+        )
+
+        touched = [(START, START + timedelta(days=4))]
+        protected_weeks = build_protected_duty_roster(inputs(leave=leave), natural_roster, locked, touched)
+        for wi in (1, 2, 3):
+            self.assertEqual(
+                self._week_assignments(protected_weeks[wi]), self._week_assignments(baseline_weeks[wi]), f"week {wi}"
+            )
+
+    def test_touched_week_is_left_free_to_recompute(self):
+        baseline_roster = build_roster(inputs())
+        baseline_weeks = build_duty_roster(inputs(), baseline_roster)
+        locked = extract_locked_duties(baseline_weeks)
+        leave = [Leave("Manuel", START, START + timedelta(days=4), "Holiday")]
+        natural_roster = build_roster(inputs(leave=leave))
+        natural_weeks = build_duty_roster(inputs(leave=leave), natural_roster)
+        touched = [(START, START + timedelta(days=4))]
+        protected_weeks = build_protected_duty_roster(inputs(leave=leave), natural_roster, locked, touched)
+        # The touched week itself isn't pinned to the baseline - it's free
+        # to be whatever the natural (unprotected) recompute produces.
+        self.assertEqual(self._week_assignments(protected_weeks[0]), self._week_assignments(natural_weeks[0]))
+
+    def test_no_op_when_nothing_has_drifted(self):
+        baseline_roster = build_roster(inputs())
+        baseline_weeks = build_duty_roster(inputs(), baseline_roster)
+        locked = extract_locked_duties(baseline_weeks)
+        protected_weeks = build_protected_duty_roster(inputs(), baseline_roster, locked, [])
+        for wi in range(len(baseline_weeks)):
+            self.assertEqual(self._week_assignments(protected_weeks[wi]), self._week_assignments(baseline_weeks[wi]))
+
+    def test_a_week_with_no_lock_entry_is_left_as_freshly_computed(self):
+        baseline_roster = build_roster(inputs())
+        baseline_weeks = build_duty_roster(inputs(), baseline_roster)
+        protected_weeks = build_protected_duty_roster(inputs(), baseline_roster, {}, [])
+        for wi in range(len(baseline_weeks)):
+            self.assertEqual(self._week_assignments(protected_weeks[wi]), self._week_assignments(baseline_weeks[wi]))
 
 
 if __name__ == "__main__":

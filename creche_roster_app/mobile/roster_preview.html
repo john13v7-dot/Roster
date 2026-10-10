@@ -1835,6 +1835,50 @@
     return weeksOut;
   }
 
+  // ---------------------------------------------------------------- protected (locked) duty weeks
+  // Port of duties.py's extract_locked_duties()/build_protected_duty_roster()
+  // - the duty-rota equivalent of engine.js's own buildProtectedRoster(),
+  // so a later, unrelated change doesn't reshuffle who's on which duty
+  // in a week already shared with staff. No correction-and-reconverge
+  // loop needed here (unlike the shift side): duty eligibility depends
+  // only on who's present (leave) and their weekly shift slot, both
+  // already frozen for any week the shift roster's own protection left
+  // untouched, so a locked duty assignment for an untouched week is
+  // still valid and can simply be substituted in.
+  function extractLockedDuties(dutyWeeks) {
+    var out = {};
+    dutyWeeks.forEach(function (dw) {
+      var week = {};
+      dw.assignments.forEach(function (a) {
+        if (DUTY_SLOTS.indexOf(a.duty) !== -1) week[a.duty] = a.people;
+      });
+      out[dw.monday] = week;
+    });
+    return out;
+  }
+
+  function buildProtectedDutyRoster(inputs, roster, lockedDuties, touchedRanges) {
+    var dutyWeeks = buildDutyRoster(inputs, roster);
+    function weekIsTouched(monday) {
+      var days = [];
+      for (var i = 0; i < NDAYS; i++) days.push(addDays(monday, i));
+      return touchedRanges.some(function (r) { return days.some(function (d) { return r[0] <= d && d <= r[1]; }); });
+    }
+    dutyWeeks.forEach(function (dw) {
+      if (weekIsTouched(dw.monday)) return;
+      var lockedWeek = lockedDuties[dw.monday];
+      if (!lockedWeek) return;
+      dw.assignments.forEach(function (a) {
+        if (Object.prototype.hasOwnProperty.call(lockedWeek, a.duty)) a.people = lockedWeek[a.duty];
+      });
+      dw.unfilled = DUTY_SLOTS.filter(function (duty) {
+        var a = dw.assignments.filter(function (x) { return x.duty === duty; })[0];
+        return !(a && a.people.length);
+      });
+    });
+    return dutyWeeks;
+  }
+
   function dutyFairness(inputs, weeks) {
     var totals = {};
     dutyPool(inputs).forEach(function (n) { totals[n] = 0; });
@@ -2057,11 +2101,11 @@
   // the app has a lockedRoster to protect; build() stays as-is for
   // callers (e.g. a staff add/remove, which deliberately reopens
   // everything) that want the plain, unprotected computation.
-  function buildProtected(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, lockedRoster, touchedRanges) {
+  function buildProtected(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, lockedRoster, touchedRanges, lockedDuties) {
     var settings = buildSettings(rosterStartIso);
     var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs);
     var roster = buildProtectedRoster(inputs, lockedRoster || {}, touchedRanges || []);
-    var dutyWeeks = buildDutyRoster(inputs, roster);
+    var dutyWeeks = buildProtectedDutyRoster(inputs, roster, lockedDuties || {}, touchedRanges || []);
     var summary = summaryJson(inputs, roster);
     summary.duties = dutiesJson(inputs, dutyWeeks);
     summary.fairness = fairnessJson(inputs, roster, dutyWeeks);
@@ -2109,6 +2153,8 @@
     buildProtectedRoster: buildProtectedRoster,
     extractLockedSlots: extractLockedSlots,
     buildDutyRoster: buildDutyRoster,
+    extractLockedDuties: extractLockedDuties,
+    buildProtectedDutyRoster: buildProtectedDutyRoster,
     summaryJson: summaryJson,
     dutiesJson: dutiesJson,
     fairnessJson: fairnessJson,
@@ -2842,7 +2888,7 @@
   // (lockedRosterDoc === null) means protection hasn't been bootstrapped -
   // computeBuild() falls back to the plain, unprotected build, and the
   // next successful change bootstraps both docs from its own result.
-  var lockedRosterDoc = null, watermarkDoc = null;
+  var lockedRosterDoc = null, watermarkDoc = null, lockedDutiesDoc = null;
 
   // ---------- instant client-side rebuild (no waiting on Claude) ----------
   var lastBuildOut = null; // {inputs, roster, dutyWeeks, summary} from the last successful build
@@ -2871,7 +2917,14 @@
         slot: d.slot || null, text: d.text || null, newFloor: d.newFloor || null,
       };
     });
-    return leaveEvents.concat(transferEvents);
+    // A manual duty pick doesn't move any shift/leave date, but it does
+    // need to reopen its own week for the duty rota's own protection
+    // (buildProtectedDutyRoster) - folded into the same touched-range
+    // diff as leave/transfers so one mechanism covers both.
+    var dutyOverrideEvents = dutyOverrideDocs.map(function(d){
+      return {id: 'duty:'+d._id, name: d.name, start: d.week, end: d.week, duty: d.duty};
+    });
+    return leaveEvents.concat(transferEvents).concat(dutyOverrideEvents);
   }
   function staffFingerprint(){
     return JSON.stringify(
@@ -2929,7 +2982,7 @@
     var touched = computeTouchedRanges(watermarkDoc.events || [], rosterStart);
     var out2 = RosterEngine.buildProtected(
       staffDocs, leaveDocs, transferDocs, rosterStart, dutyOverrideDocs, historySeed, lastSlotSeed,
-      lockedRosterDoc.slots || {}, touched
+      lockedRosterDoc.slots || {}, touched, (lockedDutiesDoc && lockedDutiesDoc.weeks) || {}
     );
     out2.touchedRanges = touched;
     out2.fullRelock = false;
@@ -2952,6 +3005,8 @@
       if(out.fullRelock){
         var allSlots = RosterEngine.extractLockedSlots(out.roster);
         await db.collection('settings').doc('lockedRoster').set({slots: allSlots});
+        var allDuties = RosterEngine.extractLockedDuties(out.dutyWeeks);
+        await db.collection('settings').doc('lockedDuties').set({weeks: allDuties});
       } else {
         var existing = (lockedRosterDoc && lockedRosterDoc.slots) || {};
         function hasAnyLock(d){
@@ -2976,6 +3031,22 @@
           merged[name3] = Object.assign({}, merged[name3] || {}, newSlots[name3]);
         }
         await db.collection('settings').doc('lockedRoster').set({slots: merged});
+
+        // Same idea, at week granularity: a week with any day touched
+        // this build, or with no duty lock yet (a week that's just
+        // appeared), becomes open for the duty rota too.
+        var existingDuties = (lockedDutiesDoc && lockedDutiesDoc.weeks) || {};
+        var openWeeks = {};
+        rosterWindowDays(rosterStart).filter(function(d, i){ return i % 5 === 0; }).forEach(function(monday){
+          var days = []; for(var di=0; di<5; di++) days.push(RosterEngine.addDays(monday, di));
+          var touched = days.some(function(d){ return openDays[d]; });
+          if(touched || !existingDuties[monday]) openWeeks[monday] = true;
+        });
+        var allDuties2 = RosterEngine.extractLockedDuties(out.dutyWeeks);
+        var mergedDuties = {};
+        for(var m in existingDuties){ if(m >= rosterStart) mergedDuties[m] = existingDuties[m]; }
+        Object.keys(openWeeks).forEach(function(m){ if(allDuties2[m]) mergedDuties[m] = allDuties2[m]; });
+        await db.collection('settings').doc('lockedDuties').set({weeks: mergedDuties});
       }
       await db.collection('settings').doc('changeWatermark').set({
         staffFingerprint: staffFingerprint(), events: eventFingerprint(),
@@ -3294,6 +3365,8 @@
       if(rw && rw.data().start) rosterStartAnchor = rw.data().start;
       var lr = snap.docs.find(function(d){ return d.id === 'lockedRoster'; });
       lockedRosterDoc = lr ? lr.data() : null;
+      var ld = snap.docs.find(function(d){ return d.id === 'lockedDuties'; });
+      lockedDutiesDoc = ld ? ld.data() : null;
       var wm = snap.docs.find(function(d){ return d.id === 'changeWatermark'; });
       watermarkDoc = wm ? wm.data() : null;
       historyLoaded = true;

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import date, timedelta
-from typing import Dict, FrozenSet, List, Optional
+from typing import Dict, FrozenSet, List, Optional, Tuple
 
 from .models import NDAYS, SLOTS, Inputs, Roster
 
@@ -278,6 +278,72 @@ def build_duty_roster(inputs: Inputs, roster: Roster) -> List[Dict]:
             assignments.append({"duty": duty, "people": present or names})
         weeks_out.append({"monday": monday, "assignments": assignments, "unfilled": unfilled})
     return weeks_out
+
+
+# --------------------------------------------------------------------------
+# Protected (locked) weeks - the duty-rota equivalent of
+# engine.py's extract_locked_slots()/build_protected_roster(), so a
+# later, unrelated change doesn't reshuffle who's on which duty in a week
+# that's already been shared with staff.
+# --------------------------------------------------------------------------
+def extract_locked_duties(duty_weeks: List[Dict]) -> Dict[str, Dict[str, List[str]]]:
+    """{monday_iso: {duty_name: [people]}} for every rotating duty slot
+    (DUTY_SLOTS only - CONTEXT_ROWS/FIXED_DUTIES never vary, so there's
+    nothing to protect there) - the shape settings/lockedDuties stores."""
+    out: Dict[str, Dict[str, List[str]]] = {}
+    for dw in duty_weeks:
+        out[dw["monday"].isoformat()] = {
+            a["duty"]: a["people"] for a in dw["assignments"] if a["duty"] in DUTY_SLOTS
+        }
+    return out
+
+
+def build_protected_duty_roster(
+    inputs: Inputs,
+    roster: Roster,
+    locked_duties: Dict[str, Dict[str, List[str]]],
+    touched_ranges: List[Tuple[date, date]],
+) -> List[Dict]:
+    """Like build_duty_roster(), but any week none of whose days fall in
+    touched_ranges is pinned to its locked_duties entry instead of
+    freshly computed - so one new leave/override/duty pick only ever
+    changes the duty rota for the week(s) its own dates cover, never
+    reshuffles who's on which duty in a week already shared with staff.
+
+    This needs no correction-and-reconverge loop the way
+    build_protected_roster() (the shift-rota's own version) does: who's
+    eligible for a duty depends only on who's present that week (leave)
+    and their weekly shift slot, and both of those are themselves frozen
+    for any week the shift roster's own protection left untouched - so a
+    locked duty assignment for an untouched week is still valid, not
+    just previously valid, and can simply be substituted in.
+
+    Callers that want this build's results to become the NEW lock for
+    the weeks that were open should call extract_locked_duties(result)
+    for just those weeks' entries and merge that into their stored
+    lockedDuties - never the whole thing, which would overwrite the lock
+    with this build's output and silently stop protecting anything.
+    """
+    duty_weeks = build_duty_roster(inputs, roster)
+
+    def week_is_touched(monday: date) -> bool:
+        days = [monday + timedelta(days=i) for i in range(NDAYS)]
+        return any(a <= d <= b for a, b in touched_ranges for d in days)
+
+    for dw in duty_weeks:
+        if week_is_touched(dw["monday"]):
+            continue
+        locked_week = locked_duties.get(dw["monday"].isoformat())
+        if not locked_week:
+            continue
+        for a in dw["assignments"]:
+            if a["duty"] in locked_week:
+                a["people"] = locked_week[a["duty"]]
+        dw["unfilled"] = [
+            duty for duty in DUTY_SLOTS
+            if not next((a["people"] for a in dw["assignments"] if a["duty"] == duty), None)
+        ]
+    return duty_weeks
 
 
 def duty_fairness(inputs: Inputs, weeks: List[Dict]) -> Dict[str, int]:
