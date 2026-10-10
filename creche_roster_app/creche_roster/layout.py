@@ -217,6 +217,32 @@ def duties_grid(inputs: Inputs, duty_week: dict) -> List[Row]:
     return rows
 
 
+def duty_summary_rows(duty_weeks: list) -> List[Tuple[str, List[str]]]:
+    """(duty name, [assigned text per week]) for every row on the Duties
+    screen - the duty-rota equivalent of weekly_summary_rows above, for a
+    single combined page covering every printed week rather than one
+    page per week. All weeks share the same row order (the fixed
+    CONTEXT_ROWS/DUTY_SLOTS/FIXED_DUTIES template build_duty_roster
+    always produces), so the first week's duty names are reused as the
+    row labels for every column."""
+    if not duty_weeks:
+        return []
+    duty_names = [a["duty"] for a in duty_weeks[0]["assignments"]]
+    out: List[Tuple[str, List[str]]] = []
+    for duty in duty_names:
+        texts = []
+        for dw in duty_weeks:
+            if duty in CONTEXT_ROWS:
+                texts.append("Staff working in the room")
+            elif duty in dw["unfilled"]:
+                texts.append("")
+            else:
+                a = next((x for x in dw["assignments"] if x["duty"] == duty), None)
+                texts.append(" / ".join(a["people"]) if a and a["people"] else "—")
+        out.append((duty, texts))
+    return out
+
+
 WEEKLY_SUMMARY_NOTE = (
     "Each person's shift for the week - shown even through a holiday, sick day or "
     "maternity leave that week, never left blank because of it."

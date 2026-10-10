@@ -2655,7 +2655,45 @@
     ws.columns = [{width:22}].concat(weekIndices.map(function(){ return {width:22}; }));
   }
 
-  function buildDutiesPdfBlob(weekIndices){
+  // One row per duty, one column per printed week, in one combined
+  // table - the duty-rota equivalent of the roster's own Weekly Summary
+  // page. All weeks' assignments share the same row order (the fixed
+  // CONTEXT_ROWS/DUTY_SLOTS/FIXED_DUTIES template dutiesJson always
+  // builds), so the first selected week's duty names are reused as the
+  // row labels for every column.
+  function addDutySummaryPdfPage(doc, weekIndices){
+    doc.addPage();
+    doc.setFontSize(16); doc.setTextColor(224,74,50);
+    doc.text('DUTY SUMMARY', 40, 42);
+    doc.setFontSize(9); doc.setTextColor(64,64,64);
+    doc.text("Who's on each cleaning duty, week by week, in one combined table.", 40, 58, {maxWidth: 515});
+    var firstWeek = (data.duties || [])[weekIndices[0]];
+    var dutyNames = firstWeek ? firstWeek.assignments.map(function(a){ return a.duty; }) : [];
+    var body = dutyNames.map(function(dutyName){
+      var row = [dutyName];
+      weekIndices.forEach(function(wi){
+        var week = (data.duties || [])[wi];
+        var unfilled = {};
+        (week && week.unfilled || []).forEach(function(d){ unfilled[d] = 1; });
+        var a = week && week.assignments.filter(function(x){ return x.duty === dutyName; })[0];
+        var peopleText;
+        if(CONTEXT_DUTIES[dutyName]) peopleText = 'Staff working in the room';
+        else if(unfilled[dutyName]) peopleText = '';
+        else peopleText = (a && a.people.join(' / ')) || '—';
+        row.push(peopleText);
+      });
+      return row;
+    });
+    doc.autoTable({
+      startY: 74,
+      head: [['Duty'].concat(weekIndices.map(function(wi){ return 'Week ' + (wi + 1) + ' (' + data.duties[wi].label + ')'; }))],
+      body: body,
+      styles: {fontSize:9, cellPadding:5, lineColor:[231,221,212], lineWidth:0.5, fontStyle:'bold'},
+      headStyles: {fillColor:[63,107,82], textColor:255, fontStyle:'bold'},
+    });
+  }
+
+  function buildDutiesPdfBlob(weekIndices, includeSummary){
     var doc = new window.jspdf.jsPDF({unit:'pt', format:'a4'});
     doc.setFont(undefined, 'bold');
     var used = 0;
@@ -2685,6 +2723,7 @@
         headStyles: {fillColor:[63,107,82], textColor:255, fontStyle:'bold'},
       });
     });
+    if(includeSummary && weekIndices.length) addDutySummaryPdfPage(doc, weekIndices);
     return doc.output('blob');
   }
 
@@ -2700,11 +2739,11 @@
     var weekBoxes = weeks.map(function(w, i){
       return '<label><input type="checkbox" class="printweekcb" value="' + i + '" checked> ' + esc(w.label) + '</label>';
     }).join('');
-    var summaryBox = mode === 'roster'
-      ? '<hr style="border:none;border-top:1px solid var(--line);margin:10px 0;">'
-        + '<label style="align-items:flex-start;"><input type="checkbox" id="printSummaryCb" checked style="margin-top:2px;"> '
-        + '<span>Weekly Summary<br><span style="font-weight:400;font-size:12px;color:var(--ink-dim);">Everyone\'s shift for each week, even through a holiday, sick day or maternity leave</span></span></label>'
-      : '';
+    var summaryLabel = mode === 'roster'
+      ? '<span>Weekly Summary<br><span style="font-weight:400;font-size:12px;color:var(--ink-dim);">Everyone\'s shift for each week, even through a holiday, sick day or maternity leave</span></span>'
+      : '<span>Duty Summary<br><span style="font-weight:400;font-size:12px;color:var(--ink-dim);">Who\'s on each duty, week by week, in one combined table</span></span>';
+    var summaryBox = '<hr style="border:none;border-top:1px solid var(--line);margin:10px 0;">'
+      + '<label style="align-items:flex-start;"><input type="checkbox" id="printSummaryCb" checked style="margin-top:2px;"> ' + summaryLabel + '</label>';
     printWeekPicker.innerHTML = weekBoxes + summaryBox;
     printXlsxBtn.style.display = mode === 'roster' ? '' : 'none';
     printDialog.showModal();
@@ -2741,7 +2780,7 @@
 
   function summaryWanted(){
     var cb = $('printSummaryCb');
-    return printMode === 'roster' && !!(cb && cb.checked);
+    return !!(cb && cb.checked);
   }
   printXlsxBtn.onclick = async function(){
     var idxs = selectedWeekIndices();
@@ -2765,7 +2804,7 @@
       printBtn.disabled = false;
     } else {
       dutiesPrintBtn.disabled = true;
-      var blob2 = buildDutiesPdfBlob(idxs);
+      var blob2 = buildDutiesPdfBlob(idxs, withSummary);
       await saveBlob('Duty_Rota' + weekSuffix(idxs, data.duties.length) + '.pdf', blob2);
       dutiesPrintBtn.disabled = false;
     }

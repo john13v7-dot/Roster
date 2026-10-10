@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -18,11 +19,12 @@ from .layout import (
     WEEKLY_SUMMARY_NOTE,
     date_range_text,
     duties_grid,
+    duty_summary_rows,
     ordinal_runs,
     week_grid,
     weekly_summary_rows,
 )
-from .models import Inputs, Roster
+from .models import NDAYS, Inputs, Roster
 
 MARGIN = 30
 BASE_ROW = 20.0
@@ -199,6 +201,52 @@ def _summary_table(roster: Roster, avail_w: float, avail_h: float) -> Table:
     return Table(data, colWidths=[avail_w / ncols] * ncols, rowHeights=heights, style=TableStyle(cmds))
 
 
+def _duty_summary_table(inputs: Inputs, duty_weeks: list, avail_w: float, avail_h: float) -> Table:
+    n_weeks = len(duty_weeks)
+    ncols = 1 + n_weeks
+    rows_data = duty_summary_rows(duty_weeks)
+
+    rel_heights = [1.6, 1.3, 0.5, 1.8] + [1.25] * len(rows_data)
+    total = sum(BASE_ROW * h for h in rel_heights)
+    scale = min(1.0, avail_h / total * 0.97)
+    heights = [BASE_ROW * h * scale for h in rel_heights]
+
+    def para(text: str, spec, align: int = 1) -> Paragraph:
+        size = _size(spec)
+        style = ParagraphStyle(
+            "p", fontName=_font_name(spec), fontSize=size, leading=size + 2,
+            textColor=_hex(spec["color"]), alignment=align,
+        )
+        return Paragraph(escape(text), style)
+
+    title_spec, note_spec, header_spec, plain_spec = STYLES["title"], STYLES["note"], STYLES["header"], STYLES["plain"]
+    data = [
+        [para("Duty Summary", title_spec, align=0)] + [""] * (ncols - 1),
+        [para("Who's on each cleaning duty, week by week, in one combined table.", note_spec, align=0)] + [""] * (ncols - 1),
+        [""] * ncols,
+        [para("Duty", header_spec)] + [
+            para(f"Week {wi + 1} ({date_range_text(dw['monday'], dw['monday'] + timedelta(days=NDAYS - 1))})", header_spec)
+            for wi, dw in enumerate(duty_weeks)
+        ],
+    ]
+    cmds = [
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("SPAN", (0, 0), (ncols - 1, 0)),
+        ("SPAN", (0, 1), (ncols - 1, 1)),
+        ("SPAN", (0, 2), (ncols - 1, 2)),
+        ("BACKGROUND", (0, 3), (ncols - 1, 3), _hex(header_spec["fill"])),
+        ("BOX", (0, 3), (ncols - 1, 3), 0.5, GRID),
+    ]
+    for ri, (duty, texts) in enumerate(rows_data, start=4):
+        data.append([para(duty, plain_spec, align=0)] + [para(t, plain_spec) for t in texts])
+        for ci in range(ncols):
+            cmds.append(("BOX", (ci, ri), (ci, ri), 0.5, GRID))
+
+    return Table(data, colWidths=[avail_w / ncols] * ncols, rowHeights=heights, style=TableStyle(cmds))
+
+
 def write_duties_pdf(inputs: Inputs, duty_weeks: list, path) -> None:
     page = A4
     avail_w = page[0] - 2 * MARGIN
@@ -213,11 +261,10 @@ def write_duties_pdf(inputs: Inputs, duty_weeks: list, path) -> None:
         title=inputs.settings.title + " - Cleaning Duties",
     )
     story = []
-    n = len(duty_weeks)
-    for wi, dw in enumerate(duty_weeks):
+    for dw in duty_weeks:
         story.append(_duties_table(inputs, dw, avail_w, avail_h))
-        if wi < n - 1:
-            story.append(PageBreak())
+        story.append(PageBreak())
+    story.append(_duty_summary_table(inputs, duty_weeks, avail_w, avail_h))
     doc.build(story)
 
 

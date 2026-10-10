@@ -894,7 +894,7 @@ class Files(unittest.TestCase):
         out = self.dir / "duties.pdf"
         write_duties_pdf(inp, duty_weeks, out)
         reader = PdfReader(str(out))
-        self.assertEqual(len(reader.pages), len(duty_weeks))
+        self.assertEqual(len(reader.pages), len(duty_weeks) + 1)  # weekly pages + duty summary
         text = reader.pages[0].extract_text()
         self.assertIn("Cleaning Duties", text)
         for duty in DUTY_SLOTS:
@@ -902,6 +902,18 @@ class Files(unittest.TestCase):
         for duty, names in FIXED_DUTIES:
             self.assertIn(duty, text)
             self.assertIn("Priscilla", text)  # the one fixed-duty name always present in the sample data
+
+    def test_duty_summary_pdf_page_shows_every_week_in_one_table(self):
+        inp = sample_inputs(START)
+        roster = build_roster(inp)
+        duty_weeks = build_duty_roster(inp, roster)
+        out = self.dir / "duty_summary.pdf"
+        write_duties_pdf(inp, duty_weeks, out)
+        reader = PdfReader(str(out))
+        text = "".join(reader.pages[len(duty_weeks)].extract_text().split())
+        self.assertIn("DutySummary", text)
+        for duty in DUTY_SLOTS:
+            self.assertIn("".join(duty.split()), text)
 
     def test_running_twice_does_not_duplicate_sheets(self):
         self.build()
