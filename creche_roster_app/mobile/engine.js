@@ -1192,7 +1192,7 @@
     'Kitchen': new Set(['mid2', 'late']),
     'Hallway downstairs / windows / door handles': new Set(['mid1', 'mid2', 'late']),
     "Children's Toilets": new Set(['mid2', 'late']),
-    'Back Garden & Bins': new Set(['early']),
+    'Back Garden & Bins': new Set(['early', 'mid1']),
     'Staff Toilet upstairs': new Set(['early']),
     'Staff Toilet': new Set(['early']),
     'Hallway upstairs / Hoover stairs upstairs': new Set(['mid1']),
@@ -1254,113 +1254,169 @@
     return maxByKey(Object.keys(counts), function (sl) { return [counts[sl], -SLOTS.indexOf(sl)]; });
   }
 
-  function buildDutyRoster(inputs, roster) {
+  // Port of duties.py's REPEAT_GAP_WEEKS/BLANK_FIRST/cost weights - see
+  // the Python for the rationale. Integer costs (all well under 2^53) and
+  // the same scan order as _min_cost_assignment(), so both engines pick
+  // the identical rota.
+  var REPEAT_GAP_WEEKS = 6;
+  var BLANK_FIRST = ['Paper & Soap dispensers', 'Front creche'];
+  var D_FORBID = 1e12, D_BLANK = 1e9, D_BLANK_IMPORTANT = 1e7, D_MOVED = 1e6, D_NOT_IDEAL = 1e5;
+  var D_PER_TIME_DONE = 1e3, D_PER_WEEK_RECENT = 10, D_RECENCY_CAP = DUTY_SLOTS.length;
+
+  function minCostAssignment(cost) {
+    var n = cost.length;
+    if (!n) return [];
+    var m = cost[0].length;
+    var u = [], v = [], p = [], way = [], j;
+    for (j = 0; j <= n; j++) u.push(0);
+    for (j = 0; j <= m; j++) { v.push(0); p.push(0); way.push(0); }
+    for (var i = 1; i <= n; i++) {
+      p[0] = i;
+      var j0 = 0;
+      var minv = [], used = [];
+      for (j = 0; j <= m; j++) { minv.push(null); used.push(false); }
+      while (true) {
+        used[j0] = true;
+        var i0 = p[j0], delta = null, j1 = 0;
+        for (j = 1; j <= m; j++) {
+          if (used[j]) continue;
+          var cur = cost[i0 - 1][j - 1] - u[i0] - v[j];
+          if (minv[j] === null || cur < minv[j]) { minv[j] = cur; way[j] = j0; }
+          if (delta === null || minv[j] < delta) { delta = minv[j]; j1 = j; }
+        }
+        for (j = 0; j <= m; j++) {
+          if (used[j]) { u[p[j]] += delta; v[j] -= delta; } else { minv[j] -= delta; }
+        }
+        j0 = j1;
+        if (p[j0] === 0) break;
+      }
+      while (true) {
+        var jw = way[j0];
+        p[j0] = p[jw];
+        j0 = jw;
+        if (j0 === 0) break;
+      }
+    }
+    var result = [];
+    for (j = 0; j < n; j++) result.push(-1);
+    for (j = 1; j <= m; j++) if (p[j]) result[p[j] - 1] = j - 1;
+    return result;
+  }
+
+  function dutyWeekIndex(inputs, mondayIso) {
+    return Math.floor((toEpochDay(mondayIso) - toEpochDay(inputs.settings.roster_start)) / 7);
+  }
+
+  function buildDutyRoster(inputs, roster, priorWeeks, pinnedWeeks, keepWeeks) {
     var pool = dutyPool(inputs);
-    var history = {};
-    pool.forEach(function (n) { history[n] = {}; });
-    // The week index each person most recently did each duty - a very
-    // negative sentinel (bigger than any real gap) for "never". Lets a
-    // tie on duty-specific and total history favour whoever's gone
-    // longest without this exact duty, so a chronically-tight slot (more
-    // duties need the same bucket than the rotation puts there most
-    // weeks) spreads its repeats out across weeks instead of letting two
-    // people trade it back and forth every other week.
-    var lastDone = {};
-    pool.forEach(function (n) { lastDone[n] = {}; });
-    var NEVER = -(inputs.settings.weeks + 1);
+    priorWeeks = priorWeeks || {};
+    pinnedWeeks = pinnedWeeks || {};
+    keepWeeks = keepWeeks || {};
+    var timesDone = {}, lastDone = {};
+    function has(obj, k) { return Object.prototype.hasOwnProperty.call(obj, k); }
+    function remember(name, duty, wi) {
+      if (!has(timesDone, name)) timesDone[name] = {};
+      timesDone[name][duty] = (timesDone[name][duty] || 0) + 1;
+      if (!has(lastDone, name)) lastDone[name] = {};
+      if (!has(lastDone[name], duty) || wi > lastDone[name][duty]) lastDone[name][duty] = wi;
+    }
+    Object.keys(priorWeeks).sort().forEach(function (mondayIso) {
+      var wi = dutyWeekIndex(inputs, mondayIso);
+      if (wi >= 0) return;
+      var week = priorWeeks[mondayIso] || {};
+      Object.keys(week).forEach(function (duty) {
+        if (DUTY_SLOTS.indexOf(duty) === -1) return;
+        (week[duty] || []).forEach(function (n) { remember(n, duty, wi); });
+      });
+    });
+    function weeksSince(name, duty, wi) {
+      return (has(lastDone, name) && has(lastDone[name], duty)) ? wi - lastDone[name][duty] : null;
+    }
+
     var weeksOut = [];
     for (var wi = 0; wi < inputs.settings.weeks; wi++) {
       var monday = addDays(inputs.settings.roster_start, wi * 7);
       var days = [];
       for (var i = 0; i < NDAYS; i++) days.push(addDays(monday, i));
-      var remaining = pool.filter(function (n) { return presentMostOfWeek(inputs, n, days); });
-      var slotOf = {};
-      remaining.forEach(function (n) { slotOf[n] = weeklySlot(roster, wi, n); });
       var assignedByDuty = {};
+      var repeatPicks = [];
 
-      // Who wins a tie (same duty-specific and total history, and the
-      // same gap since they last did this exact duty) rotates by week
-      // too - a fixed tie-break would keep resolving the same tie the
-      // same way every week, pinning whichever structural shortfall
-      // recurs (there are always more 17:00-finish duties than 17:00
-      // finishers) onto one or two people permanently instead of
-      // spreading it around.
-      var tieOffset = wi % pool.length;
-      var tieOrder = pool.slice(tieOffset).concat(pool.slice(0, tieOffset));
+      var pinned = has(pinnedWeeks, monday) ? pinnedWeeks[monday] : null;
+      if (pinned && Object.keys(pinned).length) {
+        DUTY_SLOTS.forEach(function (duty) {
+          if (pinned[duty] && pinned[duty].length) assignedByDuty[duty] = pinned[duty].slice();
+        });
+        (inputs.duty_overrides || []).forEach(function (ov) {
+          var a = assignedByDuty[ov.duty];
+          if (ov.week !== monday || !a || a.length !== 1 || a[0] !== ov.name) return;
+          var gap = weeksSince(ov.name, ov.duty, wi);
+          if (gap !== null && gap < REPEAT_GAP_WEEKS) repeatPicks.push({ duty: ov.duty, name: ov.name, weeks_ago: gap });
+        });
+      } else {
+        var remaining = pool.filter(function (n) { return presentMostOfWeek(inputs, n, days); });
+        var slotOf = {};
+        remaining.forEach(function (n) { slotOf[n] = weeklySlot(roster, wi, n); });
 
-      function bestPick(candidates, duty) {
-        return minByKey(candidates, function (n) {
-          var lastWi = Object.prototype.hasOwnProperty.call(lastDone[n], duty) ? lastDone[n][duty] : NEVER;
-          return [g(history[n], duty), -(wi - lastWi), sumAll(history[n]), tieOrder.indexOf(n)];
+        (inputs.duty_overrides || []).forEach(function (ov) {
+          if (ov.week !== monday || DUTY_SLOTS.indexOf(ov.duty) === -1) return;
+          if (assignedByDuty[ov.duty] || remaining.indexOf(ov.name) === -1) return;
+          var ovSlot = slotOf[ov.name];
+          if (!ovSlot || SLOTS.indexOf(ovSlot) < SLOTS.indexOf(DUTY_MIN_SLOT[ov.duty])) return;
+          var gap = weeksSince(ov.name, ov.duty, wi);
+          if (gap !== null && gap < REPEAT_GAP_WEEKS) repeatPicks.push({ duty: ov.duty, name: ov.name, weeks_ago: gap });
+          remaining = remaining.filter(function (x) { return x !== ov.name; });
+          assignedByDuty[ov.duty] = [ov.name];
+        });
+
+        var openDuties = DUTY_SLOTS.filter(function (d) { return !assignedByDuty[d]; });
+        var offset = pool.length ? wi % pool.length : 0;
+        var tieOrder = pool.slice(offset).concat(pool.slice(0, offset));
+        var people = tieOrder.filter(function (n) { return remaining.indexOf(n) !== -1 && slotOf[n]; });
+        var keep = (has(keepWeeks, monday) && keepWeeks[monday]) || {};
+        var hasKeep = Object.keys(keep).length > 0;
+        var keptBy = function (duty, n) { var k = keep[duty]; return !!k && k.length === 1 && k[0] === n; };
+        var cost = openDuties.map(function (duty, r) {
+          var row = [];
+          var minIndex = SLOTS.indexOf(DUTY_MIN_SLOT[duty]);
+          people.forEach(function (n, k) {
+            var gap = weeksSince(n, duty, wi);
+            var kept = keptBy(duty, n);
+            if (SLOTS.indexOf(slotOf[n]) < minIndex || (gap !== null && gap < REPEAT_GAP_WEEKS && !kept)) { row.push(D_FORBID); return; }
+            var c = DUTY_ELIGIBLE_SLOTS[duty].has(slotOf[n]) ? 0 : D_NOT_IDEAL;
+            if (hasKeep && !kept) c += D_MOVED;
+            c += ((timesDone[n] && timesDone[n][duty]) || 0) * D_PER_TIME_DONE;
+            c += (D_RECENCY_CAP - Math.min(gap !== null ? gap : D_RECENCY_CAP, D_RECENCY_CAP)) * D_PER_WEEK_RECENT;
+            c += k;
+            row.push(c);
+          });
+          openDuties.forEach(function (blankDuty, b) {
+            if (b !== r) { row.push(D_FORBID); return; }
+            var cb = D_BLANK + (BLANK_FIRST.indexOf(duty) !== -1 ? BLANK_FIRST.indexOf(duty) : D_BLANK_IMPORTANT);
+            if (keep[duty] && keep[duty].length) cb += D_MOVED;
+            row.push(cb);
+          });
+          return row;
+        });
+        minCostAssignment(cost).forEach(function (col, r) {
+          if (col >= 0 && col < people.length && cost[r][col] < D_FORBID) assignedByDuty[openDuties[r]] = [people[col]];
         });
       }
 
-      var offset = wi % DUTY_SLOTS.length;
-      var pickOrder = DUTY_SLOTS.slice(offset).concat(DUTY_SLOTS.slice(0, offset));
-
-      // Pass 0: the manager's manual picks for this week, honoured only
-      // when the person's actually working that week and they're there
-      // long enough to actually do it - the same "finishes at least as
-      // late as the duty needs" standard Pass 2's own fallback uses
-      // below, not the narrower ideal-match set Pass 1 reaches for first.
-      // A manual pick is a deliberate choice, not a fairness ranking, so
-      // it only needs to be physically possible, same as the automatic
-      // fallback already allows; a pick that's gone properly stale (they
-      // now finish before the duty could even start) is dropped silently
-      // and falls back to the normal fair pick below, rather than
-      // forcing a mismatch through or leaving the build broken.
-      (inputs.duty_overrides || []).forEach(function (ov) {
-        if (ov.week !== monday || DUTY_SLOTS.indexOf(ov.duty) === -1) return;
-        if (assignedByDuty[ov.duty] || remaining.indexOf(ov.name) === -1) return;
-        var ovSlot = slotOf[ov.name];
-        if (!ovSlot || SLOTS.indexOf(ovSlot) < SLOTS.indexOf(DUTY_MIN_SLOT[ov.duty])) return;
-        remaining = remaining.filter(function (x) { return x !== ov.name; });
-        history[ov.name][ov.duty] = (history[ov.name][ov.duty] || 0) + 1;
-        lastDone[ov.name][ov.duty] = wi;
-        assignedByDuty[ov.duty] = ov.name;
+      DUTY_SLOTS.forEach(function (duty) {
+        (assignedByDuty[duty] || []).forEach(function (n) { remember(n, duty, wi); });
       });
-
-      // Pass 1: the ideal match - ties to the actual finish-time bucket
-      // each duty is designed for.
-      pickOrder.forEach(function (duty) {
-        if (assignedByDuty[duty]) return;
-        var eligible = remaining.filter(function (n) { return DUTY_ELIGIBLE_SLOTS[duty].has(slotOf[n]); });
-        if (!eligible.length) return;
-        var person = bestPick(eligible, duty);
-        remaining = remaining.filter(function (x) { return x !== person; });
-        history[person][duty] = (history[person][duty] || 0) + 1;
-        lastDone[person][duty] = wi;
-        assignedByDuty[duty] = person;
-      });
-
-      // Pass 2: the safe fallback, for whatever's still unfilled - anyone
-      // who finishes at least as late as the duty needs (DUTY_MIN_SLOT)
-      // can stand in, since they're there long enough to cover it; never
-      // someone finishing earlier, who'd have already left.
-      pickOrder.forEach(function (duty) {
-        if (assignedByDuty[duty] || !remaining.length) return;
-        var minIndex = SLOTS.indexOf(DUTY_MIN_SLOT[duty]);
-        var eligible = remaining.filter(function (n) { return slotOf[n] && SLOTS.indexOf(slotOf[n]) >= minIndex; });
-        if (!eligible.length) return;
-        var person = bestPick(eligible, duty);
-        remaining = remaining.filter(function (x) { return x !== person; });
-        history[person][duty] = (history[person][duty] || 0) + 1;
-        lastDone[person][duty] = wi;
-        assignedByDuty[duty] = person;
-      });
-
       var unfilled = DUTY_SLOTS.filter(function (duty) { return !assignedByDuty[duty]; });
 
       var assignments = CONTEXT_ROWS.map(function (duty) { return { duty: duty, people: [] }; });
       DUTY_SLOTS.forEach(function (duty) {
-        assignments.push({ duty: duty, people: assignedByDuty[duty] ? [assignedByDuty[duty]] : [] });
+        assignments.push({ duty: duty, people: assignedByDuty[duty] || [] });
       });
       FIXED_DUTIES.forEach(function (fd) {
         var duty = fd[0], names = fd[1];
         var present = names.filter(function (n) { return presentMostOfWeek(inputs, n, days); });
         assignments.push({ duty: duty, people: present.length ? present : names });
       });
-      weeksOut.push({ monday: monday, assignments: assignments, unfilled: unfilled });
+      weeksOut.push({ monday: monday, assignments: assignments, unfilled: unfilled, repeat_picks: repeatPicks });
     }
     return weeksOut;
   }
@@ -1387,26 +1443,19 @@
     return out;
   }
 
-  function buildProtectedDutyRoster(inputs, roster, lockedDuties, touchedRanges) {
-    var dutyWeeks = buildDutyRoster(inputs, roster);
+  function buildProtectedDutyRoster(inputs, roster, lockedDuties, touchedRanges, priorWeeks) {
     function weekIsTouched(monday) {
       var days = [];
       for (var i = 0; i < NDAYS; i++) days.push(addDays(monday, i));
       return touchedRanges.some(function (r) { return days.some(function (d) { return r[0] <= d && d <= r[1]; }); });
     }
-    dutyWeeks.forEach(function (dw) {
-      if (weekIsTouched(dw.monday)) return;
-      var lockedWeek = lockedDuties[dw.monday];
-      if (!lockedWeek) return;
-      dw.assignments.forEach(function (a) {
-        if (Object.prototype.hasOwnProperty.call(lockedWeek, a.duty)) a.people = lockedWeek[a.duty];
-      });
-      dw.unfilled = DUTY_SLOTS.filter(function (duty) {
-        var a = dw.assignments.filter(function (x) { return x.duty === duty; })[0];
-        return !(a && a.people.length);
-      });
-    });
-    return dutyWeeks;
+    var pinned = {}, keep = {};
+    for (var wi = 0; wi < inputs.settings.weeks; wi++) {
+      var monday = addDays(inputs.settings.roster_start, wi * 7);
+      var lockedWeek = lockedDuties[monday];
+      if (lockedWeek && Object.keys(lockedWeek).length) (weekIsTouched(monday) ? keep : pinned)[monday] = lockedWeek;
+    }
+    return buildDutyRoster(inputs, roster, priorWeeks, pinned, keep);
   }
 
   function dutyFairness(inputs, weeks) {
@@ -1508,7 +1557,7 @@
   function dutiesJson(inputs, dutyWeeks) {
     return dutyWeeks.map(function (dw) {
       var days = []; for (var i = 0; i < NDAYS; i++) days.push(addDays(dw.monday, i));
-      return { label: weekLabel(days), monday: dw.monday, assignments: dw.assignments, unfilled: dw.unfilled };
+      return { label: weekLabel(days), monday: dw.monday, assignments: dw.assignments, unfilled: dw.unfilled, repeat_picks: dw.repeat_picks || [] };
     });
   }
 
@@ -1615,11 +1664,14 @@
   // finished working (the paper roster from the week right before this
   // build's own start) so week 1 doesn't blindly repeat it. Same shape as
   // Inputs.history/last_slot: {name: {slot: count}} and {name: slot}.
-  function build(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed) {
+  // `priorWeeks` ({mondayIso: {duty: [people]}}, the archived
+  // rosterHistory weeks) lets the duty rota's no-repeat rule see back past
+  // the start of this build's own window.
+  function build(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, priorWeeks) {
     var settings = buildSettings(rosterStartIso);
     var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs);
     var roster = buildRoster(inputs);
-    var dutyWeeks = buildDutyRoster(inputs, roster);
+    var dutyWeeks = buildDutyRoster(inputs, roster, priorWeeks || {});
     var summary = summaryJson(inputs, roster);
     summary.duties = dutiesJson(inputs, dutyWeeks);
     summary.fairness = fairnessJson(inputs, roster, dutyWeeks);
@@ -1631,11 +1683,11 @@
   // the app has a lockedRoster to protect; build() stays as-is for
   // callers (e.g. a staff add/remove, which deliberately reopens
   // everything) that want the plain, unprotected computation.
-  function buildProtected(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, lockedRoster, touchedRanges, lockedDuties) {
+  function buildProtected(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, lockedRoster, touchedRanges, lockedDuties, priorWeeks) {
     var settings = buildSettings(rosterStartIso);
     var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs);
     var roster = buildProtectedRoster(inputs, lockedRoster || {}, touchedRanges || []);
-    var dutyWeeks = buildProtectedDutyRoster(inputs, roster, lockedDuties || {}, touchedRanges || []);
+    var dutyWeeks = buildProtectedDutyRoster(inputs, roster, lockedDuties || {}, touchedRanges || [], priorWeeks || {});
     var summary = summaryJson(inputs, roster);
     summary.duties = dutiesJson(inputs, dutyWeeks);
     summary.fairness = fairnessJson(inputs, roster, dutyWeeks);
@@ -1683,6 +1735,7 @@
     buildProtectedRoster: buildProtectedRoster,
     extractLockedSlots: extractLockedSlots,
     buildDutyRoster: buildDutyRoster,
+    REPEAT_GAP_WEEKS: REPEAT_GAP_WEEKS,
     extractLockedDuties: extractLockedDuties,
     buildProtectedDutyRoster: buildProtectedDutyRoster,
     summaryJson: summaryJson,

@@ -9,8 +9,11 @@ from creche_roster.duties import (
     CONTEXT_ROWS,
     DUTY_ELIGIBLE_SLOTS,
     DUTY_MIN_SLOT,
+    BLANK_FIRST,
     DUTY_SLOTS,
     FIXED_DUTIES,
+    REPEAT_GAP_WEEKS,
+    _min_cost_assignment,
     _weekly_slot,
     build_duty_roster,
     build_protected_duty_roster,
@@ -365,18 +368,23 @@ class ProtectedDutyRoster(unittest.TestCase):
                 self._week_assignments(protected_weeks[wi]), self._week_assignments(baseline_weeks[wi]), f"week {wi}"
             )
 
-    def test_touched_week_is_left_free_to_recompute(self):
+    def test_touched_week_only_moves_the_duties_the_change_affects(self):
         baseline_roster = build_roster(inputs())
         baseline_weeks = build_duty_roster(inputs(), baseline_roster)
         locked = extract_locked_duties(baseline_weeks)
         leave = [Leave("Manuel", START, START + timedelta(days=4), "Holiday")]
         natural_roster = build_roster(inputs(leave=leave))
-        natural_weeks = build_duty_roster(inputs(leave=leave), natural_roster)
         touched = [(START, START + timedelta(days=4))]
         protected_weeks = build_protected_duty_roster(inputs(leave=leave), natural_roster, locked, touched)
-        # The touched week itself isn't pinned to the baseline - it's free
-        # to be whatever the natural (unprotected) recompute produces.
-        self.assertEqual(self._week_assignments(protected_weeks[0]), self._week_assignments(natural_weeks[0]))
+        before = self._week_assignments(baseline_weeks[0])
+        after = self._week_assignments(protected_weeks[0])
+        # Manuel's away, so his duty has to move - but everyone else who
+        # can still do the duty they were already given that week keeps it.
+        self.assertNotIn("Manuel", [p for ppl in after.values() for p in ppl])
+        manuels = next(d for d, ppl in before.items() if ppl == ["Manuel"])
+        changed = [d for d in DUTY_SLOTS if before.get(d) != after.get(d)]
+        self.assertIn(manuels, changed)
+        self.assertLessEqual(len(changed), 2, changed)
 
     def test_no_op_when_nothing_has_drifted(self):
         baseline_roster = build_roster(inputs())
@@ -392,6 +400,136 @@ class ProtectedDutyRoster(unittest.TestCase):
         protected_weeks = build_protected_duty_roster(inputs(), baseline_roster, {}, [])
         for wi in range(len(baseline_weeks)):
             self.assertEqual(self._week_assignments(protected_weeks[wi]), self._week_assignments(baseline_weeks[wi]))
+
+
+def _by_duty(week):
+    return {a["duty"]: a["people"] for a in week["assignments"] if a["duty"] in DUTY_SLOTS}
+
+
+def _repeats(weeks):
+    """(name, duty, week_a, week_b) for every same-duty repeat closer than
+    REPEAT_GAP_WEEKS apart, across a list of {duty: [people]} weeks."""
+    out = []
+    for i, wa in enumerate(weeks):
+        for j in range(i + 1, min(len(weeks), i + REPEAT_GAP_WEEKS)):
+            for duty, people in wa.items():
+                for n in people:
+                    if n in weeks[j].get(duty, []):
+                        out.append((n, duty, i, j))
+    return out
+
+
+class NoRepeatWithinSixWeeks(unittest.TestCase):
+    """Nobody does the same duty twice in any 6 consecutive weeks -
+    counting archived weeks before the window and shared (pinned) weeks
+    inside it - and the planner still fills every duty it can."""
+
+    def test_no_repeats_over_a_long_window(self):
+        inp, roster, weeks = build(weeks=12)
+        self.assertEqual(_repeats([_by_duty(w) for w in weeks]), [])
+        for w in weeks:
+            self.assertEqual(w["unfilled"], [])
+
+    def test_no_repeats_with_people_away(self):
+        leave = [
+            Leave("Irene", START + timedelta(weeks=1), START + timedelta(weeks=1, days=4), "Holiday"),
+            Leave("David", START + timedelta(weeks=3), START + timedelta(weeks=4, days=4), "Holiday"),
+            Leave("Hanny", START + timedelta(weeks=6), START + timedelta(weeks=6, days=4), "Sick"),
+        ]
+        inp, roster, weeks = build(weeks=10, leave=leave)
+        self.assertEqual(_repeats([_by_duty(w) for w in weeks]), [])
+
+    def test_archived_weeks_count_towards_the_rule(self):
+        inp = inputs(weeks=5)
+        roster = build_roster(inp)
+        fresh = build_duty_roster(inp, roster)
+        # Whoever the planner would give each duty in week 1 did exactly
+        # that duty the week before the window - none of it may repeat.
+        prior_monday = (START - timedelta(weeks=1)).isoformat()
+        prior = {prior_monday: _by_duty(fresh[0])}
+        weeks = build_duty_roster(inp, roster, prior)
+        self.assertEqual(_repeats([prior[prior_monday]] + [_by_duty(w) for w in weeks]), [])
+        self.assertNotEqual(_by_duty(weeks[0]), _by_duty(fresh[0]))
+
+    def test_archive_older_than_the_gap_is_no_longer_a_block(self):
+        inp = inputs(weeks=1)
+        roster = build_roster(inp)
+        fresh = build_duty_roster(inp, roster)
+        old_monday = (START - timedelta(weeks=REPEAT_GAP_WEEKS)).isoformat()
+        weeks = build_duty_roster(inp, roster, {old_monday: _by_duty(fresh[0])})
+        self.assertEqual(weeks[0]["unfilled"], [])
+
+    def test_pinned_weeks_are_kept_exactly_and_respected_later(self):
+        inp = inputs(weeks=5)
+        roster = build_roster(inp)
+        fresh = build_duty_roster(inp, roster)
+        # Pin week 1 to week 2's natural answer (as if that's what was shared).
+        pinned = {START.isoformat(): _by_duty(fresh[1])}
+        weeks = build_duty_roster(inp, roster, None, pinned)
+        self.assertEqual(_by_duty(weeks[0]), pinned[START.isoformat()])
+        self.assertEqual(_repeats([_by_duty(w) for w in weeks]), [])
+
+    def test_least_important_duties_are_left_blank_first(self):
+        # Two people away for the whole of week 1: 8 people, 10 duties.
+        leave = [
+            Leave("Irene", START, START + timedelta(days=4), "Holiday"),
+            Leave("Daniel", START, START + timedelta(days=4), "Holiday"),
+        ]
+        inp, roster, weeks = build(leave=leave)
+        self.assertEqual(sorted(weeks[0]["unfilled"]), sorted(BLANK_FIRST))
+
+    def test_one_short_blanks_paper_and_soap_first(self):
+        leave = [Leave("Irene", START, START + timedelta(days=4), "Holiday")]
+        inp, roster, weeks = build(leave=leave)
+        self.assertEqual(weeks[0]["unfilled"], ["Paper & Soap dispensers"])
+
+    def test_nobody_ever_gets_a_duty_after_they_have_gone_home(self):
+        inp, roster, weeks = build(weeks=12)
+        for wi, w in enumerate(weeks):
+            for duty, people in _by_duty(w).items():
+                for n in people:
+                    slot = _weekly_slot(roster, wi, n)
+                    self.assertGreaterEqual(SLOTS.index(slot), SLOTS.index(DUTY_MIN_SLOT[duty]), (wi, duty, n))
+
+    def test_manual_pick_may_break_the_rule_with_a_warning(self):
+        inp, roster, weeks = build()
+        week1 = _by_duty(weeks[0])
+        duty, (name,) = next((d, p) for d, p in week1.items() if p)
+        over = [DutyOverride(name, START + timedelta(weeks=1), duty)]
+        inp, roster, weeks = build(duty_overrides=over)
+        self.assertEqual(_by_duty(weeks[1])[duty], [name])
+        self.assertEqual(weeks[1]["repeat_picks"], [{"duty": duty, "name": name, "weeks_ago": 1}])
+        # The planner itself never adds a repeat of its own on top.
+        reps = [r for r in _repeats([_by_duty(w) for w in weeks]) if (r[0], r[1]) != (name, duty)]
+        self.assertEqual(reps, [])
+
+    def test_saved_manual_repeat_keeps_its_warning(self):
+        inp, roster, weeks = build()
+        duty, (name,) = next((d, p) for d, p in _by_duty(weeks[0]).items() if p)
+        over = [DutyOverride(name, START + timedelta(weeks=1), duty)]
+        inp, roster, weeks = build(duty_overrides=over)
+        locked = extract_locked_duties(weeks)
+        protected = build_protected_duty_roster(inp, roster, locked, [])
+        self.assertEqual(protected[1]["repeat_picks"], [{"duty": duty, "name": name, "weeks_ago": 1}])
+
+    def test_bins_ideal_finish_includes_17_00(self):
+        self.assertEqual(DUTY_ELIGIBLE_SLOTS["Back Garden & Bins"], frozenset({"early", "mid1"}))
+        self.assertEqual(DUTY_MIN_SLOT["Back Garden & Bins"], "early")
+
+
+class MinCostAssignment(unittest.TestCase):
+    def test_matches_brute_force(self):
+        import itertools
+        import random
+        rnd = random.Random(7)
+        for _ in range(200):
+            n = rnd.randint(1, 5)
+            m = rnd.randint(n, 7)
+            cost = [[rnd.randint(0, 20) for _ in range(m)] for _ in range(n)]
+            got = _min_cost_assignment(cost)
+            self.assertEqual(len(set(got)), n)
+            best = min(sum(cost[i][c] for i, c in enumerate(cols)) for cols in itertools.permutations(range(m), n))
+            self.assertEqual(sum(cost[i][c] for i, c in enumerate(got)), best)
 
 
 if __name__ == "__main__":

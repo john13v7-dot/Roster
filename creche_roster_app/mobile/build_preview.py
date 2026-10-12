@@ -115,6 +115,7 @@ def duties_json(inputs, duty_weeks) -> list:
             "monday": dw["monday"].isoformat(),
             "assignments": dw["assignments"],
             "unfilled": dw["unfilled"],
+            "repeat_picks": dw.get("repeat_picks", []),
         })
     return weeks_out
 
@@ -181,7 +182,13 @@ def main() -> None:
     write_roster_only(roster, xlsx)
     write_pdf(roster, pdf)
 
-    duty_weeks = build_duty_roster(inputs, roster)
+    # Archived weeks (rosterHistory), so the duty rota's no-repeat rule
+    # sees back past the start of this window, same as the live app.
+    prior_weeks = {
+        d["monday"]: {a["duty"]: a["people"] for a in (d.get("duties") or [])}
+        for d in db_export.get("rosterHistory", []) if d.get("monday")
+    }
+    duty_weeks = build_duty_roster(inputs, roster, prior_weeks)
     write_duties_pdf(inputs, duty_weeks, duties_pdf)
 
     summary = summary_json(inputs, roster)
