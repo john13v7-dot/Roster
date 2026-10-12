@@ -62,7 +62,7 @@ def sample_inputs(start: date) -> Inputs:
         _static("Megan"),
         Staff("Jason", "All", "paired", room="ECEC 2"),
         Staff("Shehnaz", "All", "paired"),
-        _static("Priscilla", "10:00 – 6:00", mon="10:00 – 2:00"),
+        _static("Priscilla", "10:00 – 6:00", mon="9:00 – 6:00", fri="9:00 – 6:00"),
         _static("Laura", "9:00 – 1:00"),
     ]
     # Right now: Shehnaz is on holiday until she is back (open ended), Eirini is

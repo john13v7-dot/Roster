@@ -2929,7 +2929,18 @@
   function staffFingerprint(){
     return JSON.stringify(
       staffDocs.map(function(s){
-        return {id: s._id, name: s.name, role: s.role, room: s.room, floor: s.floor, startDate: s.startDate, endDate: s.endDate, active: s.active};
+        return {
+          id: s._id, name: s.name, role: s.role, room: s.room, floor: s.floor,
+          startDate: s.startDate, endDate: s.endDate, active: s.active,
+          // A static person's own hours (hours/note) feed straight into
+          // their displayed cells and into whether they can cover as the
+          // fallback closer - a genuine structural change (someone's
+          // actual working hours changed), same as a room or role edit,
+          // so it belongs in the fingerprint too: it should bypass
+          // protection and reach every week, not get silently pinned to
+          // whatever the locked roster already had.
+          hours: s.hours, note: s.note,
+        };
       }).sort(function(a,b){ return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; })
     );
   }

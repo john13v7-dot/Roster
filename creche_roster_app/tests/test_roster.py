@@ -178,19 +178,22 @@ class FallbackCloser(unittest.TestCase):
             any(c.rule == "Closing fallback" and "Priscilla" in c.message for c in r.checks)
         )
 
-    def test_priscilla_closes_even_on_her_shorter_monday(self):
-        # Priscilla's own typed Monday hours (10:00 - 2:00) are shorter than
-        # the rest of her week (10:00 - 6:00), but covering closing means
-        # working later than usual that day - it isn't conditional on her
-        # normal hours happening to already reach it. She still covers (it
-        # counts toward the 3-person minimum, so nobody else gets pulled in
-        # to close instead), and her displayed hours stay exactly as typed -
-        # she types her own hours differently herself if she wants that shown.
+    def test_priscilla_closes_even_on_a_day_her_own_hours_are_shorter(self):
+        # A day where Priscilla's own typed hours are shorter than the
+        # rest of her week (an explicit override here, not tied to
+        # whatever her real current hours happen to be) shouldn't stop
+        # her covering closing - covering means working later than usual
+        # that day, not conditional on her normal hours already reaching
+        # it. She still covers (it counts toward the 3-person minimum, so
+        # nobody else gets pulled in to close instead), and her displayed
+        # hours stay exactly as typed - she types her own hours
+        # differently herself if she wants that shown.
         leave = [
             Leave("Jason", START, START + timedelta(days=4), "Holiday"),
             Leave("Shehnaz", START, START + timedelta(days=4), "Holiday"),
         ]
-        r = build_roster(inputs(leave=leave, weeks=1))
+        over = [Override("Priscilla", START, START, None, "10:00 – 2:00")]
+        r = build_roster(inputs(leave=leave, overrides=over, weeks=1))
         monday_fallback = [
             c for c in r.checks
             if c.rule == "Closing fallback" and c.day == START
@@ -246,14 +249,13 @@ class Overrides(unittest.TestCase):
         over = [Override("Jason", START, START + timedelta(days=13), "early")]
         r = build_roster(inputs(leave=leave, overrides=over))
         # The weekly base provisions exactly the typical week's need, not
-        # more - so it never needs a shortfall repair on Tue-Fri, where the
-        # fallback closer (Priscilla) covers. Monday is the one real
-        # exception: her own hours are shorter that day (see
-        # FallbackCloser.test_priscillas_shorter_monday_does_not_count), so
-        # the daily repair correctly tops up closing there every week - that
-        # is the fallback gap doing its job, not a planning failure.
+        # more - so it never needs a shortfall repair any day the week,
+        # where the fallback closer (Priscilla) covers. She now reaches
+        # closing time (18:00) every day of her own week, so there's no
+        # day left where her own hours fall short of it the way Monday
+        # once did.
         repairs = [c for c in r.checks if c.rule == "Cover adjusted" and "to keep" in c.message]
-        self.assertTrue(all(c.day.weekday() == 0 for c in repairs))
+        self.assertEqual(repairs, [])
         self.assertEqual(r.breaches, [])
 
     def test_override_on_a_rotating_person(self):
@@ -300,7 +302,7 @@ class StaticVacantAndLeave(unittest.TestCase):
     def test_own_hours_and_day_off(self):
         r = build_roster(inputs(weeks=1))
         self.assertEqual(texts(r, 0, "Sue"), ["8:30 – 1:30"] * 3 + ["OFF", "8:30 – 1:30"])
-        self.assertEqual(texts(r, 0, "Priscilla"), ["10:00 – 2:00"] + ["10:00 – 6:00"] * 4)
+        self.assertEqual(texts(r, 0, "Priscilla"), ["9:00 – 6:00"] + ["10:00 – 6:00"] * 3 + ["9:00 – 6:00"])
         self.assertEqual(texts(r, 0, "Laura"), ["9:00 – 1:00"] * 5)
         self.assertEqual(texts(r, 0, "Megan"), [""] * 5)
 
