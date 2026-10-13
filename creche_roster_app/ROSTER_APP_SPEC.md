@@ -359,6 +359,13 @@ Decisions already made with the owner; do not treat these as open.
 - The window is worked out from the staff list and shown in Settings, with a manual override.
 - **Holiday (Option 2):** fairness is based on the *weeks actually worked*. Someone back from leave doesn't owe extra openings and closings; colleagues who covered get a little less later. Example: Irene is on holiday for weeks 7–8 of 9; she still ends with 2 openings and 2 closings. Tested in an example roster.
 
+#### 14.3a Weeks where Priscilla closes (decided)
+When Shehnaz is away, Jason (ECEC 2) opens every day and Priscilla closes. The same-room rule then stops David and Usha (also ECEC 2) from opening that week. Rule:
+
+- **No repayment, no penalty.** Those weeks are treated like a week away for *opening* only: David and Usha's fair share of openings is calculated on the weeks they could actually open (same principle as holiday, 14.3). They are never given extra openings later to make up.
+- **Nobody else is affected either:** the openings are shared among the others on the same weeks-eligible basis, so no one owes or is owed anything because of how management cover is arranged.
+- Their closings, 8:00 and 8:30 shifts count as normal.
+
 ### 14.4 Fixed-hours staff and Priscilla
 - Sue, Laura, Megan and Priscilla (and Eirini) **never count towards opening or closing** as part of the rotating headcount.
 - Priscilla remains the **fallback closer** whenever neither paired person closes, so closing is always 2 rotating staff + 1 from management. Her hours are not changed by the app.
@@ -376,7 +383,7 @@ Logins and roles · approval step · who-made-which-change records · automatic 
 
 1. Is a half-hour at 7:30–8:00 and 17:30–18:00 with only one age group acceptable? (Assumed yes.)
 2. When a week has fewer younger-room staff than the mix needs (e.g. two of the four away), warn only? (Assumed yes.)
-3. In weeks where Priscilla closes (Shehnaz away) and Jason (ECEC 2) opens, the same-room rule can stop David or Usha opening that week; accept being one opening short, to be repaid in the next window? (Assumed yes.)
+3. ~~Repay David or Usha in the next window~~ — **decided: no repayment.** See section 14.3a.
 4. Should Start next week stay manual indefinitely? (Yes for now.)
 5. Real figures for each room (ratios, child numbers) if ratios are ever added.
 
