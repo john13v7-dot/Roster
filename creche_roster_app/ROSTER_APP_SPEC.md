@@ -4,7 +4,7 @@ A complete description of the prototype, written so it can be rebuilt in another
 
 **How to use this document.** Paste it into the new project and ask for the app to be built to this spec. Sections 1–13 describe the app **as it works today**. Section 14 lists rules that have been **agreed but not built yet**. Section 15 lists open questions. Section 16 is a ready-to-paste build prompt.
 
-Contents: 1 Purpose · 2 Principles · 3 Architecture · 4 Data model · 5 Staff types · 6 Shift rules · 7 Leave & overrides · 8 Duty rota · 9 Protected weeks · 10 Start next week & history · 11 Screens · 12 Printouts · 13 Testing · 14 Agreed, not built · 15 Open questions · 16 Build prompt
+Contents: Appendix A (anchor weeks) · 1 Purpose · 2 Principles · 3 Architecture · 4 Data model · 5 Staff types · 6 Shift rules · 7 Leave & overrides · 8 Duty rota · 9 Protected weeks · 10 Start next week & history · 11 Screens · 12 Printouts · 13 Testing · 14 Agreed, not built · 15 Open questions · 16 Build prompt
 
 ---
 
@@ -405,3 +405,218 @@ Logins and roles · approval step · who-made-which-change records · automatic 
 > 9. Then the "agreed, not built" rules in section 14, one at a time, each with an example roster to confirm balance.
 >
 > Do not add logins, approvals, notifications or multi-branch support. Warn rather than block. Leave unfilled duties blank. Never change a week that has already been shared.
+
+---
+
+## Appendix A. Anchor: the weeks currently in the app
+
+A snapshot of the 5 weeks (5 Oct – 6 Nov 2026) exactly as the live app shows them on 13 Oct 2026. Weeks 1 and 2 are the versions shared with staff. Weeks 3–5 are the current plan, with the 6-week no-repeat duty rule already applied. The live app has **not** been changed; use this to compare the new app against.
+
+Duty history before the window (28 Sep): Hallway upstairs Usha · Children's Toilets David · Staff Toilet upstairs Daniel · Kitchen Deoshree · Staff Room Manuel · Hallway downstairs Hanny · Staff Toilet Irene · Back Garden & Bins Sandrine · Front creche Jason · Paper & Soap Arantza.
+
+Leave in the window: Jason holiday 5–11 Oct · Usha sick 5–10 Oct · Sue holiday 2–7 Oct · Irene holiday 23–25 Oct · Arantza open-ended holiday from 30 Oct · Eirini maternity (open-ended) · Shehnaz holiday 28 Sep – 2 Oct.
+
+### Week 1: 05 Oct – 09 Oct 2026
+
+| Staff | Mon | Tue | Wed | Thu | Fri |
+|---|---|---|---|---|---|
+| Sue | Holiday | Holiday | Holiday | OFF | 8:30 – 1:30 |
+| Hanny | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 |
+| Vacant post | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| Manuel | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 |
+| Irene | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 |
+| Deoshree | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 |
+| Sandrine | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 |
+| Daniel | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| Arantza | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 |
+| David | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| Usha | Sick | Sick | Sick | Sick | Sick |
+| Vacant post | — | — | — | — | — |
+| Vacant post | — | — | — | — | — |
+| Eirini | Maternity Leave | Maternity Leave | Maternity Leave | Maternity Leave | Maternity Leave |
+| Megan | — | — | — | — | — |
+| Jason | Holiday | Holiday | Holiday | Holiday | Holiday |
+| Shehnaz | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 |
+| Priscilla | 9:00 – 6:00 | 10:00 – 6:00 | 10:00 – 6:00 | 10:00 – 6:00 | 9:00 – 6:00 |
+| Laura | 9:00 – 1:00 | 9:00 – 1:00 | 9:00 – 1:00 | 9:00 – 1:00 | 9:00 – 1:00 |
+
+| Duty | Person |
+|---|---|
+| Cot Room | *(blank)* |
+| Changing Area | *(blank)* |
+| Hallway upstairs / Hoover stairs upstairs | Manuel |
+| Children's Toilets | Hanny |
+| Staff Toilet upstairs | Irene |
+| Kitchen | Deoshree |
+| Staff Room | Sandrine |
+| Hallway downstairs / windows / door handles | Daniel |
+| Staff Toilet | Arantza |
+| Back Garden & Bins | David |
+| Front creche | *(blank)* |
+| Paper & Soap dispensers | *(blank)* |
+| Dusting | Sue |
+| Laundry | Shehnaz / Priscilla |
+
+### Week 2: 12 Oct – 16 Oct 2026
+
+| Staff | Mon | Tue | Wed | Thu | Fri |
+|---|---|---|---|---|---|
+| Sue | 8:30 – 1:30 | 8:30 – 1:30 | 8:30 – 1:30 | OFF | 8:30 – 1:30 |
+| Hanny | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| Vacant post | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| Manuel | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| Irene | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 |
+| Deoshree | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 |
+| Sandrine | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| Daniel | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 |
+| Arantza | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 |
+| David | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 |
+| Usha | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 |
+| Vacant post | — | — | — | — | — |
+| Vacant post | — | — | — | — | — |
+| Eirini | Maternity Leave | Maternity Leave | Maternity Leave | Maternity Leave | Maternity Leave |
+| Megan | — | — | — | — | — |
+| Jason | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 |
+| Shehnaz | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 |
+| Priscilla | 9:00 – 6:00 | 10:00 – 6:00 | 10:00 – 6:00 | 10:00 – 6:00 | 9:00 – 6:00 |
+| Laura | 9:00 – 1:00 | 9:00 – 1:00 | 9:00 – 1:00 | 9:00 – 1:00 | 9:00 – 1:00 |
+
+| Duty | Person |
+|---|---|
+| Cot Room | *(blank)* |
+| Changing Area | *(blank)* |
+| Hallway upstairs / Hoover stairs upstairs | Hanny |
+| Children's Toilets | Usha |
+| Staff Toilet upstairs | Jason |
+| Kitchen | Manuel |
+| Staff Room | Deoshree |
+| Hallway downstairs / windows / door handles | Irene |
+| Staff Toilet | Daniel |
+| Back Garden & Bins | Sandrine |
+| Front creche | Arantza |
+| Paper & Soap dispensers | David |
+| Dusting | Sue |
+| Laundry | Shehnaz / Priscilla |
+
+### Week 3: 19 Oct – 23 Oct 2026
+
+| Staff | Mon | Tue | Wed | Thu | Fri |
+|---|---|---|---|---|---|
+| Sue | 8:30 – 1:30 | 8:30 – 1:30 | 8:30 – 1:30 | OFF | 8:30 – 1:30 |
+| Hanny | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 |
+| Vacant post | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| Manuel | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 |
+| Irene | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | Holiday |
+| Deoshree | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 |
+| Sandrine | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 |
+| Daniel | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 |
+| Arantza | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| David | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| Usha | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 |
+| Vacant post | — | — | — | — | — |
+| Vacant post | — | — | — | — | — |
+| Eirini | Maternity Leave | Maternity Leave | Maternity Leave | Maternity Leave | Maternity Leave |
+| Megan | — | — | — | — | — |
+| Jason | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 |
+| Shehnaz | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 |
+| Priscilla | 9:00 – 6:00 | 10:00 – 6:00 | 10:00 – 6:00 | 10:00 – 6:00 | 9:00 – 6:00 |
+| Laura | 9:00 – 1:00 | 9:00 – 1:00 | 9:00 – 1:00 | 9:00 – 1:00 | 9:00 – 1:00 |
+
+| Duty | Person |
+|---|---|
+| Cot Room | *(blank)* |
+| Changing Area | *(blank)* |
+| Hallway upstairs / Hoover stairs upstairs | David |
+| Children's Toilets | Jason |
+| Staff Toilet upstairs | Usha |
+| Kitchen | Sandrine |
+| Staff Room | Daniel |
+| Hallway downstairs / windows / door handles | Arantza |
+| Staff Toilet | Hanny |
+| Back Garden & Bins | Deoshree |
+| Front creche | Irene |
+| Paper & Soap dispensers | Manuel |
+| Dusting | Sue |
+| Laundry | Shehnaz / Priscilla |
+
+### Week 4: 26 Oct – 30 Oct 2026
+
+| Staff | Mon | Tue | Wed | Thu | Fri |
+|---|---|---|---|---|---|
+| Sue | 8:30 – 1:30 | 8:30 – 1:30 | 8:30 – 1:30 | OFF | 8:30 – 1:30 |
+| Hanny | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| Vacant post | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| Manuel | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 |
+| Irene | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 |
+| Deoshree | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| Sandrine | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 7:30 – 4:30 |
+| Daniel | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 |
+| Arantza | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | Holiday |
+| David | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 |
+| Usha | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| Vacant post | — | — | — | — | — |
+| Vacant post | — | — | — | — | — |
+| Eirini | Maternity Leave | Maternity Leave | Maternity Leave | Maternity Leave | Maternity Leave |
+| Megan | — | — | — | — | — |
+| Jason | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 |
+| Shehnaz | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 |
+| Priscilla | 9:00 – 6:00 | 10:00 – 6:00 | 10:00 – 6:00 | 10:00 – 6:00 | 9:00 – 6:00 |
+| Laura | 9:00 – 1:00 | 9:00 – 1:00 | 9:00 – 1:00 | 9:00 – 1:00 | 9:00 – 1:00 |
+
+| Duty | Person |
+|---|---|
+| Cot Room | *(blank)* |
+| Changing Area | *(blank)* |
+| Hallway upstairs / Hoover stairs upstairs | Sandrine |
+| Children's Toilets | Deoshree |
+| Staff Toilet upstairs | Arantza |
+| Kitchen | Daniel |
+| Staff Room | Jason |
+| Hallway downstairs / windows / door handles | David |
+| Staff Toilet | Manuel |
+| Back Garden & Bins | Irene |
+| Front creche | Usha |
+| Paper & Soap dispensers | Hanny |
+| Dusting | Sue |
+| Laundry | Shehnaz / Priscilla |
+
+### Week 5: 02 Nov – 06 Nov 2026
+
+| Staff | Mon | Tue | Wed | Thu | Fri |
+|---|---|---|---|---|---|
+| Sue | 8:30 – 1:30 | 8:30 – 1:30 | 8:30 – 1:30 | OFF | 8:30 – 1:30 |
+| Hanny | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 |
+| Vacant post | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| Manuel | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 |
+| Irene | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| Deoshree | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 |
+| Sandrine | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 |
+| Daniel | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 | 8:30 – 5:30 |
+| Arantza | Holiday | Holiday | Holiday | Holiday | Holiday |
+| David | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 |
+| Usha | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 | 8:00 – 5:00 |
+| Vacant post | — | — | — | — | — |
+| Vacant post | — | — | — | — | — |
+| Eirini | Maternity Leave | Maternity Leave | Maternity Leave | Maternity Leave | Maternity Leave |
+| Megan | — | — | — | — | — |
+| Jason | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 | 9:00 – 6:00 |
+| Shehnaz | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 | 7:30 – 4:30 |
+| Priscilla | 9:00 – 6:00 | 10:00 – 6:00 | 10:00 – 6:00 | 10:00 – 6:00 | 9:00 – 6:00 |
+| Laura | 9:00 – 1:00 | 9:00 – 1:00 | 9:00 – 1:00 | 9:00 – 1:00 | 9:00 – 1:00 |
+
+| Duty | Person |
+|---|---|
+| Cot Room | *(blank)* |
+| Changing Area | *(blank)* |
+| Hallway upstairs / Hoover stairs upstairs | Irene |
+| Children's Toilets | Daniel |
+| Staff Toilet upstairs | Sandrine |
+| Kitchen | Hanny |
+| Staff Room | Usha |
+| Hallway downstairs / windows / door handles | Jason |
+| Staff Toilet | David |
+| Back Garden & Bins | Manuel |
+| Front creche | Deoshree |
+| Paper & Soap dispensers | *(blank)* |
+| Dusting | Sue |
+| Laundry | Shehnaz / Priscilla |
