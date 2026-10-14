@@ -2070,7 +2070,7 @@
     return out;
   }
 
-  function buildProtectedRoster(inputs, lockedRoster, touchedRanges) {
+  function buildProtectedRoster(inputs, lockedRoster, touchedRanges, highlightRanges) {
     function isTouched(d) {
       return touchedRanges.some(function (r) { return r[0] <= d && d <= r[1]; });
     }
@@ -2102,10 +2102,15 @@
     // definition, already-shared old news (that's the point of locking
     // it), so its highlight should have expired along with its right to
     // rebalance.
+    // `highlightRanges` (days a real leave/override change covers) decides
+    // what keeps its highlight; `touchedRanges` only decides what's free
+    // to recompute - they differ after a staff edit, which reopens later
+    // weeks without anyone having been moved to cover anything.
+    var keepRanges = highlightRanges || touchedRanges;
     function clearStaleAdjusted(roster) {
       roster.weeks.forEach(function (week) {
         week.days.forEach(function (d) {
-          if (isTouched(d)) return;
+          if (keepRanges.some(function (r) { return r[0] <= d && d <= r[1]; })) return;
           roster.staff_keys.forEach(function (ks) {
             var cell = week.cells.get(cellKey(ks[0], d));
             if (cell && cell.adjusted) cell.adjusted = false;
@@ -2154,10 +2159,10 @@
   // the app has a lockedRoster to protect; build() stays as-is for
   // callers (e.g. a staff add/remove, which deliberately reopens
   // everything) that want the plain, unprotected computation.
-  function buildProtected(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, lockedRoster, touchedRanges, lockedDuties, priorWeeks) {
+  function buildProtected(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, lockedRoster, touchedRanges, lockedDuties, priorWeeks, highlightRanges) {
     var settings = buildSettings(rosterStartIso);
     var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs);
-    var roster = buildProtectedRoster(inputs, lockedRoster || {}, touchedRanges || []);
+    var roster = buildProtectedRoster(inputs, lockedRoster || {}, touchedRanges || [], highlightRanges);
     var dutyWeeks = buildProtectedDutyRoster(inputs, roster, lockedDuties || {}, touchedRanges || [], priorWeeks || {});
     var summary = summaryJson(inputs, roster);
     summary.duties = dutiesJson(inputs, dutyWeeks);
@@ -3087,6 +3092,7 @@
       return out;
     }
     var touched = computeTouchedRanges(watermarkDoc ? (watermarkDoc.events || []) : [], rosterStart);
+    var eventTouched = touched;
     var staffChanged = !watermarkDoc || watermarkDoc.staffFingerprint !== staffFingerprint();
     if(staffChanged){
       var windowEnd = rosterWindowDays(rosterStart).slice(-1)[0];
@@ -3094,7 +3100,7 @@
     }
     var out2 = RosterEngine.buildProtected(
       staffDocs, leaveDocs, transferDocs, rosterStart, dutyOverrideDocs, historySeed, lastSlotSeed,
-      lockedRosterDoc.slots || {}, touched, effectiveLockedDuties(rosterStart), priorWeeks
+      lockedRosterDoc.slots || {}, touched, effectiveLockedDuties(rosterStart), priorWeeks, eventTouched
     );
     out2.touchedRanges = touched;
     out2.fullRelock = false;

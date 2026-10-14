@@ -1172,6 +1172,7 @@ def build_protected_roster(
     inputs: Inputs,
     locked_roster: Dict[str, Dict[str, str]],
     touched_ranges: List[Tuple[date, date]],
+    highlight_ranges: Optional[List[Tuple[date, date]]] = None,
 ) -> Roster:
     """Build the roster, then pin every rotating/paired person's day back
     to `locked_roster` (their last known-good slot: {name: {iso_date:
@@ -1248,9 +1249,16 @@ def build_protected_roster(
         have expired along with its right to rebalance; clear it in place
         rather than leave stale amber on a settled week.
         """
+        # `highlight_ranges` (the days a real leave/override change covers)
+        # decides what keeps its highlight; `touched_ranges` only decides
+        # what's free to recompute. They differ when a structural edit
+        # (a staff change) opens later weeks for recomputing without any
+        # leave having changed there - nothing "changed to cover" anyone,
+        # so nothing should be coloured.
+        keep = touched_ranges if highlight_ranges is None else highlight_ranges
         for week in roster.weeks:
             for d in week.days:
-                if is_touched(d):
+                if any(a <= d <= b for a, b in keep):
                     continue
                 for key, _ in roster.staff_keys:
                     cell = week.cells.get((key, d))
