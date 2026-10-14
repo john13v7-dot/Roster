@@ -337,7 +337,11 @@ Libraries used in the page: jsPDF, jsPDF-AutoTable, ExcelJS.
 
 ---
 
-## 14. Agreed but NOT built yet
+## 14. Newer rules (built, apply from 9 Nov 2026) and what is still not built
+
+**Status (app version 85).** 14.1–14.4 are built and apply only to weeks on or after **9 Nov 2026** (`Settings.new_rules_start`, fixed in code, not editable). Every earlier week is built exactly as described in sections 5–10. The archive (`rosterHistory`) feeds the 9-week fairness window across "Start next week". Printing several weeks together heads the roster and duties (including the summary pages) **"Temporary Weekly Roster"** / **"Temporary Weekly Duties"** with the note "This roster is temporary. Shifts and duties may change because of leave, sickness or cover needed. Please check for updates before each week." A single-week print keeps the plain titles. **Not built:** the Settings screen (14.5) and everything in 14.6.
+
+### 14. (original agreement)
 
 Decisions already made with the owner; do not treat these as open.
 
