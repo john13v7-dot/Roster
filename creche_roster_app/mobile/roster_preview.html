@@ -2942,7 +2942,7 @@
     weekIndices.forEach(function(wi, idx){
       var week = data.weeks[wi];
       if(idx > 0) doc.addPage();
-      var tableY = printHeader(doc, 'STAFF ROSTER', 'Temporary Weekly Roster', weekIndices.length > 1, week.label, 11, [33,28,26], 0, 60);
+      var tableY = printHeader(doc, 'STAFF ROSTER', 'Weekly Roster', weekIndices.length > 1, week.label, 11, [33,28,26], 0, 60);
       var body = week.people.map(function(p){
         return [p.name + (p.role === 'vacant' ? '  (vacant)' : '')].concat(
           p.days.map(function(d){ return d.text || '—'; })
@@ -3000,7 +3000,7 @@
     weekIndices.forEach(function(wi){
       var week = data.weeks[wi];
       var ws = wb.addWorksheet(('Week ' + (wi + 1)).slice(0, 31));
-      ws.addRow([weekIndices.length > 1 ? 'Temporary Weekly Roster' : 'STAFF ROSTER']).font = {bold:true, size:14, color:{argb:'FFE04A32'}};
+      ws.addRow([weekIndices.length > 1 ? 'Weekly Roster' : 'STAFF ROSTER']).font = {bold:true, size:14, color:{argb:'FFE04A32'}};
       if(weekIndices.length > 1) ws.addRow([TEMP_NOTE]).font = {italic:true, size:9, color:{argb:'FF404040'}};
       ws.addRow([week.label]).font = {bold:true};
       ws.addRow([]);
@@ -3118,7 +3118,7 @@
       if(!week) return;
       if(used > 0) doc.addPage();
       used++;
-      var dutyTableY = printHeader(doc, 'CLEANING DUTIES', 'Temporary Weekly Duties', weekIndices.length > 1, week.label, 11, [33,28,26], 0, 60);
+      var dutyTableY = printHeader(doc, 'CLEANING DUTIES', 'Weekly Duties', weekIndices.length > 1, week.label, 11, [33,28,26], 0, 60);
       var unfilled = {};
       (week.unfilled || []).forEach(function(d){ unfilled[d] = 1; });
       var body = week.assignments.map(function(a){
