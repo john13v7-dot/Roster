@@ -52,6 +52,14 @@ class Settings:
     break_text: str = "10 MINS"
     day_headers: bool = False  # the old printed roster has no Mon..Fri header row
     fallback_closer: Optional[str] = None  # a static-hours person who closes when neither paired person does
+    # The first Monday the newer scheduling rules apply to (age-group mix at
+    # 8:00/8:30, strict cover, 9-week fairness window). Weeks before it are
+    # built exactly as before. None = the older rules everywhere.
+    new_rules_start: Optional[date] = None
+    # Which rooms count as the younger / older age group (for the mix rule).
+    younger_rooms: Tuple[str, ...] = ("Toddlers Room", "Preschoolers Room")
+    older_rooms: Tuple[str, ...] = ("ECEC 1", "ECEC 2")
+    fairness_weeks: int = 9
 
 
 @dataclass
@@ -114,6 +122,10 @@ class Inputs:
     # Days already worked on each start time before this roster (fairness memory).
     history: Dict[str, Dict[str, int]] = field(default_factory=dict)
     last_slot: Dict[str, str] = field(default_factory=dict)
+    # Each rotating person's weekly slot for the weeks just before this
+    # roster (oldest first; None = away that week), from the archive - so the
+    # newer rules' rolling fairness window can see back past the start.
+    prior_slots: Dict[str, List[Optional[str]]] = field(default_factory=dict)
 
 
 @dataclass

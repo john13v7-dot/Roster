@@ -601,10 +601,13 @@
   // week (or, at week one, a seeded last_slot). Some builds have nobody who
   // can be freed this way - left as is, same as any other genuinely
   // unavoidable shortfall.
-  function balanceProtectedSlots(weeks, byName, roomOf, period, hist, lastSlot, seedLastSlot) {
+  function balanceProtectedSlots(weeks, byName, roomOf, period, hist, lastSlot, seedLastSlot, nOld) {
     var pool = [];
     for (var n in byName) if (byName[n].role === 'rotating') pool.push(n);
     var nWeeks = weeks.length;
+    // Weeks on the newer rules plan their own fairness; this older pass only
+    // looks at the weeks before them.
+    if (nOld === undefined) nOld = nWeeks;
 
     function weekSlot(wi, name) {
       var week = weeks[wi];
@@ -668,12 +671,12 @@
 
     ['early', 'late'].forEach(function (target) {
       var missing = pool.filter(function (n) {
-        for (var wi = 0; wi < nWeeks; wi++) if (weekSlot(wi, n) === target) return false;
+        for (var wi = 0; wi < nOld; wi++) if (weekSlot(wi, n) === target) return false;
         return true;
       });
       missing.forEach(function (n) {
         var best = null;
-        for (var wi = 0; wi < nWeeks; wi++) {
+        for (var wi = 0; wi < nOld; wi++) {
           var nSlot = weekSlot(wi, n);
           if (nSlot === null || nSlot === target) continue;
           var week = weeks[wi];
@@ -685,7 +688,7 @@
             if (roomN && roomN === roomD) continue; // same room: not a real reassignment, skip rather than special-case it
             if (wouldRepeat(n, wi, target) || wouldRepeat(donor, wi, nSlot)) continue;
             var donorTotal = 0;
-            for (var w2 = 0; w2 < nWeeks; w2++) if (weekSlot(w2, donor) === target) donorTotal++;
+            for (var w2 = 0; w2 < nOld; w2++) if (weekSlot(w2, donor) === target) donorTotal++;
             if (donorTotal < 2) continue; // would just hand the donor a new zero-case
             if (roomClashes(week, n, donor, roomN, target) || roomClashes(week, donor, n, roomD, nSlot)) continue;
             var cost = (hist[n][target] || 0) + (hist[donor][nSlot] || 0);
@@ -724,6 +727,13 @@
       break_text: '10 MINS',
       day_headers: false,
       fallback_closer: 'Priscilla',
+      // From this Monday the newer rules apply (age-group mix at 8:00/8:30,
+      // strict cover, 9-week fairness window); earlier weeks are built exactly
+      // as before.
+      new_rules_start: '2026-11-09',
+      younger_rooms: ['Toddlers Room', 'Preschoolers Room'],
+      older_rooms: ['ECEC 1', 'ECEC 2'],
+      fairness_weeks: 9,
     };
   }
 
@@ -915,7 +925,187 @@
   // necessary to keep opening/closing cover met for who's really here.
   // See _patch_weekly_base's docstring in engine.py for the full
   // rationale - this is a straight port.
-  function patchWeeklyBase(members, idealBase, preCounts, needOpen, needClose, hist, lastSlot, weekIndex, roomOf, takenByRoom, totalWeeks) {
+
+  // ---------------------------------------------------------------- newer rules (new_rules_start onwards)
+  // Port of engine.py's _assign_weekly_base_v2/_fix_mid_mix - see the Python
+  // docstrings. Integer costs, same scan order, so both engines agree.
+  var N_CLASH = 1e6, N_MIX = 1e5, N_REPEAT = 300;
+
+  function windowStats(recs, windowWeeks) {
+    var o = 0, c = 0, wo = 0, wc = 0, mids = {};
+    recs.slice(Math.max(0, recs.length - (windowWeeks - 1))).forEach(function (r) {
+      if (r[0] === null) return;
+      if (!r[1]) wo++;
+      if (!r[2]) wc++;
+      if (r[0] === 'early') o++;
+      else if (r[0] === 'late') c++;
+      else mids[r[0]] = (mids[r[0]] || 0) + 1;
+    });
+    return { o: o, c: c, wo: wo, wc: wc, mids: mids };
+  }
+
+  function midGroupCost(group, slot, roomOf, groupOf, externalTaken) {
+    var cost = 0, rooms = {};
+    group.forEach(function (n) {
+      var r = roomOf[n];
+      if (r) {
+        rooms[r] = (rooms[r] || 0) + 1;
+        if (externalTaken[r] && externalTaken[r].has(slot)) cost += N_CLASH;
+      }
+    });
+    Object.keys(rooms).forEach(function (r) { if (rooms[r] > 1) cost += N_CLASH * (rooms[r] - 1); });
+    if (group.length >= 2) {
+      var kinds = {};
+      group.forEach(function (n) { kinds[groupOf[n] || ''] = true; });
+      if (!kinds.Y) cost += N_MIX;
+      if (!kinds.O) cost += N_MIX;
+    }
+    return cost;
+  }
+
+  function copyTaken(t) {
+    var out = {};
+    for (var r in t) out[r] = new Set(t[r]);
+    return out;
+  }
+  function pmod(a, m) { return ((a % m) + m) % m; }
+
+  function assignWeeklyBaseV2(members, preCounts, needOpen, needClose, win, windowWeeks, lastSlot, weekIndex, roomOf, takenByRoom, groupOf) {
+    var externalTaken = copyTaken(takenByRoom);
+    var nMembers = members.length;
+    var kO = Math.max(0, needOpen - g(preCounts, 'early'));
+    var kC = Math.max(0, needClose - g(preCounts, 'late'));
+    kO = Math.min(kO, Math.max(0, nMembers - kC));
+    kC = Math.min(kC, Math.max(0, nMembers - kO));
+    var nMid = nMembers - kO - kC;
+
+    var stats = {}, weeksPresent = {};
+    members.forEach(function (n) {
+      var recs = win[n] || [];
+      stats[n] = windowStats(recs, windowWeeks);
+      weeksPresent[n] = recs.slice(Math.max(0, recs.length - (windowWeeks - 1))).filter(function (r) { return r[0] !== null; }).length;
+    });
+    var pen = {};
+    function penKey(n, slot) { return n + '|' + slot; }
+
+    var capO = Math.ceil((Math.max(kO, 1) * windowWeeks) / Math.max(1, nMembers));
+    var capC = Math.ceil((Math.max(kC, 1) * windowWeeks) / Math.max(1, nMembers));
+    var seats = [];
+    var q;
+    for (q = 0; q < kO; q++) seats.push('early');
+    for (q = 0; q < kC; q++) seats.push('late');
+    for (q = 0; q < nMid; q++) seats.push('mid');
+
+    function seatCost(i, slot) {
+      var n = members[i], st = stats[n];
+      var base = Math.floor((1000 * (st.o + st.c)) / (weeksPresent[n] + 1));
+      var cost;
+      if (slot === 'early') cost = base + Math.floor((600 * st.o) / (st.wo + 1)) + (st.o >= capO ? N_MIX : 0);
+      else cost = base + Math.floor((600 * st.c) / (st.wc + 1)) + (st.c >= capC ? N_MIX : 0);
+      if (lastSlot[n] === slot) cost += N_REPEAT;
+      var r = roomOf[n];
+      if (r && externalTaken[r] && externalTaken[r].has(slot)) cost += N_CLASH;
+      cost += pmod(i - weekIndex, Math.max(1, nMembers));
+      cost += pen[penKey(n, slot)] || 0;
+      return cost;
+    }
+
+    var picked = [];
+    for (var attempt = 0; attempt < 8; attempt++) {
+      var costM = members.map(function (n, i) {
+        return seats.map(function (sl) { return sl === 'mid' ? 0 : seatCost(i, sl); });
+      });
+      var cols = minCostAssignment(costM);
+      picked = cols.map(function (c) { return seats[c]; });
+      var clash = null;
+      ['early', 'late'].forEach(function (slot) {
+        var seen = {};
+        members.forEach(function (n) {
+          var i = members.indexOf(n);
+          if (picked[i] !== slot || !roomOf[n]) return;
+          if (Object.prototype.hasOwnProperty.call(seen, roomOf[n])) clash = [n, slot];
+          seen[roomOf[n]] = n;
+        });
+      });
+      if (clash) { var kk = penKey(clash[0], clash[1]); pen[kk] = (pen[kk] || 0) + N_CLASH; continue; }
+      var over = null;
+      if (nMid >= 4) {
+        ['Y', 'O'].forEach(function (kind) {
+          if (over !== null) return;
+          var have = [], used = [];
+          members.forEach(function (n, i) { if (groupOf[n] === kind) { have.push(i); if (picked[i] !== 'mid') used.push(i); } });
+          if (have.length - used.length < 2) {
+            var worst = used[0], wk = null;
+            used.forEach(function (i) {
+              var key = [seatCost(i, picked[i]), i];
+              if (wk === null || cmpArrays(key, wk) > 0) { wk = key; worst = i; }
+            });
+            over = worst;
+          }
+        });
+      }
+      if (over === null) break;
+      ['early', 'late'].forEach(function (slot) {
+        var kk2 = penKey(members[over], slot);
+        pen[kk2] = (pen[kk2] || 0) + N_MIX;
+      });
+    }
+
+    var result = {}, mids = [];
+    members.forEach(function (n, i) { if (picked[i] === 'mid') mids.push(n); else result[n] = picked[i]; });
+
+    if (mids.length) {
+      var half = Math.floor(mids.length / 2);
+      var sizes = [half, mids.length - half];
+      if (weekIndex % 2) sizes.reverse();
+      if (sizes[0] === sizes[1]) sizes = [sizes[0]];
+      var best = null;
+      sizes.forEach(function (size) {
+        combos(mids.length, size).forEach(function (combo) {
+          var g1 = combo.map(function (i) { return mids[i]; });
+          var g2 = mids.filter(function (_, i) { return combo.indexOf(i) === -1; });
+          var cost = midGroupCost(g1, 'mid1', roomOf, groupOf, externalTaken) + midGroupCost(g2, 'mid2', roomOf, groupOf, externalTaken);
+          g1.forEach(function (n) { cost += 10 * (stats[n].mids.mid1 || 0) + (lastSlot[n] === 'mid1' ? N_REPEAT : 0); });
+          g2.forEach(function (n) { cost += 10 * (stats[n].mids.mid2 || 0) + (lastSlot[n] === 'mid2' ? N_REPEAT : 0); });
+          if (best === null || cost < best[0]) best = [cost, g1, g2];
+        });
+      });
+      best[1].forEach(function (n) { result[n] = 'mid1'; });
+      best[2].forEach(function (n) { result[n] = 'mid2'; });
+    }
+    return result;
+  }
+
+  // itertools.combinations(range(n), k), in the same (lexicographic) order
+  function combos(n, k) {
+    var out = [], cur = [];
+    (function rec(start) {
+      if (cur.length === k) { out.push(cur.slice()); return; }
+      for (var i = start; i < n; i++) { cur.push(i); rec(i + 1); cur.pop(); }
+    })(0);
+    return out;
+  }
+
+  function fixMidMix(result, roomOf, groupOf, externalTaken) {
+    var ones = Object.keys(result).filter(function (n) { return result[n] === 'mid1'; });
+    var twos = Object.keys(result).filter(function (n) { return result[n] === 'mid2'; });
+    function total(a, b) {
+      return midGroupCost(a, 'mid1', roomOf, groupOf, externalTaken) + midGroupCost(b, 'mid2', roomOf, groupOf, externalTaken);
+    }
+    var cur = total(ones, twos);
+    if (cur === 0) return;
+    var best = [cur, null];
+    ones.forEach(function (a) {
+      twos.forEach(function (b) {
+        var c = total(ones.filter(function (x) { return x !== a; }).concat([b]), twos.filter(function (x) { return x !== b; }).concat([a]));
+        if (c < best[0]) best = [c, [a, b]];
+      });
+    });
+    if (best[1]) { result[best[1][0]] = 'mid2'; result[best[1][1]] = 'mid1'; }
+  }
+
+  function patchWeeklyBase(members, idealBase, preCounts, needOpen, needClose, hist, lastSlot, weekIndex, roomOf, takenByRoom, totalWeeks, fillGaps) {
+    if (fillGaps === undefined) fillGaps = true;
     roomOf = roomOf || {};
     var takenCopy = {};
     for (var r0 in (takenByRoom || {})) takenCopy[r0] = new Set(takenByRoom[r0]);
@@ -954,7 +1144,7 @@
     });
 
     var need = { early: needOpen, late: needClose };
-    ['early', 'late'].forEach(function (target) {
+    (fillGaps ? ['early', 'late'] : []).forEach(function (target) {
       while (g(preCounts, target) + Object.values(result).filter(function (s) { return s === target; }).length < need[target]) {
         var cnt = {};
         Object.values(result).forEach(function (s) { cnt[s] = (cnt[s] || 0) + 1; });
@@ -1134,7 +1324,7 @@
     return false;
   }
 
-  function repairFloor(d, floor, slotOf, overridden, byName, s, costFn, checks, wi, need, roomOf, adjusted) {
+  function repairFloor(d, floor, slotOf, overridden, byName, s, costFn, checks, wi, need, roomOf, adjusted, newRules, coverCount) {
     need = need || needs(floor, s);
     var floorNames = Object.keys(slotOf).filter(function (n) { return byName[n].floor === floor; });
     ['early', 'late'].forEach(function (target) {
@@ -1153,17 +1343,45 @@
         if (!donors.length) break;
         var safeDonors = donors.filter(function (n) { return !wouldClash(n, target, slotOf, roomOf); });
         var pool = safeDonors.length ? safeDonors : donors;
-        pool = sortByKey(pool, function (n) {
-          return [
-            (slotOf[n] === 'mid1' || slotOf[n] === 'mid2') ? 0 : 1,
-            costFn(n, target),
-            floorNames.indexOf(n),
-          ];
-        });
+        if (newRules) {
+          // Strict cover: 8:00 covers a missing opener, 8:30 a missing
+          // closer; shared out, turning over each day; anything else is a
+          // last resort and says so.
+          var pref = target === 'early' ? 'mid1' : 'mid2';
+          var otherMid = target === 'early' ? 'mid2' : 'mid1';
+          var ord = toEpochDay(d) + 719163;
+          pool = sortByKey(pool, function (n) {
+            return [
+              slotOf[n] === pref ? 0 : slotOf[n] === otherMid ? 1 : 2,
+              (coverCount && coverCount[n]) || 0,
+              pmod(floorNames.indexOf(n) - ord, Math.max(1, floorNames.length)),
+              costFn(n, target),
+            ];
+          });
+        } else {
+          pool = sortByKey(pool, function (n) {
+            return [
+              (slotOf[n] === 'mid1' || slotOf[n] === 'mid2') ? 0 : 1,
+              costFn(n, target),
+              floorNames.indexOf(n),
+            ];
+          });
+        }
         var n = pool[0];
         var old = slotOf[n];
         slotOf[n] = target;
         if (adjusted) adjusted.add(n);
+        if (newRules && coverCount) {
+          coverCount[n] = (coverCount[n] || 0) + 1;
+          if (old !== (target === 'early' ? 'mid1' : 'mid2')) {
+            checks.push({
+              level: 'WARNING', rule: 'Cover (last resort)',
+              message: n + ' moved from ' + t12(s.shifts[old].start) + ' to ' + t12(s.shifts[target].start) + ' on ' +
+                fmtDay(d) + ': nobody on the usual cover shift was free.',
+              day: d, week: wi,
+            });
+          }
+        }
         var what = target === 'early' ? 'opening' : 'closing';
         checks.push({
           level: 'INFO', rule: 'Cover adjusted',
@@ -1340,6 +1558,26 @@
     var roomOf = {};
     for (var n in byName) if (byName[n].room) roomOf[n] = byName[n].room;
 
+    var groupOf = {};
+    for (var ng in byName) {
+      var rm = byName[ng].room;
+      groupOf[ng] = (s.younger_rooms || []).indexOf(rm) !== -1 ? 'Y' : (s.older_rooms || []).indexOf(rm) !== -1 ? 'O' : null;
+    }
+    // Newer rules only: each rotating person's slot per week, oldest first,
+    // starting with the archived weeks before this roster, and how many days
+    // each person has been moved to cover this build.
+    var win = {};
+    for (var nw in byName) {
+      if (byName[nw].role !== 'rotating') continue;
+      win[nw] = ((inputs.prior_slots || {})[nw] || []).map(function (sl) { return [sl, false, false]; });
+    }
+    var coverCount = {};
+    var newStart = s.new_rules_start || null;
+    var nOldWeeks = 0;
+    for (var wo = 0; wo < s.weeks; wo++) {
+      if (!(newStart && addDays(s.roster_start, wo * 7) >= newStart)) nOldWeeks++;
+    }
+
     var hist = {};
     for (var n2 in byName) hist[n2] = Object.assign({}, inputs.history[n2] || {});
     var period = {};
@@ -1417,6 +1655,8 @@
       for (var i = 0; i < NDAYS; i++) days.push(addDays(monday, i));
       var present = {};
       for (var n5 in byName) present[n5] = days.filter(function (d) { return !leaveKind(n5, d); });
+      var newRules = !!(newStart && monday >= newStart);
+      var mixDays = {};
 
       // ---- weekly base ----
       function computeBase(presentMap, idealBase) {
@@ -1477,10 +1717,21 @@
               var r = roomOf[nb];
               if (r) { if (!takenByRoom[r]) takenByRoom[r] = new Set(); takenByRoom[r].add(base[nb]); }
             }
+            var extTaken = copyTaken(takenByRoom);
             if (idealBase === undefined) {
-              Object.assign(base, assignWeeklyBase(members, pre, s.min_open[floor], minClose, hist, lastSlot, wi, roomOf, takenByRoom, s.weeks));
+              if (newRules) {
+                Object.assign(base, assignWeeklyBaseV2(members, pre, s.min_open[floor], minClose, win, s.fairness_weeks, lastSlot, wi, roomOf, takenByRoom, groupOf));
+              } else {
+                Object.assign(base, assignWeeklyBase(members, pre, s.min_open[floor], minClose, hist, lastSlot, wi, roomOf, takenByRoom, s.weeks));
+              }
             } else {
-              Object.assign(base, patchWeeklyBase(members, idealBase, pre, s.min_open[floor], minClose, hist, lastSlot, wi, roomOf, takenByRoom, s.weeks));
+              Object.assign(base, patchWeeklyBase(members, idealBase, pre, s.min_open[floor], minClose, hist, lastSlot, wi, roomOf, takenByRoom, s.weeks, !newRules));
+            }
+            if (newRules) {
+              var mine = {};
+              members.forEach(function (nm) { if (Object.prototype.hasOwnProperty.call(base, nm)) mine[nm] = base[nm]; });
+              fixMidMix(mine, roomOf, groupOf, extTaken);
+              Object.assign(base, mine);
             }
           }
         });
@@ -1589,9 +1840,21 @@
               // that's a manual override she types in herself.
             }
           }
-          repairFloor(d, floor, slotOf, overridden, byName, s, costFn, checks, wi, need, roomOf, adjusted);
+          repairFloor(d, floor, slotOf, overridden, byName, s, costFn, checks, wi, need, roomOf, adjusted, newRules, coverCount);
           if (fallbackCovering) capLateForFallback(d, floor, slotOf, overridden, byName, s, need, costFn, checks, wi, fb, roomOf, adjusted);
           checkFloor(d, floor, slotOf, byName, s, checks, wi, need);
+          if (newRules) {
+            ['mid1', 'mid2'].forEach(function (mid) {
+              var group = Object.keys(slotOf).filter(function (nm) { return slotOf[nm] === mid && byName[nm].floor === floor; });
+              var kinds = {};
+              group.forEach(function (nm) { kinds[groupOf[nm] || ''] = true; });
+              if (group.length >= 2) {
+                [['Y', 'younger-room'], ['O', 'older-room']].forEach(function (kl) {
+                  if (!kinds[kl[0]]) { var mk = mid + '|' + kl[1]; (mixDays[mk] = mixDays[mk] || []).push(d); }
+                });
+              }
+            });
+          }
         });
 
         checkRooms(d, slotOf, roomOf, s.shifts, checks, wi);
@@ -1606,6 +1869,24 @@
       if (pair.length) reportPairing(pair, days, cells, leaveKind, ignoredOverride, checks, wi);
 
       weeks.push({ monday: monday, days: days, cells: cells, full_base: fullBase });
+
+      Object.keys(mixDays).forEach(function (mk) {
+        var parts = mk.split('|'), mdays = mixDays[mk];
+        checks.push({
+          level: 'WARNING', rule: 'Age-group mix',
+          message: 'The ' + t12(s.shifts[parts[0]].start) + ' group has no ' + parts[1] + ' staff on ' + fmtDays(mdays) + '.',
+          day: mdays[0], week: wi,
+        });
+      });
+      for (var nwk in win) {
+        var rr = roomOf[nwk], held = {};
+        if (rr) {
+          for (var oo in byName) {
+            if (Object.prototype.hasOwnProperty.call(base, oo) && byName[oo].role !== 'rotating' && roomOf[oo] === rr) held[base[oo]] = true;
+          }
+        }
+        win[nwk].push([Object.prototype.hasOwnProperty.call(base, nwk) ? base[nwk] : null, !!held.early, !!held.late]);
+      }
 
       for (var n8 in byName) {
         var slots = days.map(function (d) { return cells.get(cellKey(n8, d)); })
@@ -1632,7 +1913,7 @@
       }
     }
 
-    balanceProtectedSlots(weeks, byName, roomOf, period, hist, lastSlot, inputs.last_slot);
+    balanceProtectedSlots(weeks, byName, roomOf, period, hist, lastSlot, inputs.last_slot, nOldWeeks);
 
     return {
       inputs: inputs, staff_keys: staffKeys, weeks: weeks, checks: checks,
@@ -1978,7 +2259,7 @@
     });
     return seeded;
   }
-  function buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, history, lastSlot, dutyOverrideDocs) {
+  function buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, history, lastSlot, dutyOverrideDocs, priorSlots) {
     var ordered = staffDocs.slice().sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
     var staff = ordered.map(staffFromDoc);
     var leave = leaveDocs.map(leaveFromDoc);
@@ -1987,7 +2268,7 @@
     var dutyOverrides = (dutyOverrideDocs || []).map(dutyOverrideFromDoc);
     return {
       settings: settings, staff: staff, leave: leave, overrides: overrides,
-      duty_overrides: dutyOverrides, history: history, last_slot: lastSlot,
+      duty_overrides: dutyOverrides, history: history, last_slot: lastSlot, prior_slots: priorSlots || {},
     };
   }
 
@@ -2143,9 +2424,9 @@
   // `priorWeeks` ({mondayIso: {duty: [people]}}, the archived
   // rosterHistory weeks) lets the duty rota's no-repeat rule see back past
   // the start of this build's own window.
-  function build(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, priorWeeks) {
+  function build(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, priorWeeks, priorSlots) {
     var settings = buildSettings(rosterStartIso);
-    var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs);
+    var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs, priorSlots);
     var roster = buildRoster(inputs);
     var dutyWeeks = buildDutyRoster(inputs, roster, priorWeeks || {});
     var summary = summaryJson(inputs, roster);
@@ -2159,9 +2440,9 @@
   // the app has a lockedRoster to protect; build() stays as-is for
   // callers (e.g. a staff add/remove, which deliberately reopens
   // everything) that want the plain, unprotected computation.
-  function buildProtected(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, lockedRoster, touchedRanges, lockedDuties, priorWeeks, highlightRanges) {
+  function buildProtected(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, lockedRoster, touchedRanges, lockedDuties, priorWeeks, highlightRanges, priorSlots) {
     var settings = buildSettings(rosterStartIso);
-    var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs);
+    var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs, priorSlots);
     var roster = buildProtectedRoster(inputs, lockedRoster || {}, touchedRanges || [], highlightRanges);
     var dutyWeeks = buildProtectedDutyRoster(inputs, roster, lockedDuties || {}, touchedRanges || [], priorWeeks || {});
     var summary = summaryJson(inputs, roster);
@@ -2635,23 +2916,40 @@
   }
   function rgbToArgb(rgb){ return 'FF' + rgbToHex(rgb); }
 
+  // When several weeks are printed together (the monthly summary), the
+  // roster and duties are headed "Temporary ..." with a short note saying
+  // why, so staff know the weeks can still change. A single-week print is
+  // laid out exactly as before.
+  var TEMP_NOTE = 'This roster is temporary. Shifts and duties may change because of leave, sickness or cover needed. Please check for updates before each week.';
+  function printHeader(doc, plainTitle, tempTitle, multi, subText, subSize, subColor, subMaxWidth, defaultSubY){
+    doc.setFontSize(16); doc.setTextColor(224,74,50);
+    doc.text(multi ? tempTitle : plainTitle, 40, 42);
+    var subY = defaultSubY;
+    if(multi){
+      doc.setFontSize(8.5); doc.setTextColor(64,64,64);
+      var lines = doc.splitTextToSize(TEMP_NOTE, 515);
+      doc.text(lines, 40, 56);
+      subY = 56 + lines.length * 10 + 12;
+    }
+    doc.setFontSize(subSize); doc.setTextColor(subColor[0], subColor[1], subColor[2]);
+    if(subMaxWidth) doc.text(subText, 40, subY, {maxWidth: subMaxWidth}); else doc.text(subText, 40, subY);
+    return multi ? subY + 14 + (subMaxWidth && subText.length > 110 ? 12 : 0) : 74;
+  }
+
   function buildRosterPdfBlob(weekIndices, includeSummary){
     var doc = new window.jspdf.jsPDF({unit:'pt', format:'a4'});
     doc.setFont(undefined, 'bold');
     weekIndices.forEach(function(wi, idx){
       var week = data.weeks[wi];
       if(idx > 0) doc.addPage();
-      doc.setFontSize(16); doc.setTextColor(224,74,50);
-      doc.text('STAFF ROSTER', 40, 42);
-      doc.setFontSize(11); doc.setTextColor(33,28,26);
-      doc.text(week.label, 40, 60);
+      var tableY = printHeader(doc, 'STAFF ROSTER', 'Temporary Weekly Roster', weekIndices.length > 1, week.label, 11, [33,28,26], 0, 60);
       var body = week.people.map(function(p){
         return [p.name + (p.role === 'vacant' ? '  (vacant)' : '')].concat(
           p.days.map(function(d){ return d.text || '—'; })
         );
       });
       doc.autoTable({
-        startY: 74,
+        startY: tableY,
         head: [['Name'].concat(week.day_names)],
         body: body,
         styles: {fontSize:9, cellPadding:5, lineColor:[231,221,212], lineWidth:0.5, fontStyle:'bold'},
@@ -2679,10 +2977,8 @@
   // Mirrors creche_roster/pdf_out.py's _summary_table.
   function addWeeklySummaryPdfPage(doc, weekIndices){
     doc.addPage();
-    doc.setFontSize(16); doc.setTextColor(224,74,50);
-    doc.text('WEEKLY SUMMARY', 40, 42);
-    doc.setFontSize(9); doc.setTextColor(64,64,64);
-    doc.text("Each person's shift for the week - shown even through a holiday, sick day or maternity leave that week, never left blank because of it.", 40, 58, {maxWidth: 515});
+    var sumY = printHeader(doc, 'WEEKLY SUMMARY', 'Temporary Weekly Roster - Summary', weekIndices.length > 1,
+      "Each person's shift for the week - shown even through a holiday, sick day or maternity leave that week, never left blank because of it.", 9, [64,64,64], 515, 58);
     var body = [];
     lastBuildOut.roster.staff_keys.forEach(function(ks){
       var st = ks[1];
@@ -2691,7 +2987,7 @@
       body.push([label].concat(weekIndices.map(function(wi){ return intendedShiftText(wi, st); })));
     });
     doc.autoTable({
-      startY: 74,
+      startY: sumY,
       head: [['Name'].concat(weekIndices.map(function(wi){ return 'Week ' + (wi + 1) + ' (' + data.weeks[wi].label + ')'; }))],
       body: body,
       styles: {fontSize:9, cellPadding:5, lineColor:[231,221,212], lineWidth:0.5, fontStyle:'bold'},
@@ -2704,7 +3000,8 @@
     weekIndices.forEach(function(wi){
       var week = data.weeks[wi];
       var ws = wb.addWorksheet(('Week ' + (wi + 1)).slice(0, 31));
-      ws.addRow(['STAFF ROSTER']).font = {bold:true, size:14, color:{argb:'FFE04A32'}};
+      ws.addRow([weekIndices.length > 1 ? 'Temporary Weekly Roster' : 'STAFF ROSTER']).font = {bold:true, size:14, color:{argb:'FFE04A32'}};
+      if(weekIndices.length > 1) ws.addRow([TEMP_NOTE]).font = {italic:true, size:9, color:{argb:'FF404040'}};
       ws.addRow([week.label]).font = {bold:true};
       ws.addRow([]);
       var headerRow = ws.addRow(['Name'].concat(week.day_names));
@@ -2756,7 +3053,8 @@
   // creche_roster/excel_io.py's _write_summary_by_week.
   function addWeeklySummarySheet(wb, weekIndices){
     var ws = wb.addWorksheet('Weekly Summary');
-    ws.addRow(['Weekly Summary']).font = {bold:true, size:14, color:{argb:'FFE04A32'}};
+    ws.addRow([weekIndices.length > 1 ? 'Temporary Weekly Roster - Summary' : 'Weekly Summary']).font = {bold:true, size:14, color:{argb:'FFE04A32'}};
+    if(weekIndices.length > 1) ws.addRow([TEMP_NOTE]).font = {italic:true, size:9, color:{argb:'FF404040'}};
     ws.addRow(["Each person's shift for the week - shown even through a holiday, sick day or maternity leave that week, never left blank because of it."]).font = {italic:true, size:9, color:{argb:'FF404040'}};
     ws.addRow([]);
     var headerRow = ws.addRow(['Name'].concat(weekIndices.map(function(wi){
@@ -2783,10 +3081,8 @@
   // row labels for every column.
   function addDutySummaryPdfPage(doc, weekIndices){
     doc.addPage();
-    doc.setFontSize(16); doc.setTextColor(224,74,50);
-    doc.text('DUTY SUMMARY', 40, 42);
-    doc.setFontSize(9); doc.setTextColor(64,64,64);
-    doc.text("Who's on each cleaning duty, week by week, in one combined table.", 40, 58, {maxWidth: 515});
+    var dsumY = printHeader(doc, 'DUTY SUMMARY', 'Temporary Weekly Duties - Summary', weekIndices.length > 1,
+      "Who's on each cleaning duty, week by week, in one combined table.", 9, [64,64,64], 515, 58);
     var firstWeek = (data.duties || [])[weekIndices[0]];
     var dutyNames = firstWeek ? firstWeek.assignments.map(function(a){ return a.duty; }) : [];
     var body = dutyNames.map(function(dutyName){
@@ -2805,7 +3101,7 @@
       return row;
     });
     doc.autoTable({
-      startY: 74,
+      startY: dsumY,
       head: [['Duty'].concat(weekIndices.map(function(wi){ return 'Week ' + (wi + 1) + ' (' + data.duties[wi].label + ')'; }))],
       body: body,
       styles: {fontSize:9, cellPadding:5, lineColor:[231,221,212], lineWidth:0.5, fontStyle:'bold'},
@@ -2822,10 +3118,7 @@
       if(!week) return;
       if(used > 0) doc.addPage();
       used++;
-      doc.setFontSize(16); doc.setTextColor(224,74,50);
-      doc.text('CLEANING DUTIES', 40, 42);
-      doc.setFontSize(11); doc.setTextColor(33,28,26);
-      doc.text(week.label, 40, 60);
+      var dutyTableY = printHeader(doc, 'CLEANING DUTIES', 'Temporary Weekly Duties', weekIndices.length > 1, week.label, 11, [33,28,26], 0, 60);
       var unfilled = {};
       (week.unfilled || []).forEach(function(d){ unfilled[d] = 1; });
       var body = week.assignments.map(function(a){
@@ -2836,7 +3129,7 @@
         return [a.duty, peopleText];
       });
       doc.autoTable({
-        startY: 74,
+        startY: dutyTableY,
         head: [['Duty', 'Assigned']],
         body: body,
         styles: {fontSize:10, cellPadding:6, lineColor:[231,221,212], lineWidth:0.5, fontStyle:'bold'},
@@ -3076,16 +3369,42 @@
     });
     return out;
   }
+  // Each rotating person's weekly slot for the archived weeks before the
+  // window (oldest first; null = away that week), read back from the shift
+  // times saved in rosterHistory - what the newer rules' rolling fairness
+  // window looks back over.
+  function priorSlotsFromHistory(rosterStart){
+    var shifts = RosterEngine.buildSettings(rosterStart).shifts;
+    var labelToSlot = {};
+    Object.keys(shifts).forEach(function(sl){ labelToSlot[RosterEngine.shiftLabel(shifts[sl])] = sl; });
+    var out = {};
+    historyDocs
+      .filter(function(h){ return h.monday && h.people && h.monday < rosterStart; })
+      .sort(function(a, b){ return a.monday < b.monday ? -1 : a.monday > b.monday ? 1 : 0; })
+      .forEach(function(h){
+        h.people.forEach(function(p){
+          if(!p.name || p.role !== 'rotating') return;
+          var counts = {}, best = null;
+          (p.days || []).forEach(function(c){
+            var sl = labelToSlot[c.text];
+            if(sl){ counts[sl] = (counts[sl] || 0) + 1; if(best === null || counts[sl] > counts[best]) best = sl; }
+          });
+          (out[p.name] = out[p.name] || []).push(best);
+        });
+      });
+    return out;
+  }
   function computeBuild(){
     var rosterStart = rosterStartAnchor || RosterEngine.mondayOfWeek(todayISO());
     var historySeed = (startingHistoryDoc && startingHistoryDoc.history) || {};
     var lastSlotSeed = (startingHistoryDoc && startingHistoryDoc.lastSlot) || {};
     var priorWeeks = priorDutyWeeks();
+    var priorSlots = priorSlotsFromHistory(rosterStart);
     if(!lockedRosterDoc){
       // No lock to honour yet - this build is deliberately left open
       // everywhere; persistLock() then locks the whole freshly computed
       // roster as the baseline.
-      var out = RosterEngine.build(staffDocs, leaveDocs, transferDocs, rosterStart, dutyOverrideDocs, historySeed, lastSlotSeed, priorWeeks);
+      var out = RosterEngine.build(staffDocs, leaveDocs, transferDocs, rosterStart, dutyOverrideDocs, historySeed, lastSlotSeed, priorWeeks, priorSlots);
       out.touchedRanges = LOCKED_FULL_RANGE;
       out.fullRelock = true;
       out.rosterStart = rosterStart;
@@ -3100,7 +3419,7 @@
     }
     var out2 = RosterEngine.buildProtected(
       staffDocs, leaveDocs, transferDocs, rosterStart, dutyOverrideDocs, historySeed, lastSlotSeed,
-      lockedRosterDoc.slots || {}, touched, effectiveLockedDuties(rosterStart), priorWeeks, eventTouched
+      lockedRosterDoc.slots || {}, touched, effectiveLockedDuties(rosterStart), priorWeeks, eventTouched, priorSlots
     );
     out2.touchedRanges = touched;
     out2.fullRelock = false;

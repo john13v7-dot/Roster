@@ -41,6 +41,10 @@ def sample_inputs(start: date) -> Inputs:
         break_text="10 MINS",
         day_headers=False,
         fallback_closer="Priscilla",  # closes when neither Jason nor Shehnaz does
+        # Fixed: from the week of 9 Nov 2026 the newer rules apply (8:00/8:30
+        # age-group mix, strict cover, 9-week fairness window). Every week
+        # before that is built exactly as it always was.
+        new_rules_start=date(2026, 11, 9),
     )
     rot = lambda n, room: Staff(n, "All", "rotating", room=room)  # noqa: E731
     staff = [

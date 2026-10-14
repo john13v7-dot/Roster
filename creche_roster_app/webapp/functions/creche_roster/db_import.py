@@ -96,6 +96,7 @@ def build_inputs_from_db(
     history: Dict[str, Dict[str, int]],
     last_slot: Dict[str, str],
     duty_override_docs: Optional[List[Dict[str, Any]]] = None,
+    prior_slots: Optional[Dict[str, List[Optional[str]]]] = None,
 ) -> Inputs:
     ordered = sorted(staff_docs, key=lambda d: d.get("order", 0))
     staff = [_staff_from_doc(d) for d in ordered]
@@ -122,4 +123,5 @@ def build_inputs_from_db(
         duty_overrides=duty_overrides,
         history=history,
         last_slot=last_slot,
+        prior_slots=prior_slots or {},
     )

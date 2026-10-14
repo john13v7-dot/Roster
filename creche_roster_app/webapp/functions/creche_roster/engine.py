@@ -55,6 +55,14 @@ from .parsing import fmt_day, fmt_days, is_off
 W_FAIR = 10.0
 W_RECENT = 3.0
 
+# ---- newer rules (Settings.new_rules_start onwards) -----------------------
+# Integer costs, shared digit for digit with mobile/engine.js, so both
+# engines pick the same rota.
+_N_FORBID = 10 ** 9
+_N_CLASH = 10 ** 6
+_N_MIX = 10 ** 5
+_N_REPEAT = 300
+
 
 # --------------------------------------------------------------------------
 # Validation
@@ -294,6 +302,206 @@ def _assign_weekly_base(
     return result
 
 
+# --------------------------------------------------------------------------
+# Newer rules: whole-week planning with a rolling fairness window and the
+# 8:00 / 8:30 age-group mix (weeks on or after Settings.new_rules_start)
+# --------------------------------------------------------------------------
+def _window_stats(recs, window_weeks: int):
+    """Counts over the last `window_weeks` - 1 recorded weeks (the week being
+    planned is the last of the window): openings, closings, weeks eligible to
+    open / to close (a week the person was away, or whose room-mate already
+    held that seat, doesn't count against them), and 8:00 / 8:30 counts."""
+    o = c = wo = wc = 0
+    mids: Counter = Counter()
+    for slot, ob, cb in recs[-(window_weeks - 1):]:
+        if slot is None:
+            continue
+        if not ob:
+            wo += 1
+        if not cb:
+            wc += 1
+        if slot == "early":
+            o += 1
+        elif slot == "late":
+            c += 1
+        else:
+            mids[slot] += 1
+    return o, c, wo, wc, mids
+
+
+def _mid_group_cost(group: List[str], slot: str, room_of, group_of, external_taken) -> int:
+    """Penalty for one 8:00 / 8:30 group: same-room clashes, then a missing
+    age group. (A group of one can't mix, so is never penalised for it.)"""
+    cost = 0
+    rooms: Counter = Counter()
+    for n in group:
+        r = room_of.get(n)
+        if r:
+            rooms[r] += 1
+            if slot in external_taken.get(r, ()):
+                cost += _N_CLASH
+    cost += sum(_N_CLASH * (k - 1) for k in rooms.values() if k > 1)
+    if len(group) >= 2:
+        kinds = {group_of.get(n) for n in group}
+        if "Y" not in kinds:
+            cost += _N_MIX
+        if "O" not in kinds:
+            cost += _N_MIX
+    return cost
+
+
+def _assign_weekly_base_v2(
+    members: List[str],
+    pre_counts: Counter,
+    need_open: int,
+    need_close: int,
+    window,
+    window_weeks: int,
+    last_slot: Dict[str, str],
+    week_index: int,
+    room_of: Dict[str, str],
+    taken_by_room: Dict[str, set],
+    group_of: Dict[str, Optional[str]],
+) -> Dict[str, str]:
+    """One floor's weekly base slots, planned as a whole.
+
+    Opening and closing seats go to whoever is furthest behind over the
+    rolling fairness window (rate-based, so a week away neither counts
+    against someone nor leaves them owing), as a minimum-cost matching
+    (Hungarian) - never stacking two room-mates on one seat, and avoiding
+    a seat a non-rotating room-mate already holds. Everyone left is split
+    into 8:00 / 8:30 so that each group has a younger-room and an
+    older-room person wherever the numbers allow (headcount first, then
+    mix, then who has done which of the two less, then last week's slot).
+    """
+    from itertools import combinations
+    from .duties import _min_cost_assignment
+
+    external_taken = {r: set(sl) for r, sl in taken_by_room.items()}
+    n_members = len(members)
+    k_o = max(0, need_open - pre_counts.get("early", 0))
+    k_c = max(0, need_close - pre_counts.get("late", 0))
+    k_o = min(k_o, max(0, n_members - k_c))
+    k_c = min(k_c, max(0, n_members - k_o))
+    n_mid = n_members - k_o - k_c
+
+    stats = {n: _window_stats(window.get(n, []), window_weeks) for n in members}
+    weeks_present = {n: sum(1 for r in window.get(n, [])[-(window_weeks - 1):] if r[0] is not None) for n in members}
+    pen: Dict[tuple, int] = {}
+
+    def seat_cost(i: int, slot: str) -> int:
+        n = members[i]
+        o, c, wo, wc, _m = stats[n]
+        base = (1000 * (o + c)) // (weeks_present[n] + 1)
+        if slot == "early":
+            cost = base + (600 * o) // (wo + 1) + (_N_MIX if o >= cap_o else 0)
+        else:
+            cost = base + (600 * c) // (wc + 1) + (_N_MIX if c >= cap_c else 0)
+        if last_slot.get(n) == slot:
+            cost += _N_REPEAT
+        r = room_of.get(n)
+        if r and slot in external_taken.get(r, ()):
+            cost += _N_CLASH
+        cost += (i - week_index) % max(1, n_members)
+        cost += pen.get((n, slot), 0)
+        return cost
+
+    # No one should open (or close) more than their fair share of the window:
+    # the seats across the whole window, shared out evenly, rounded up.
+    cap_o = -(-(max(k_o, 1) * window_weeks) // max(1, n_members))
+    cap_c = -(-(max(k_c, 1) * window_weeks) // max(1, n_members))
+    seats = ["early"] * k_o + ["late"] * k_c + ["mid"] * n_mid
+    picked: List[str] = []
+    for _ in range(8):
+        cost = [[0 if seats[j] == "mid" else seat_cost(i, seats[j]) for j in range(len(seats))] for i in range(n_members)]
+        cols = _min_cost_assignment(cost)
+        picked = [seats[c] for c in cols]
+        clash = None
+        for slot in ("early", "late"):
+            seen: Dict[str, str] = {}
+            for i, n in enumerate(members):
+                if picked[i] != slot or not room_of.get(n):
+                    continue
+                if room_of[n] in seen:
+                    clash = (n, slot)
+                seen[room_of[n]] = n
+        if clash:
+            pen[clash] = pen.get(clash, 0) + _N_CLASH
+            continue
+        # The 8:00 and 8:30 groups each need a younger and an older person,
+        # so opening and closing mustn't use up all but one of either age
+        # group. Hold back the least-owed one if they do.
+        over = None
+        if n_mid >= 4:
+            for kind in ("Y", "O"):
+                have = [i for i, n in enumerate(members) if group_of.get(n) == kind]
+                used = [i for i in have if picked[i] != "mid"]
+                if len(have) - len(used) < 2:
+                    worst = max(used, key=lambda i: (seat_cost(i, picked[i]), i))
+                    over = worst
+                    break
+        if over is None:
+            break
+        for slot in ("early", "late"):
+            pen[(members[over], slot)] = pen.get((members[over], slot), 0) + _N_MIX
+
+    result: Dict[str, str] = {}
+    mids: List[str] = []
+    for i, n in enumerate(members):
+        if picked[i] == "mid":
+            mids.append(n)
+        else:
+            result[n] = picked[i]
+
+    if mids:
+        sizes = [len(mids) // 2, len(mids) - len(mids) // 2]
+        if week_index % 2:
+            sizes.reverse()
+        best = None
+        for size in dict.fromkeys(sizes):
+            for combo in combinations(range(len(mids)), size):
+                g1 = [mids[i] for i in combo]
+                g2 = [mids[i] for i in range(len(mids)) if i not in combo]
+                cost = _mid_group_cost(g1, "mid1", room_of, group_of, external_taken)
+                cost += _mid_group_cost(g2, "mid2", room_of, group_of, external_taken)
+                for n in g1:
+                    cost += 10 * stats[n][4].get("mid1", 0) + (_N_REPEAT if last_slot.get(n) == "mid1" else 0)
+                for n in g2:
+                    cost += 10 * stats[n][4].get("mid2", 0) + (_N_REPEAT if last_slot.get(n) == "mid2" else 0)
+                if best is None or cost < best[0]:
+                    best = (cost, g1, g2)
+        _c, g1, g2 = best
+        for n in g1:
+            result[n] = "mid1"
+        for n in g2:
+            result[n] = "mid2"
+    return result
+
+
+def _fix_mid_mix(result: Dict[str, str], room_of, group_of, external_taken) -> None:
+    """After a leave patch, swap two people between 8:00 and 8:30 if that
+    gives both groups a younger and an older person (or fewer clashes)."""
+    ones = [n for n, sl in result.items() if sl == "mid1"]
+    twos = [n for n, sl in result.items() if sl == "mid2"]
+
+    def total(a, b):
+        return (_mid_group_cost(a, "mid1", room_of, group_of, external_taken)
+                + _mid_group_cost(b, "mid2", room_of, group_of, external_taken))
+
+    cur = total(ones, twos)
+    if cur == 0:
+        return
+    best = (cur, None)
+    for a in ones:
+        for b in twos:
+            c = total([x for x in ones if x != a] + [b], [x for x in twos if x != b] + [a])
+            if c < best[0]:
+                best = (c, (a, b))
+    if best[1]:
+        a, b = best[1]
+        result[a], result[b] = "mid2", "mid1"
+
+
 def _patch_weekly_base(
     members: List[str],
     ideal_base: Dict[str, str],
@@ -306,6 +514,7 @@ def _patch_weekly_base(
     room_of: Optional[Dict[str, str]] = None,
     taken_by_room: Optional[Dict[str, set]] = None,
     total_weeks: int = 1,
+    fill_gaps: bool = True,
 ) -> Dict[str, str]:
     """Start from what this floor's rotation would look like at full
     strength (`ideal_base` - everyone's slot as if this week's temporary
@@ -376,7 +585,9 @@ def _patch_weekly_base(
             taken_by_room.setdefault(room, set()).add(target)
 
     need = {"early": need_open, "late": need_close}
-    for target in ("early", "late"):
+    # Newer rules: an opening/closing gap isn't filled by one person for the
+    # whole week - the daily cover step shares it out day by day instead.
+    for target in (("early", "late") if fill_gaps else ()):
         while pre_counts.get(target, 0) + Counter(result.values())[target] < need[target]:
             cnt = Counter(result.values())
             donors = [
@@ -612,6 +823,7 @@ def _balance_protected_slots(
     hist: Dict[str, Counter],
     last_slot: Dict[str, str],
     seed_last_slot: Dict[str, str],
+    n_old: Optional[int] = None,
 ) -> None:
     """A whole-build fairness backstop, run once the entire roster is
     built. The week-by-week least-done-first solve is greedy - it decides
@@ -643,6 +855,9 @@ def _balance_protected_slots(
     """
     pool = [n for n, st in by_name.items() if st.role == "rotating"]
     n_weeks = len(weeks)
+    # Weeks on the newer rules plan their own fairness (a rolling window);
+    # this older whole-build pass only ever looks at the weeks before them.
+    n_old = n_weeks if n_old is None else n_old
 
     def week_slot(wi: int, name: str) -> Optional[str]:
         # A day with its own manual override is never touched here, even
@@ -715,10 +930,10 @@ def _balance_protected_slots(
             last_slot[donor] = n_slot
 
     for target in ("early", "late"):
-        missing = [n for n in pool if not any(week_slot(wi, n) == target for wi in range(n_weeks))]
+        missing = [n for n in pool if not any(week_slot(wi, n) == target for wi in range(n_old))]
         for n in missing:
             best: Optional[Tuple[float, int, str, str]] = None
-            for wi in range(n_weeks):
+            for wi in range(n_old):
                 n_slot = week_slot(wi, n)
                 if n_slot is None or n_slot == target:
                     continue
@@ -732,7 +947,7 @@ def _balance_protected_slots(
                         continue  # same room: not a real reassignment, skip rather than special-case it
                     if would_repeat(n, wi, target) or would_repeat(donor, wi, n_slot):
                         continue
-                    donor_total = sum(1 for w2 in range(n_weeks) if week_slot(w2, donor) == target)
+                    donor_total = sum(1 for w2 in range(n_old) if week_slot(w2, donor) == target)
                     if donor_total < 2:
                         continue  # would just hand the donor a new zero-case
                     if room_clashes(week, n, donor, room_n, target) or room_clashes(week, donor, n, room_d, n_slot):
@@ -764,6 +979,24 @@ def build_roster(inputs: Inputs) -> Roster:
     pair = [st.name for _, st in working if st.role == "paired"]
 
     room_of: Dict[str, str] = {n: st.room for n, st in by_name.items() if st.room}
+
+    group_of: Dict[str, Optional[str]] = {
+        n: ("Y" if st.room in s.younger_rooms else "O" if st.room in s.older_rooms else None)
+        for n, st in by_name.items()
+    }
+    # Newer rules only: each rotating person's slot per week (oldest first,
+    # starting with the archived weeks before this roster), and how many
+    # days each person has been moved up/back to cover this build.
+    window: Dict[str, list] = {
+        n: [(sl, False, False) for sl in inputs.prior_slots.get(n, [])]
+        for n, st in by_name.items() if st.role == "rotating"
+    }
+    cover_count: Counter = Counter()
+    new_start = s.new_rules_start
+    n_old_weeks = sum(
+        1 for wi in range(s.weeks)
+        if not (new_start and s.roster_start + timedelta(weeks=wi) >= new_start)
+    )
 
     hist: Dict[str, Counter] = {n: Counter(inputs.history.get(n, {})) for n in by_name}
     period: Dict[str, Counter] = {n: Counter() for n in by_name}
@@ -846,6 +1079,8 @@ def build_roster(inputs: Inputs) -> Roster:
         monday = s.roster_start + timedelta(weeks=wi)
         days = [monday + timedelta(days=i) for i in range(NDAYS)]
         present = {n: [d for d in days if not leave_kind(n, d)] for n in by_name}
+        new_rules = bool(new_start and monday >= new_start)
+        mix_days: Dict[tuple, list] = {}
 
         # ---- weekly base -------------------------------------------------
         def compute_base(
@@ -928,20 +1163,33 @@ def build_roster(inputs: Inputs) -> Roster:
                         r = room_of.get(n)
                         if r:
                             taken_by_room.setdefault(r, set()).add(slot)
+                    ext_taken = {r: set(v) for r, v in taken_by_room.items()}
                     if ideal_base is None:
-                        base.update(
-                            _assign_weekly_base(
-                                members, pre, s.min_open[floor], min_close, hist, last_slot, wi,
-                                room_of, taken_by_room, s.weeks,
+                        if new_rules:
+                            base.update(
+                                _assign_weekly_base_v2(
+                                    members, pre, s.min_open[floor], min_close, window, s.fairness_weeks,
+                                    last_slot, wi, room_of, taken_by_room, group_of,
+                                )
                             )
-                        )
+                        else:
+                            base.update(
+                                _assign_weekly_base(
+                                    members, pre, s.min_open[floor], min_close, hist, last_slot, wi,
+                                    room_of, taken_by_room, s.weeks,
+                                )
+                            )
                     else:
                         base.update(
                             _patch_weekly_base(
                                 members, ideal_base, pre, s.min_open[floor], min_close, hist, last_slot, wi,
-                                room_of, taken_by_room, s.weeks,
+                                room_of, taken_by_room, s.weeks, not new_rules,
                             )
                         )
+                    if new_rules:
+                        mine = {n: base[n] for n in members if n in base}
+                        _fix_mid_mix(mine, room_of, group_of, ext_taken)
+                        base.update(mine)
             return base
 
         # Two different counterfactuals, for two different jobs - keep them
@@ -1070,10 +1318,19 @@ def build_roster(inputs: Inputs) -> Roster:
                         # behalf. If the manager wants their hours to actually
                         # show as later that day, that's a manual override she
                         # types in herself, same as any other change.
-                _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=need, room_of=room_of, adjusted=adjusted)
+                _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=need, room_of=room_of, adjusted=adjusted,
+                              new_rules=new_rules, cover_count=cover_count)
                 if fallback_covering:
                     _cap_late_for_fallback(d, floor, slot_of, overridden, by_name, s, need, cost_fn, checks, wi, fb, room_of=room_of, adjusted=adjusted)
                 _check_floor(d, floor, slot_of, by_name, s, checks, wi, need=need)
+                if new_rules:
+                    for mid in ("mid1", "mid2"):
+                        group = [n for n in slot_of if slot_of[n] == mid and by_name[n].floor == floor]
+                        kinds = {group_of.get(n) for n in group}
+                        if len(group) >= 2:
+                            for kind, label in (("Y", "younger-room"), ("O", "older-room")):
+                                if kind not in kinds:
+                                    mix_days.setdefault((mid, label), []).append(d)
 
             _check_rooms(d, slot_of, room_of, s.shifts, checks, wi)
 
@@ -1099,6 +1356,21 @@ def build_roster(inputs: Inputs) -> Roster:
             _report_pairing(pair, days, cells, leave_kind, ignored_override, checks, wi)
 
         weeks.append(WeekRoster(monday, days, cells, full_base=full_base))
+
+        for (mid, label), mdays in mix_days.items():
+            checks.append(
+                Check(
+                    "WARNING",
+                    "Age-group mix",
+                    f"The {t12(s.shifts[mid].start)} group has no {label} staff on {fmt_days(mdays)}.",
+                    mdays[0],
+                    wi,
+                )
+            )
+        for n in window:
+            r = room_of.get(n)
+            held = {base[o] for o, st2 in by_name.items() if o in base and st2.role != "rotating" and room_of.get(o) == r} if r else set()
+            window[n].append((base.get(n), "early" in held, "late" in held))
 
         # ---- update fairness memory ------------------------------------
         for n in by_name:
@@ -1128,7 +1400,7 @@ def build_roster(inputs: Inputs) -> Roster:
                 for sl in slots:
                     hist[n][sl] += 1
 
-    _balance_protected_slots(weeks, by_name, room_of, period, hist, last_slot, inputs.last_slot)
+    _balance_protected_slots(weeks, by_name, room_of, period, hist, last_slot, inputs.last_slot, n_old_weeks)
 
     return Roster(
         inputs=inputs,
@@ -1297,7 +1569,8 @@ def _would_clash(n, target_slot, slot_of, room_of) -> bool:
     )
 
 
-def _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=None, room_of=None, adjusted=None) -> None:
+def _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi, need=None, room_of=None, adjusted=None,
+                  new_rules=False, cover_count=None) -> None:
     need = _needs(floor, s) if need is None else need
     floor_names = [n for n in slot_of if by_name[n].floor == floor]
     for target in ("early", "late"):
@@ -1320,18 +1593,49 @@ def _repair_floor(d, floor, slot_of, overridden, by_name, s, cost_fn, checks, wi
             # genuinely unavoidable" rule as the weekly base.
             safe_donors = [n for n in donors if not _would_clash(n, target, slot_of, room_of)]
             donors = safe_donors or donors
-            donors.sort(
-                key=lambda n: (
-                    0 if slot_of[n] in ("mid1", "mid2") else 1,
-                    cost_fn(n, target),
-                    floor_names.index(n),
+            if new_rules:
+                # Strict cover: the 8:00 person comes in early to cover a
+                # missing opener, the 8:30 person stays late to cover a
+                # missing closer. Cover is shared out - whoever has covered
+                # least goes first, and the order turns over each day, so a
+                # whole week's gap doesn't land on one person. Any other
+                # slot is a last resort, and says so.
+                pref = "mid1" if target == "early" else "mid2"
+                other_mid = "mid2" if target == "early" else "mid1"
+                donors.sort(
+                    key=lambda n: (
+                        0 if slot_of[n] == pref else 1 if slot_of[n] == other_mid else 2,
+                        cover_count[n] if cover_count is not None else 0,
+                        (floor_names.index(n) - d.toordinal()) % max(1, len(floor_names)),
+                        cost_fn(n, target),
+                    )
                 )
-            )
+            else:
+                donors.sort(
+                    key=lambda n: (
+                        0 if slot_of[n] in ("mid1", "mid2") else 1,
+                        cost_fn(n, target),
+                        floor_names.index(n),
+                    )
+                )
             n = donors[0]
             old = slot_of[n]
             slot_of[n] = target
             if adjusted is not None:
                 adjusted.add(n)
+            if new_rules and cover_count is not None:
+                cover_count[n] += 1
+                if old != ("mid1" if target == "early" else "mid2"):
+                    checks.append(
+                        Check(
+                            "WARNING",
+                            "Cover (last resort)",
+                            f"{n} moved from {t12(s.shifts[old].start)} to {t12(s.shifts[target].start)} on "
+                            f"{fmt_day(d)}: nobody on the usual cover shift was free.",
+                            d,
+                            wi,
+                        )
+                    )
             what = "opening" if target == "early" else "closing"
             checks.append(
                 Check(

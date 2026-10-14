@@ -48,6 +48,35 @@ DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 ADJUSTMENT_RULES = {"Cover adjusted", "Closing fallback"}
 
 
+def _prior_slots(db_export: dict, settings) -> dict:
+    """Each rotating person's weekly slot for the archived weeks before the
+    window (oldest first; None = away), read back from the shift times saved
+    in rosterHistory - what the newer rules' rolling fairness window sees."""
+    from creche_roster.models import SLOTS
+    label_to_slot = {settings.shifts[sl].label: sl for sl in SLOTS}
+    out: dict = {}
+    docs = sorted(
+        (d for d in db_export.get("rosterHistory", []) if d.get("monday") and d.get("people")),
+        key=lambda d: d["monday"],
+    )
+    for d in docs:
+        if d["monday"] >= settings.roster_start.isoformat():
+            continue
+        for p in d["people"]:
+            if not p.get("name") or p.get("role") != "rotating":
+                continue
+            counts: dict = {}
+            best = None
+            for c in p.get("days", []):
+                sl = label_to_slot.get(c.get("text"))
+                if sl:
+                    counts[sl] = counts.get(sl, 0) + 1
+                    if best is None or counts[sl] > counts[best]:
+                        best = sl
+            out.setdefault(p["name"], []).append(best)
+    return out
+
+
 def build(db_export: dict, roster_start: date) -> tuple:
     base = sample_inputs(roster_start)
     # No carried-over history by default: each build's own 4 weeks are the
@@ -63,6 +92,7 @@ def build(db_export: dict, roster_start: date) -> tuple:
         base.settings, db_export["staff"], db_export["leave"], db_export["transfers"],
         starting_history.get("history", {}), starting_history.get("lastSlot", {}),
         db_export.get("dutyOverrides"),
+        _prior_slots(db_export, base.settings),
     )
     return inputs, build_roster(inputs)
 
