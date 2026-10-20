@@ -126,7 +126,7 @@ td.cover small{display:block;font-weight:500;font-size:11px;color:#123}
     <select id="pdfWeek"></select></div>
   <div class="radio"><input type="radio" name="scope" id="scMonth" value="month"><label for="scMonth">Whole month</label>
     <select id="pdfMonth"></select></div>
-  <div class="radio"><input type="radio" name="scope" id="scAll" value="all"><label for="scAll">All weeks in the roster</label></div>
+  <div class="radio"><input type="radio" name="scope" id="scAll" value="all"><label for="scAll" id="scAllLbl">All weeks in the roster</label></div>
   <button id="pdfBtn" type="button">Print / Save PDF</button>
   <div id="msg"></div>
 </section>
@@ -140,6 +140,7 @@ const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday"];
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const SHIFT_MIN = 540;            // every full shift is 9 hours
 const OPEN = 450, CLOSE_START = 540, CLOSE_END = 1080; // 7:30 start / 9:00 start (6:00 end)
+const CREW = 3;  // opening and closing each need 3 people: 2 rotating staff + Molly or Christelle
 const KEY = "donabate-roster-v1";
 const KIND = { "Holiday":"holiday", "Off":"off", "Maternity Leave":"mat", "Sick":"sick" };
 const COLORS = { holiday:[242,194,0], off:[224,36,94], mat:[46,158,87], sick:[154,165,177], cover:[157,195,230] };
@@ -247,7 +248,11 @@ function leaveFor(id, dayISO){
 function buildRoster(){
   const staff = currentStaff();
   const rots = staff.filter(p => p.type==="rot");
-  const slots = rots.map(p => p.base).sort((a,b)=>a-b);   // the shift multiset to rotate
+  // Every full day: 2 rotating staff open and 2 close (plus one of Molly/Christelle each), the rest start mid-morning.
+  const mids = rots.map(p => p.base).filter(t => t!==OPEN && t!==CLOSE_START).sort((a,b)=>a-b);
+  while(mids.length < rots.length-4) mids.push(mids[Math.floor(mids.length/2)] || 510);
+  mids.length = Math.max(0, rots.length-4);
+  const slots = [OPEN, OPEN, ...mids, CLOSE_START, CLOSE_START];
   const hist = {}, last = {}, cover = {}, counts = {};
   const kindOf = t => t===OPEN ? "open" : t+SHIFT_MIN>=CLOSE_END ? "close" : "mid";
   rots.forEach(p => { hist[p.id] = { open:0, close:0, mid:0, slot:{} }; cover[p.id] = 0; });
@@ -312,8 +317,8 @@ function buildRoster(){
 
       // 3. opening / closing cover (hard rules)
       const groups = [
-        { name:"opening", min:state.minOpen,  inGroup:c => !c.special && c.s===OPEN,        target:OPEN },
-        { name:"closing", min:state.minClose, inGroup:c => !c.special && c.e>=CLOSE_END,     target:CLOSE_START },
+        { name:"opening", min:CREW,  inGroup:c => !c.special && c.s===OPEN,        target:OPEN },
+        { name:"closing", min:CREW, inGroup:c => !c.special && c.e>=CLOSE_END,     target:CLOSE_START },
       ];
       const shifts = () => staff.filter(p => cells[p.id][d].kind==="shift").map(p => ({p, c:cells[p.id][d]}));
       const ok = g => { const m=shifts().filter(x=>g.inGroup(x.c)); return m.length>=g.min && m.some(x=>x.p.far); };
@@ -324,7 +329,7 @@ function buildRoster(){
           const needFar = !members.some(x=>x.p.far);
           const cands = shifts()
             .filter(x => x.p.type==="rot" && !x.c.special && !g.inGroup(x.c) && (!needFar || x.p.far))
-            .map(x => ({...x, score: Math.abs(x.c.s-g.target) + cover[x.p.id]*15 + (!needFar && x.p.far ? 20 : 0)}))
+            .map(x => ({...x, score: Math.abs(x.c.s-g.target) + cover[x.p.id]*15 + (!needFar && x.p.far ? -1000 : 0)}))
             .sort((a,b)=>a.score-b.score);
           let moved = false;
           for(const cd of cands){
@@ -399,6 +404,8 @@ function render(){
   const prevMonth = $("pdfMonth").value;
   $("pdfMonth").innerHTML = months.map(([y,m]) => `<option value="${y}-${m}">${MONTHS[m]} ${y}</option>`).join("");
   if(prevMonth && months.some(([y,m])=>`${y}-${m}`===prevMonth)) $("pdfMonth").value = prevMonth;
+
+  $("scAllLbl").textContent = `All ${roster.weeks.length} weeks in the roster`;
 
   // warnings
   const allWarn = roster.weeks.flatMap((wk,i) => wk.warnings.map(w => `Week ${i+1}: ${w}`));
