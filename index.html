@@ -651,7 +651,8 @@ function buildRoster(){
   const rots = staff.filter(p => p.type==="rot");
   const slots = rots.map(p => p.base).sort((a,b)=>a-b);   // the shift multiset to rotate
   const hist = {}, last = {}, cover = {}, counts = {};
-  rots.forEach(p => { hist[p.id] = {}; cover[p.id] = 0; });
+  const kindOf = t => t===OPEN ? "open" : t+SHIFT_MIN>=CLOSE_END ? "close" : "mid";
+  rots.forEach(p => { hist[p.id] = { open:0, close:0, mid:0, slot:{} }; cover[p.id] = 0; });
   const start = mondayOf(state.start);
   const weeks = [], breaches = [];
 
@@ -666,7 +667,9 @@ function buildRoster(){
     pairs.forEach(p => { const other = pairs.find(q => q!==p) || p; assign[p.id] = w%2===0 ? p.base : other.base; });
     if(w===0){ rots.forEach(p => assign[p.id] = p.base); }
     else{
-      const cost = rots.map(p => slots.map(s => (hist[p.id][s]||0)*10 + (last[p.id]===s?25:0)));
+      // opening and closing weigh heavily so they are shared evenly; middle starts only avoid repeating
+      const W = { open:20, close:20, mid:2 };
+      const cost = rots.map(p => slots.map(s => hist[p.id][kindOf(s)]*W[kindOf(s)] + (hist[p.id].slot[s]||0) + (last[p.id]===s?25:0)));
       const res = hungarian(cost);
       rots.forEach((p,i) => assign[p.id] = slots[res[i]]);
       // keep a FAR holder in the base opening and closing slots
@@ -682,7 +685,7 @@ function buildRoster(){
         }
       }
     }
-    rots.forEach(p => { const s=assign[p.id]; hist[p.id][s]=(hist[p.id][s]||0)+5; last[p.id]=s; });
+    rots.forEach(p => { const s=assign[p.id]; hist[p.id][kindOf(s)]+=5; hist[p.id].slot[s]=(hist[p.id].slot[s]||0)+5; last[p.id]=s; });
 
     // 2. day by day
     const monday = addDays(start, w*7);
