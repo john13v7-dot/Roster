@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
 <title>Donabate Roster</title>
 <style>
 :root{
@@ -11,7 +12,7 @@
 }
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-body{padding:0 16px 48px;max-width:1100px;margin:0 auto;overflow-x:hidden}
+body{padding-block:0 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));max-width:1100px;margin:0 auto;overflow-x:hidden}
 h1{font-family:Georgia,'Times New Roman',serif;color:var(--accent);font-size:28px;margin:20px 0 4px}
 h2{font-size:18px;margin:0 0 10px}
 .sub{color:var(--muted);margin:0 0 14px}
@@ -85,6 +86,7 @@ td.cover small{display:block;font-weight:500;font-size:11px;color:#123}
     <div><label for="lvTo">To (empty = until back)</label><input type="date" id="lvTo"></div>
     <div><button type="submit">Add leave</button></div>
   </form>
+  <div id="lvNote"></div>
 </section>
 
 <section>
@@ -96,6 +98,7 @@ td.cover small{display:block;font-weight:500;font-size:11px;color:#123}
     <div><label for="spHours">Hours</label><input id="spHours" placeholder="9:00-1:00" size="11" required></div>
     <div><button type="submit">Add</button></div>
   </form>
+  <div id="spNote"></div>
   <div id="spList"></div>
 </section>
 
@@ -904,15 +907,19 @@ function drawWeek(doc, wk, idx){
   });
 }
 
-function savePdf(indices, filename){
+async function savePdf(indices, filename){
   if(!window.jspdf){ throw new Error("PDF library did not load"); }
   const doc = new window.jspdf.jsPDF({ unit:"mm", format:"a4", orientation:"portrait" });
   indices.forEach((wi,k) => { if(k>0) doc.addPage(); drawWeek(doc, roster.weeks[wi], wi); });
-  doc.save(filename);   // direct download: no new tab or window
+  // Inside a claude.ai artifact the page asks the viewer to save; elsewhere it downloads directly.
+  let dl = null;
+  try{ dl = window.claude && window.claude.use ? await window.claude.use("downloads") : null; }catch(e){}
+  if(dl) await dl.save({ filename, data: doc.output("blob") });
+  else doc.save(filename);   // direct download: no new tab or window
   return indices.length;
 }
 
-function exportPdf(scope, value){
+async function exportPdf(scope, value){
   let idx, name;
   if(scope==="week"){ idx=[+value]; name=`Donabate_Roster_${iso(roster.weeks[+value].monday)}.pdf`; }
   else if(scope==="month"){
@@ -921,9 +928,11 @@ function exportPdf(scope, value){
     name = `Donabate_Roster_${MONTHS[m]}_${y}.pdf`;
   } else { idx = roster.weeks.map((_,i)=>i); name = `Donabate_Roster_${iso(roster.weeks[0].monday)}_all_weeks.pdf`; }
   try{
-    const n = savePdf(idx, name);
+    const n = await savePdf(idx, name);
     $("msg").innerHTML = `<div class="ok">Saved ${esc(name)} (${n} page${n>1?"s":""}).</div>`;
-  }catch(e){ $("msg").innerHTML = `<div class="warn">Could not create the PDF: ${esc(e.message)}</div>`; }
+  }catch(e){
+    $("msg").innerHTML = e && e.code==="declined" ? `<div class="warn">Save cancelled.</div>` : `<div class="warn">Could not save the PDF: ${esc((e && e.message) || "unknown error")}</div>`;
+  }
 }
 
 // ---------- events ----------
@@ -931,19 +940,28 @@ $("tabs").addEventListener("click", e => { const b=e.target.closest("button[data
 $("startDate").addEventListener("change", e => { if(e.target.value){ state.start = iso(mondayOf(e.target.value)); saveState(); render(); } });
 $("numWeeks").innerHTML = Array.from({length:12},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join("");
 $("numWeeks").addEventListener("change", e => { state.weeks = +e.target.value; saveState(); render(); });
-$("resetBtn").addEventListener("click", () => { if(confirm("Reset staff, leave and dates to the printed roster?")){ state = clone(DEFAULT_STATE); saveState(); curWeek=0; render(); } });
+let resetArmed = null;
+$("resetBtn").addEventListener("click", () => {
+  const b = $("resetBtn");
+  if(!resetArmed){ b.textContent = "Tap again to reset everything"; resetArmed = setTimeout(() => { b.textContent = "Reset to printed roster"; resetArmed = null; }, 4000); return; }
+  clearTimeout(resetArmed); resetArmed = null; b.textContent = "Reset to printed roster";
+  state = clone(DEFAULT_STATE); saveState(); curWeek = 0; render();
+});
+function note(id, text){ $(id).innerHTML = text ? `<div class="warn">${esc(text)}</div>` : ""; }
 $("leaveForm").addEventListener("submit", e => {
   e.preventDefault();
   const from = $("lvFrom").value, to = $("lvTo").value;
   if(!from) return;
-  if(to && to < from){ alert("'To' date is before 'From' date."); return; }
+  if(to && to < from){ note("lvNote","The 'To' date is before the 'From' date."); return; }
+  note("lvNote","");
   state.leave.push({ id: state.nextLeaveId++, staff:$("lvStaff").value, type:$("lvType").value, from, to: to||null });
   saveState(); render();
 });
 $("spForm").addEventListener("submit", e => {
   e.preventDefault();
   const hours = $("spHours").value.trim();
-  if(!parseHours(hours)){ alert("Enter hours like 9:00-1:00"); return; }
+  if(!parseHours(hours)){ note("spNote","Enter hours like 9:00-1:00."); return; }
+  note("spNote","");
   state.special.push({ id: state.nextSpecialId++, staff:$("spStaff").value, date:$("spDate").value, hours });
   saveState(); render();
 });
