@@ -88,6 +88,18 @@ td.cover small{display:block;font-weight:500;font-size:11px;color:#123}
 </section>
 
 <section>
+  <h2>Special hours (one day only)</h2>
+  <p class="sub">For a one-off request, e.g. Katarine finishing at 1:00 on a Friday. Not counted as opening or closing.</p>
+  <form id="spForm" class="row">
+    <div><label for="spStaff">Staff</label><select id="spStaff"></select></div>
+    <div><label for="spDate">Date</label><input type="date" id="spDate" required></div>
+    <div><label for="spHours">Hours</label><input id="spHours" placeholder="9:00-1:00" size="11" required></div>
+    <div><button type="submit">Add</button></div>
+  </form>
+  <div id="spList"></div>
+</section>
+
+<section>
   <h2>Current Leave</h2>
   <div id="leaveList"></div>
 </section>
@@ -132,7 +144,8 @@ const COLORS = { holiday:[242,194,0], off:[224,36,94], mat:[46,158,87], sick:[15
 // ---------- default data: the printed roster of 19th-23rd October 2026 ----------
 const T = (s) => { const [h,m] = s.split(":").map(Number); return h*60+m; };
 const rot = (id,name,base,far) => ({ id, name, type:"rot", base:T(base), far:!!far, weeklyOff:[] });
-const fixed = (id,name,hours) => ({ id, name, type:"static", far:false, weeklyOff:[], hours });
+const pair = (id,name,base,far) => Object.assign(rot(id,name,base,far),{ type:"pair" }); // only opening or closing, swaps weekly with its partner
+const fixed = (id,name,hours,extra) => Object.assign({ id, name, type:"static", far:false, weeklyOff:[], hours }, extra);
 const DEFAULT_STAFF = [
   rot("ainhoa","Ainhoa","8:00"),
   { id:"vacant1", name:"", type:"vacant", far:false, weeklyOff:[], hours:"9:00-6:00" },
@@ -141,15 +154,15 @@ const DEFAULT_STAFF = [
   rot("katherine","Katherine","9:00"),
   rot("marina","Marina","8:00",true),
   rot("rocio","Rocio","8:30",true),
-  fixed("katarine","Katarine",["9:00-6:00","9:00-6:00","9:00-6:00","9:00-6:00","9:00-1:00"]),
+  rot("katarine","Katarine","9:00"),
   rot("andreap","Andrea P","8:15"),
   rot("laura","Laura","8:30",true),
   rot("melissa","Melissa","7:30",true),
   rot("susan","Susan","9:00"),
   rot("noel","Noel","8:30"),
-  Object.assign(rot("molly","Molly","9:00",true),{ weeklyOff:[1] }), // off every Tuesday
-  rot("christelle","Christelle","7:30",true),
-  fixed("diana","Diana",["9:00-1:00","9:00-1:00","9:00-1:00","9:00-1:00","9:00-1:00"]),
+  Object.assign(pair("molly","Molly","9:00",true),{ weeklyOff:[1] }), // off every Tuesday
+  pair("christelle","Christelle","7:30",true),
+  fixed("diana","Diana",["9:00-1:00","9:00-1:00","9:00-1:00","9:00-1:00","9:00-1:00"],{ chef:true }),
 ];
 const DEFAULT_STATE = {
   start:"2026-10-19", weeks:5, minOpen:2, minClose:2, nextLeaveId:3,
@@ -158,6 +171,8 @@ const DEFAULT_STATE = {
     { id:2, staff:"susan", type:"Holiday", from:"2026-10-23", to:"2026-10-23" },
   ],
   edits:{}, // staff id -> {far, weeklyOff}
+  nextSpecialId:2,
+  special:[ { id:1, staff:"katarine", date:"2026-10-23", hours:"9:00-1:00" } ], // one-off special hours
 };
 
 // ---------- state ----------
@@ -235,11 +250,15 @@ function buildRoster(){
   const start = mondayOf(state.start);
   const weeks = [], breaches = [];
 
-  const hasFar = (assign, t) => rots.some(p => p.far && assign[p.id]===t);
+  const pairs = staff.filter(p => p.type==="pair");
+  const people = staff.filter(p => p.type==="rot" || p.type==="pair");
+  const hasFar = (assign, t) => people.some(p => p.far && assign[p.id]===t);
 
   for(let w=0; w<state.weeks; w++){
     // 1. weekly base assignment
     let assign = {};
+    // the complementary pair: opening/closing only, swapping every week (week 1 as printed)
+    pairs.forEach(p => { const other = pairs.find(q => q!==p) || p; assign[p.id] = w%2===0 ? p.base : other.base; });
     if(w===0){ rots.forEach(p => assign[p.id] = p.base); }
     else{
       const cost = rots.map(p => slots.map(s => (hist[p.id][s]||0)*10 + (last[p.id]===s?25:0)));
@@ -274,7 +293,11 @@ function buildRoster(){
         const lv = leaveFor(p.id,dISO);
         if(lv){ cells[p.id].push({kind:"leave", leave:lv.type}); return; }
         if(p.weeklyOff.includes(d)){ cells[p.id].push({kind:"leave", leave:"Off", weekly:true}); return; }
-        if(p.type==="rot"){ const s=assign[p.id]; cells[p.id].push({kind:"shift", s, e:s+SHIFT_MIN, base:s, cover:false}); return; }
+        if(p.type==="rot" || p.type==="pair"){
+          const sp = state.special.find(x => x.staff===p.id && x.date===dISO), h = sp && parseHours(sp.hours);
+          if(h){ cells[p.id].push({kind:"shift", s:h.s, e:h.e, base:h.s, cover:false, special:true}); return; }
+          const s=assign[p.id]; cells[p.id].push({kind:"shift", s, e:s+SHIFT_MIN, base:s, cover:false}); return;
+        }
         // fixed hours
         const txt = p.hours[d]; const h = parseHours(txt||"");
         if(!h){ cells[p.id].push({kind: /off/i.test(txt||"")?"leave":"blank", leave:"Off"}); return; }
@@ -283,8 +306,8 @@ function buildRoster(){
 
       // 3. opening / closing cover (hard rules)
       const groups = [
-        { name:"opening", min:state.minOpen,  inGroup:c => c.s===OPEN,        target:OPEN },
-        { name:"closing", min:state.minClose, inGroup:c => c.e>=CLOSE_END,     target:CLOSE_START },
+        { name:"opening", min:state.minOpen,  inGroup:c => !c.special && c.s===OPEN,        target:OPEN },
+        { name:"closing", min:state.minClose, inGroup:c => !c.special && c.e>=CLOSE_END,     target:CLOSE_START },
       ];
       const shifts = () => staff.filter(p => cells[p.id][d].kind==="shift").map(p => ({p, c:cells[p.id][d]}));
       const ok = g => { const m=shifts().filter(x=>g.inGroup(x.c)); return m.length>=g.min && m.some(x=>x.p.far); };
@@ -294,7 +317,7 @@ function buildRoster(){
           const members = shifts().filter(x=>g.inGroup(x.c));
           const needFar = !members.some(x=>x.p.far);
           const cands = shifts()
-            .filter(x => x.p.type==="rot" && !g.inGroup(x.c) && (!needFar || x.p.far))
+            .filter(x => x.p.type==="rot" && !x.c.special && !g.inGroup(x.c) && (!needFar || x.p.far))
             .map(x => ({...x, score: Math.abs(x.c.s-g.target) + cover[x.p.id]*15 + (!needFar && x.p.far ? 20 : 0)}))
             .sort((a,b)=>a.score-b.score);
           let moved = false;
@@ -319,22 +342,28 @@ function buildRoster(){
   }
 
   // fairness counts
-  rots.forEach(p => counts[p.id] = { open:0, close:0, mid:0, cover:0, leave:0 });
-  weeks.forEach(wk => rots.forEach(p => wk.cells[p.id].forEach(c => {
+  people.forEach(p => counts[p.id] = { open:0, close:0, mid:0, cover:0, leave:0 });
+  weeks.forEach(wk => people.forEach(p => wk.cells[p.id].forEach(c => {
     const t = counts[p.id];
     if(c.kind==="leave") t.leave++;
     else if(c.kind==="shift"){ if(c.s===OPEN) t.open++; else if(c.e>=CLOSE_END) t.close++; else t.mid++; if(c.cover) t.cover++; }
   })));
-  return { staff, rots, weeks, counts };
+  return { staff, rots, people, weeks, counts };
 }
 
-function farNames(wk, d, group){
-  const names = [];
-  wk.cells && roster.staff.forEach(p => {
-    const c = wk.cells[p.id][d];
-    if(p.far && c.kind==="shift" && (group==="open" ? c.s===OPEN : c.e>=CLOSE_END)) names.push(p.name);
+// Names on opening / closing / FAR duty at any point in the week, in roster order.
+function weekSummary(wk){
+  const open = [], close = [], far = [];
+  roster.staff.forEach(p => {
+    let o = false, c = false;
+    (wk.cells[p.id]||[]).forEach(x => { if(x.kind==="shift" && !x.special){ if(x.s===OPEN) o = true; if(x.e>=CLOSE_END) c = true; } });
+    if(o) open.push(p.name);
+    if(c) close.push(p.name);
+    if((o||c) && p.far) far.push(p.name);
   });
-  return names;
+  return [["Opening staff for the whole week", open.join(", ")||"-"],
+          ["Closing staff for the whole week", close.join(", ")||"-"],
+          ["FAR on duty for the week", far.join(", ")||"-"]];
 }
 
 // ---------- rendering ----------
@@ -377,7 +406,7 @@ function render(){
   let html = "<tr><th>Name</th>" + wk.days.map((d,i)=>`<th>${DAYS[i]}<br><small>${d.getDate()} ${MONTHS[d.getMonth()].slice(0,3)}</small></th>`).join("") + "</tr>";
   roster.staff.forEach(p => {
     if(p.type==="blank") return;
-    html += `<tr><td class="name">${esc(p.name)}${p.far?'<span class="far">FAR</span>':""}</td>` +
+    html += `<tr><td class="name">${esc(p.name)}${p.far?'<span class="far">FAR</span>':""}${p.chef?'<span class="far" style="background:#7a5200">CHEF</span>':""}</td>` +
       wk.cells[p.id].map(c => { const v=cellView(c); return `<td class="${v.cls}">${esc(v.text)}${v.sub?`<small>${esc(v.sub)}</small>`:""}</td>`; }).join("") + "</tr>";
   });
   $("rosterTable").innerHTML = html;
@@ -385,9 +414,8 @@ function render(){
     `<span><i style="background:var(--holiday)"></i>Holiday</span><span><i style="background:var(--off)"></i>Off</span>` +
     `<span><i style="background:var(--mat)"></i>Maternity Leave</span><span><i style="background:var(--sick)"></i>Sick</span>` +
     `<span><i style="background:var(--cover);outline:2px solid #1f6fb2;outline-offset:-2px"></i>Shift changed to cover an absence</span><span><span class="far" style="margin:0">FAR</span> First Aid Responder</span>`;
-  $("extrasTable").innerHTML =
-    `<tr><td>FAR opening</td>${wk.days.map((_,d)=>`<td>${esc(farNames(wk,d,"open").join(", ")||"—")}</td>`).join("")}</tr>` +
-    `<tr><td>FAR closing</td>${wk.days.map((_,d)=>`<td>${esc(farNames(wk,d,"close").join(", ")||"—")}</td>`).join("")}</tr>`;
+  $("extrasTable").innerHTML = "<tr><th>Title</th><th>Names</th></tr>" +
+    weekSummary(wk).map(([t,n]) => `<tr><td>${esc(t)}</td><td style="white-space:normal;text-align:left">${esc(n)}</td></tr>`).join("");
 
   // leave
   $("lvStaff").innerHTML = roster.staff.filter(p => p.name && p.type!=="vacant").map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
@@ -399,6 +427,11 @@ function render(){
     `<span class="muted">${fmt(l.from)} – ${l.to?fmt(l.to):"until back"}</span></div><button class="sec small" data-del="${l.id}" type="button">Remove</button></div>`).join("")
     : `<p class="muted">No leave entered.</p>`;
 
+  const opts = roster.staff.filter(p => p.type==="rot" || p.type==="pair").map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  $("spStaff").innerHTML = opts;
+  $("spList").innerHTML = state.special.map(x =>
+    `<div class="leave-item"><div><b>${esc(nameOf(x.staff))}</b> <span class="muted">${fmt(x.date)} · ${esc(x.hours)}</span></div><button class="sec small" data-spdel="${x.id}" type="button">Remove</button></div>`).join("");
+
   // staff table
   $("staffTable").innerHTML = "<tr><th>Name</th><th>FAR</th><th>Weekly day off</th></tr>" +
     roster.staff.filter(p => p.name && p.type!=="vacant").map(p =>
@@ -409,7 +442,7 @@ function render(){
   const n = roster.weeks.length;
   $("fairSub").textContent = `Open/close counts for rotating staff across the current ${n}-week roster (days worked, including cover changes).`;
   $("fairTable").innerHTML = "<tr><th>Name</th><th>Open (7:30)</th><th>Close (6:00)</th><th>Middle</th><th>Cover changes</th><th>Leave / off days</th></tr>" +
-    roster.rots.map(p => { const t=roster.counts[p.id]; return `<tr><td class="name">${esc(p.name)}${p.far?'<span class="far">FAR</span>':""}</td><td>${t.open}</td><td>${t.close}</td><td>${t.mid}</td><td>${t.cover}</td><td>${t.leave}</td></tr>`; }).join("");
+    roster.people.map(p => { const t=roster.counts[p.id]; return `<tr><td class="name">${esc(p.name)}${p.far?'<span class="far">FAR</span>':""}</td><td>${t.open}</td><td>${t.close}</td><td>${t.mid}</td><td>${t.cover}</td><td>${t.leave}</td></tr>`; }).join("");
 }
 
 // ---------- PDF ----------
@@ -424,7 +457,7 @@ function drawWeek(doc, wk, idx){
   const body = [];
   roster.staff.forEach(p => {
     if(p.type==="blank") return;
-    const row = [{ content: p.name + (p.far?"  (FAR)":""), styles:{ halign:"left", fontStyle:"bold" } }];
+    const row = [{ content: p.name + (p.far?"  (FAR)":"") + (p.chef?"  (Chef)":""), styles:{ halign:"left", fontStyle:"bold" } }];
     wk.cells[p.id].forEach(c => {
       const v = cellView(c); const st = {};
       if(v.cls==="cover"){ st.fillColor = COLORS.cover; st.fontStyle="bold"; }
@@ -440,14 +473,11 @@ function drawWeek(doc, wk, idx){
     columnStyles:{ 0:{ cellWidth:38 } },
   });
   let y = doc.lastAutoTable.finalY + 6;
-  const extra = [
-    ["FAR opening", ...wk.days.map((_,d)=>farNames(wk,d,"open").join(", ")||"-")],
-    ["FAR closing", ...wk.days.map((_,d)=>farNames(wk,d,"close").join(", ")||"-")],
-  ];
   doc.autoTable({
-    startY: y, body: extra, theme:"grid", margin:{left:14,right:14},
-    styles:{ fontSize:8, halign:"center", valign:"middle", cellPadding:1.8, lineColor:[128,128,128], lineWidth:0.2, textColor:0 },
-    columnStyles:{ 0:{ cellWidth:38, halign:"left", fontStyle:"bold", fillColor:[241,241,241] } },
+    startY: y, head:[["Title","Names"]], body: weekSummary(wk), theme:"grid", margin:{left:14,right:14},
+    styles:{ fontSize:9, halign:"left", valign:"middle", cellPadding:2, lineColor:[128,128,128], lineWidth:0.2, textColor:0 },
+    headStyles:{ fillColor:[217,217,217], textColor:0, fontStyle:"bold" },
+    columnStyles:{ 0:{ cellWidth:62, fontStyle:"bold", fillColor:[241,241,241] } },
   });
   y = doc.lastAutoTable.finalY + 7;
   // legend
@@ -502,6 +532,14 @@ $("leaveForm").addEventListener("submit", e => {
   state.leave.push({ id: state.nextLeaveId++, staff:$("lvStaff").value, type:$("lvType").value, from, to: to||null });
   saveState(); render();
 });
+$("spForm").addEventListener("submit", e => {
+  e.preventDefault();
+  const hours = $("spHours").value.trim();
+  if(!parseHours(hours)){ alert("Enter hours like 9:00-1:00"); return; }
+  state.special.push({ id: state.nextSpecialId++, staff:$("spStaff").value, date:$("spDate").value, hours });
+  saveState(); render();
+});
+$("spList").addEventListener("click", e => { const b=e.target.closest("button[data-spdel]"); if(b){ state.special = state.special.filter(x => x.id!==+b.dataset.spdel); saveState(); render(); } });
 $("leaveList").addEventListener("click", e => { const b=e.target.closest("button[data-del]"); if(b){ state.leave = state.leave.filter(l => l.id!==+b.dataset.del); saveState(); render(); } });
 $("staffTable").addEventListener("change", e => {
   const t = e.target, id = t.dataset.far || t.dataset.woff; if(!id) return;
