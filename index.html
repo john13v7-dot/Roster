@@ -777,8 +777,8 @@ function weekSummary(wk){
     if(c) close.push(p.name);
     if((o||c) && p.far) far.push(p.name);
   });
-  return [["Opening staff for the whole week", open.join(", ")||"-"],
-          ["Closing staff for the whole week", close.join(", ")||"-"],
+  return [["Opening staff during the week", open.join(", ")||"-"],
+          ["Closing staff during the week", close.join(", ")||"-"],
           ["FAR on duty for the week", far.join(", ")||"-"]];
 }
 
