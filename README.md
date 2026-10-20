@@ -133,3 +133,13 @@ every run.
 pip install pytest
 python -m pytest test_roster_generator.py
 ```
+
+## Donabate Roster web app (`index.html`)
+
+A single offline page for phone or PC: open `index.html` in a browser. It holds the
+staff, FAR certificates, leave and a rotating multi-week roster (default 5 weeks from
+19 Oct 2026), highlights leave and shifts changed to cover an absence, and keeps a FAR
+holder on every opening and closing shift. "Save Roster as PDF" downloads one week,
+one month or all weeks straight to the device (no new tab).
+
+`index.html` is generated: edit `web/app.src.html`, then run `python web/build.py`.

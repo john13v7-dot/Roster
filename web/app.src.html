@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Donabate Roster</title>
+<style>
+:root{
+  --bg:#faf7f2; --card:#fff; --ink:#1f1f1f; --muted:#666; --line:#cfcfcf; --accent:#e04a32;
+  --holiday:#f2c200; --off:#e0245e; --mat:#2e9e57; --sick:#9aa5b1; --cover:#9dc3e6;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+body{padding:0 16px 48px;max-width:1100px;margin:0 auto;overflow-x:hidden}
+h1{font-family:Georgia,'Times New Roman',serif;color:var(--accent);font-size:28px;margin:20px 0 4px}
+h2{font-size:18px;margin:0 0 10px}
+.sub{color:var(--muted);margin:0 0 14px}
+section{background:var(--card);border:1px solid #e5dfd5;border-radius:10px;padding:14px;margin:16px 0}
+label{display:block;font-size:13px;color:var(--muted);margin-bottom:3px}
+input,select,button{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);max-width:100%}
+button{cursor:pointer;background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+button.sec{background:#fff;color:var(--ink);border-color:var(--line);font-weight:500}
+button.small{padding:4px 9px;font-size:13px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.row>div{min-width:0}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.tabs button{background:#fff;color:var(--ink);border-color:var(--line);font-weight:500}
+.tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{border-collapse:collapse;width:100%}
+th,td{border:1px solid #808080;padding:6px 6px;text-align:center;white-space:nowrap}
+th{background:#d9d9d9}
+td.name{text-align:left;font-weight:600}
+.far{display:inline-block;font-size:10px;font-weight:700;background:#222;color:#fff;border-radius:4px;padding:0 4px;margin-left:5px;vertical-align:middle}
+td.holiday{background:var(--holiday);font-weight:700}
+td.off{background:var(--off);color:#fff;font-weight:700}
+td.mat{background:var(--mat);color:#fff;font-weight:700}
+td.sick{background:var(--sick);font-weight:700}
+td.cover{background:var(--cover);font-weight:700;outline:2px solid #1f6fb2;outline-offset:-2px}
+td.cover small{display:block;font-weight:500;font-size:11px;color:#123}
+.legend{display:flex;flex-wrap:wrap;gap:8px 14px;margin:10px 0;font-size:13px}
+.legend i{display:inline-block;width:14px;height:14px;border:1px solid #666;vertical-align:-2px;margin-right:5px}
+.warn{background:#ffc7ce;color:#9c0006;border-radius:8px;padding:8px 12px;margin:8px 0;font-weight:600}
+.ok{background:#e3f4e8;color:#1c6b36;border-radius:8px;padding:8px 12px;margin:8px 0}
+.extras td:first-child{text-align:left;font-weight:600;background:#f1f1f1}
+.small-table td,.small-table th{padding:5px 8px}
+.leave-item{display:flex;justify-content:space-between;gap:10px;align-items:center;border-bottom:1px solid #eee;padding:7px 0}
+.pill{display:inline-block;border-radius:6px;padding:1px 8px;font-size:12px;font-weight:700;margin-right:6px}
+.muted{color:var(--muted)}
+.radio{display:flex;align-items:center;gap:8px;margin:8px 0}
+.radio input{width:auto}
+.radio label{margin:0;font-size:15px;color:var(--ink)}
+#msg{margin-top:10px;min-height:20px}
+@media (max-width:600px){ body{font-size:14px} th,td{padding:5px 4px} }
+</style>
+</head>
+<body>
+<h1>Donabate Roster</h1>
+<p class="sub">Fair rotating weekly roster with FAR cover on every opening and closing shift.</p>
+
+<section id="rosterSec">
+  <div class="row">
+    <div><label for="startDate">First Monday</label><input type="date" id="startDate"></div>
+    <div><label for="numWeeks">Weeks</label><select id="numWeeks"></select></div>
+    <div><button class="sec" id="resetBtn" type="button">Reset to printed roster</button></div>
+  </div>
+  <div class="tabs" id="tabs"></div>
+  <div id="warnings"></div>
+  <div class="row" style="justify-content:space-between;margin-bottom:8px">
+    <h2 id="weekTitle" style="margin:0"></h2>
+    <button id="printWeekBtn" type="button">Print this week (PDF)</button>
+  </div>
+  <div class="scroll"><table id="rosterTable"></table></div>
+  <div class="legend" id="legend"></div>
+  <div class="scroll"><table class="extras small-table" id="extrasTable"></table></div>
+</section>
+
+<section>
+  <h2>Add Leave</h2>
+  <form id="leaveForm" class="row">
+    <div><label for="lvStaff">Staff</label><select id="lvStaff"></select></div>
+    <div><label for="lvType">Type</label>
+      <select id="lvType"><option>Holiday</option><option>Maternity Leave</option><option>Sick</option><option>Off</option></select></div>
+    <div><label for="lvFrom">From</label><input type="date" id="lvFrom" required></div>
+    <div><label for="lvTo">To (empty = until back)</label><input type="date" id="lvTo"></div>
+    <div><button type="submit">Add leave</button></div>
+  </form>
+</section>
+
+<section>
+  <h2>Current Leave</h2>
+  <div id="leaveList"></div>
+</section>
+
+<section>
+  <h2>Staff, FAR and weekly days off</h2>
+  <p class="sub">FAR = First Aid Responder certificate. A FAR holder is always kept on the opening and the closing shift.</p>
+  <div class="scroll"><table class="small-table" id="staffTable"></table></div>
+</section>
+
+<section>
+  <h2>Fairness Summary</h2>
+  <p class="sub" id="fairSub"></p>
+  <div class="scroll"><table class="small-table" id="fairTable"></table></div>
+</section>
+
+<section>
+  <h2>Save Roster as PDF</h2>
+  <p class="sub">Generate a PDF and save it to your phone.</p>
+  <div class="radio"><input type="radio" name="scope" id="scWeek" value="week" checked><label for="scWeek">One week</label>
+    <select id="pdfWeek"></select></div>
+  <div class="radio"><input type="radio" name="scope" id="scMonth" value="month"><label for="scMonth">Whole month</label>
+    <select id="pdfMonth"></select></div>
+  <div class="radio"><input type="radio" name="scope" id="scAll" value="all"><label for="scAll">All weeks in the roster</label></div>
+  <button id="pdfBtn" type="button">Print / Save PDF</button>
+  <div id="msg"></div>
+</section>
+
+<script>/*JSPDF*/</script>
+<script>/*AUTOTABLE*/</script>
+<script>
+"use strict";
+// ---------- constants ----------
+const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday"];
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const SHIFT_MIN = 540;            // every full shift is 9 hours
+const OPEN = 450, CLOSE_START = 540, CLOSE_END = 1080; // 7:30 start / 9:00 start (6:00 end)
+const KEY = "donabate-roster-v1";
+const KIND = { "Holiday":"holiday", "Off":"off", "Maternity Leave":"mat", "Sick":"sick" };
+const COLORS = { holiday:[242,194,0], off:[224,36,94], mat:[46,158,87], sick:[154,165,177], cover:[157,195,230] };
+
+// ---------- default data: the printed roster of 19th-23rd October 2026 ----------
+const T = (s) => { const [h,m] = s.split(":").map(Number); return h*60+m; };
+const rot = (id,name,base,far) => ({ id, name, type:"rot", base:T(base), far:!!far, weeklyOff:[] });
+const fixed = (id,name,hours) => ({ id, name, type:"static", far:false, weeklyOff:[], hours });
+const DEFAULT_STAFF = [
+  rot("ainhoa","Ainhoa","8:00"),
+  { id:"vacant1", name:"", type:"vacant", far:false, weeklyOff:[], hours:"9:00-6:00" },
+  rot("jesus","Jesús","8:15"),
+  rot("raquel","Raquel","7:30",true),
+  rot("katherine","Katherine","9:00"),
+  rot("marina","Marina","8:00",true),
+  rot("rocio","Rocio","8:30",true),
+  fixed("katarine","Katarine",["9:00-6:00","9:00-6:00","9:00-6:00","9:00-6:00","9:00-1:00"]),
+  rot("andreap","Andrea P","8:15"),
+  rot("laura","Laura","8:30",true),
+  rot("melissa","Melissa","7:30",true),
+  rot("susan","Susan","9:00"),
+  rot("noel","Noel","8:30"),
+  Object.assign(rot("molly","Molly","9:00",true),{ weeklyOff:[1] }), // off every Tuesday
+  rot("christelle","Christelle","7:30",true),
+  fixed("diana","Diana",["9:00-1:00","9:00-1:00","9:00-1:00","9:00-1:00","9:00-1:00"]),
+];
+const DEFAULT_STATE = {
+  start:"2026-10-19", weeks:5, minOpen:2, minClose:2, nextLeaveId:3,
+  leave:[
+    { id:1, staff:"molly", type:"Holiday", from:"2026-10-21", to:"2026-10-21" },
+    { id:2, staff:"susan", type:"Holiday", from:"2026-10-23", to:"2026-10-23" },
+  ],
+  edits:{}, // staff id -> {far, weeklyOff}
+};
+
+// ---------- state ----------
+let state = loadState();
+let curWeek = 0;
+let roster = null;
+
+function clone(o){ return JSON.parse(JSON.stringify(o)); }
+function loadState(){
+  try{
+    const raw = localStorage.getItem(KEY);
+    if(raw){ const s = JSON.parse(raw); if(s && s.start && Array.isArray(s.leave)) return Object.assign(clone(DEFAULT_STATE), s); }
+  }catch(e){}
+  return clone(DEFAULT_STATE);
+}
+function saveState(){ try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} }
+
+// ---------- date helpers (local dates, ISO strings) ----------
+function parseISO(s){ const [y,m,d] = s.split("-").map(Number); return new Date(y,m-1,d); }
+function iso(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+function addDays(d,n){ return new Date(d.getFullYear(), d.getMonth(), d.getDate()+n); }
+function mondayOf(s){ const d = parseISO(s); return addDays(d, -((d.getDay()+6)%7)); }
+function ord(n){ const s=["th","st","nd","rd"], v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); }
+function rangeText(days){
+  const a=days[0], b=days[4];
+  if(a.getMonth()===b.getMonth()) return `${ord(a.getDate())} – ${ord(b.getDate())} ${MONTHS[a.getMonth()]} ${a.getFullYear()}`;
+  return `${ord(a.getDate())} ${MONTHS[a.getMonth()]} – ${ord(b.getDate())} ${MONTHS[b.getMonth()]} ${b.getFullYear()}`;
+}
+function fmtMin(m){ const h=Math.floor(m/60)%12||12; return h+":"+String(m%60).padStart(2,"0"); }
+function shiftLabel(s,e){ return fmtMin(s)+"-"+fmtMin(e); }
+function parseHours(txt){
+  const m = /^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/.exec(txt.trim());
+  if(!m) return null;
+  const s = (+m[1])*60+(+m[2]); let e = (+m[3])*60+(+m[4]);
+  while(e <= s) e += 720;
+  return { s, e };
+}
+
+// ---------- staff with user edits applied ----------
+function currentStaff(){
+  return DEFAULT_STAFF.map(p => { const q = clone(p), ed = state.edits[p.id]; if(ed){ if("far" in ed) q.far = !!ed.far; if(ed.weeklyOff) q.weeklyOff = ed.weeklyOff; } return q; });
+}
+
+// ---------- Hungarian assignment (min cost, square matrix) ----------
+function hungarian(a){
+  const n=a.length, u=Array(n+1).fill(0), v=Array(n+1).fill(0), p=Array(n+1).fill(0), way=Array(n+1).fill(0);
+  for(let i=1;i<=n;i++){
+    p[0]=i; let j0=0; const minv=Array(n+1).fill(Infinity), used=Array(n+1).fill(false);
+    do{
+      used[j0]=true; const i0=p[j0]; let delta=Infinity, j1=0;
+      for(let j=1;j<=n;j++) if(!used[j]){
+        const cur=a[i0-1][j-1]-u[i0]-v[j];
+        if(cur<minv[j]){ minv[j]=cur; way[j]=j0; }
+        if(minv[j]<delta){ delta=minv[j]; j1=j; }
+      }
+      for(let j=0;j<=n;j++){ if(used[j]){ u[p[j]]+=delta; v[j]-=delta; } else minv[j]-=delta; }
+      j0=j1;
+    }while(p[j0]!==0);
+    do{ const j1=way[j0]; p[j0]=p[j1]; j0=j1; }while(j0);
+  }
+  const res=Array(n); for(let j=1;j<=n;j++) res[p[j]-1]=j-1; return res;
+}
+
+// ---------- the engine ----------
+function leaveFor(id, dayISO){
+  return state.leave.find(l => l.staff===id && l.from<=dayISO && (!l.to || dayISO<=l.to));
+}
+
+function buildRoster(){
+  const staff = currentStaff();
+  const rots = staff.filter(p => p.type==="rot");
+  const slots = rots.map(p => p.base).sort((a,b)=>a-b);   // the shift multiset to rotate
+  const hist = {}, last = {}, cover = {}, counts = {};
+  rots.forEach(p => { hist[p.id] = {}; cover[p.id] = 0; });
+  const start = mondayOf(state.start);
+  const weeks = [], breaches = [];
+
+  const hasFar = (assign, t) => rots.some(p => p.far && assign[p.id]===t);
+
+  for(let w=0; w<state.weeks; w++){
+    // 1. weekly base assignment
+    let assign = {};
+    if(w===0){ rots.forEach(p => assign[p.id] = p.base); }
+    else{
+      const cost = rots.map(p => slots.map(s => (hist[p.id][s]||0)*10 + (last[p.id]===s?25:0)));
+      const res = hungarian(cost);
+      rots.forEach((p,i) => assign[p.id] = slots[res[i]]);
+      // keep a FAR holder in the base opening and closing slots
+      for(const target of [OPEN, CLOSE_START]){
+        if(hasFar(assign,target)) continue;
+        let done = false;
+        for(const f of rots.filter(p => p.far && assign[p.id]!==target)){
+          for(const h of rots.filter(p => !p.far && assign[p.id]===target)){
+            const t = {...assign}; t[f.id]=target; t[h.id]=assign[f.id];
+            if(hasFar(t,OPEN) && hasFar(t,CLOSE_START)){ assign = t; done = true; break; }
+          }
+          if(done) break;
+        }
+      }
+    }
+    rots.forEach(p => { const s=assign[p.id]; hist[p.id][s]=(hist[p.id][s]||0)+5; last[p.id]=s; });
+
+    // 2. day by day
+    const monday = addDays(start, w*7);
+    const days = [0,1,2,3,4].map(i => addDays(monday,i));
+    const cells = {};  // staff id -> [cell x5]
+    staff.forEach(p => cells[p.id] = []);
+    const warnings = [];
+    days.forEach((day,d) => {
+      const dISO = iso(day);
+      staff.forEach(p => {
+        if(p.type==="blank"){ cells[p.id].push({kind:"blank"}); return; }
+        if(p.type==="vacant"){ const h=parseHours(p.hours||""); cells[p.id].push(h?{kind:"vacant",s:h.s,e:h.e,counts:false}:{kind:"blank"}); return; }
+        const lv = leaveFor(p.id,dISO);
+        if(lv){ cells[p.id].push({kind:"leave", leave:lv.type}); return; }
+        if(p.weeklyOff.includes(d)){ cells[p.id].push({kind:"leave", leave:"Off", weekly:true}); return; }
+        if(p.type==="rot"){ const s=assign[p.id]; cells[p.id].push({kind:"shift", s, e:s+SHIFT_MIN, base:s, cover:false}); return; }
+        // fixed hours
+        const txt = p.hours[d]; const h = parseHours(txt||"");
+        if(!h){ cells[p.id].push({kind: /off/i.test(txt||"")?"leave":"blank", leave:"Off"}); return; }
+        cells[p.id].push({kind:"shift", s:h.s, e:h.e, base:h.s, cover:false, fixed:true});
+      });
+
+      // 3. opening / closing cover (hard rules)
+      const groups = [
+        { name:"opening", min:state.minOpen,  inGroup:c => c.s===OPEN,        target:OPEN },
+        { name:"closing", min:state.minClose, inGroup:c => c.e>=CLOSE_END,     target:CLOSE_START },
+      ];
+      const shifts = () => staff.filter(p => cells[p.id][d].kind==="shift").map(p => ({p, c:cells[p.id][d]}));
+      const ok = g => { const m=shifts().filter(x=>g.inGroup(x.c)); return m.length>=g.min && m.some(x=>x.p.far); };
+      for(const g of groups){
+        let guard = 20;
+        while(!ok(g) && guard--){
+          const members = shifts().filter(x=>g.inGroup(x.c));
+          const needFar = !members.some(x=>x.p.far);
+          const cands = shifts()
+            .filter(x => x.p.type==="rot" && !g.inGroup(x.c) && (!needFar || x.p.far))
+            .map(x => ({...x, score: Math.abs(x.c.s-g.target) + cover[x.p.id]*15 + (!needFar && x.p.far ? 20 : 0)}))
+            .sort((a,b)=>a.score-b.score);
+          let moved = false;
+          for(const cd of cands){
+            const old = {s:cd.c.s, e:cd.c.e, cover:cd.c.cover, from:cd.c.from};
+            cd.c.from = cd.c.cover ? cd.c.from : shiftLabel(cd.c.s,cd.c.e);
+            cd.c.s = g.target; cd.c.e = g.target+SHIFT_MIN; cd.c.cover = true;
+            // moving must not break the other group
+            if(groups.filter(o=>o!==g).every(ok)){ moved = true; cover[cd.p.id]++; break; }
+            Object.assign(cd.c, old);
+          }
+          if(!moved) break;
+        }
+        if(!ok(g)){
+          const m = shifts().filter(x=>g.inGroup(x.c));
+          const why = !m.some(x=>x.p.far) ? "no FAR certified staff" : `only ${m.length} staff`;
+          warnings.push(`${DAYS[d]} ${g.name}: ${why} on duty`);
+        }
+      }
+    });
+    weeks.push({ monday, days, cells, warnings });
+  }
+
+  // fairness counts
+  rots.forEach(p => counts[p.id] = { open:0, close:0, mid:0, cover:0, leave:0 });
+  weeks.forEach(wk => rots.forEach(p => wk.cells[p.id].forEach(c => {
+    const t = counts[p.id];
+    if(c.kind==="leave") t.leave++;
+    else if(c.kind==="shift"){ if(c.s===OPEN) t.open++; else if(c.e>=CLOSE_END) t.close++; else t.mid++; if(c.cover) t.cover++; }
+  })));
+  return { staff, rots, weeks, counts };
+}
+
+function farNames(wk, d, group){
+  const names = [];
+  wk.cells && roster.staff.forEach(p => {
+    const c = wk.cells[p.id][d];
+    if(p.far && c.kind==="shift" && (group==="open" ? c.s===OPEN : c.e>=CLOSE_END)) names.push(p.name);
+  });
+  return names;
+}
+
+// ---------- rendering ----------
+const $ = id => document.getElementById(id);
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function cellView(c){
+  if(c.kind==="blank") return { cls:"", text:"", pdf:"" };
+  if(c.kind==="vacant") return { cls:"", text:shiftLabel(c.s,c.e) };
+  if(c.kind==="leave") return { cls:KIND[c.leave]||"sick", text:c.leave };
+  const text = shiftLabel(c.s,c.e);
+  if(c.cover) return { cls:"cover", text, sub:"cover · was "+c.from };
+  return { cls:"", text };
+}
+
+function render(){
+  roster = buildRoster();
+  if(curWeek >= roster.weeks.length) curWeek = roster.weeks.length-1;
+  $("startDate").value = iso(mondayOf(state.start));
+  $("numWeeks").value = String(state.weeks);
+
+  // week tabs and pdf selectors
+  $("tabs").innerHTML = roster.weeks.map((wk,i) =>
+    `<button type="button" class="${i===curWeek?"on":""}" data-w="${i}">Wk ${i+1} · ${wk.days[0].getDate()} ${MONTHS[wk.days[0].getMonth()].slice(0,3)}</button>`).join("");
+  $("pdfWeek").innerHTML = roster.weeks.map((wk,i) => `<option value="${i}" ${i===curWeek?"selected":""}>Week ${i+1}: ${rangeText(wk.days)}</option>`).join("");
+  const months = [], seen = new Set();
+  roster.weeks.forEach(wk => wk.days.forEach(dd => { const k = dd.getFullYear()+"-"+dd.getMonth(); if(!seen.has(k)){ seen.add(k); months.push([dd.getFullYear(),dd.getMonth()]); } }));
+  const prevMonth = $("pdfMonth").value;
+  $("pdfMonth").innerHTML = months.map(([y,m]) => `<option value="${y}-${m}">${MONTHS[m]} ${y}</option>`).join("");
+  if(prevMonth && months.some(([y,m])=>`${y}-${m}`===prevMonth)) $("pdfMonth").value = prevMonth;
+
+  // warnings
+  const allWarn = roster.weeks.flatMap((wk,i) => wk.warnings.map(w => `Week ${i+1}: ${w}`));
+  $("warnings").innerHTML = allWarn.length
+    ? allWarn.map(w => `<div class="warn">⚠ ${esc(w)}</div>`).join("")
+    : `<div class="ok">✓ Every day has a FAR certified person on the opening and closing shift.</div>`;
+
+  // week table
+  const wk = roster.weeks[curWeek];
+  $("weekTitle").textContent = rangeText(wk.days);
+  let html = "<tr><th>Name</th>" + wk.days.map((d,i)=>`<th>${DAYS[i]}<br><small>${d.getDate()} ${MONTHS[d.getMonth()].slice(0,3)}</small></th>`).join("") + "</tr>";
+  roster.staff.forEach(p => {
+    if(p.type==="blank") return;
+    html += `<tr><td class="name">${esc(p.name)}${p.far?'<span class="far">FAR</span>':""}</td>` +
+      wk.cells[p.id].map(c => { const v=cellView(c); return `<td class="${v.cls}">${esc(v.text)}${v.sub?`<small>${esc(v.sub)}</small>`:""}</td>`; }).join("") + "</tr>";
+  });
+  $("rosterTable").innerHTML = html;
+  $("legend").innerHTML =
+    `<span><i style="background:var(--holiday)"></i>Holiday</span><span><i style="background:var(--off)"></i>Off</span>` +
+    `<span><i style="background:var(--mat)"></i>Maternity Leave</span><span><i style="background:var(--sick)"></i>Sick</span>` +
+    `<span><i style="background:var(--cover);outline:2px solid #1f6fb2;outline-offset:-2px"></i>Shift changed to cover an absence</span><span><span class="far" style="margin:0">FAR</span> First Aid Responder</span>`;
+  $("extrasTable").innerHTML =
+    `<tr><td>FAR opening</td>${wk.days.map((_,d)=>`<td>${esc(farNames(wk,d,"open").join(", ")||"—")}</td>`).join("")}</tr>` +
+    `<tr><td>FAR closing</td>${wk.days.map((_,d)=>`<td>${esc(farNames(wk,d,"close").join(", ")||"—")}</td>`).join("")}</tr>`;
+
+  // leave
+  $("lvStaff").innerHTML = roster.staff.filter(p => p.name && p.type!=="vacant").map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  const nameOf = id => (DEFAULT_STAFF.find(p=>p.id===id)||{}).name || id;
+  const fmt = s => { const d=parseISO(s); return `${d.getDate()} ${MONTHS[d.getMonth()].slice(0,3)} ${d.getFullYear()}`; };
+  const leaves = [...state.leave].sort((a,b)=>a.from.localeCompare(b.from));
+  $("leaveList").innerHTML = leaves.length ? leaves.map(l =>
+    `<div class="leave-item"><div><span class="pill" style="background:rgb(${(COLORS[KIND[l.type]]||COLORS.sick).join(",")});${KIND[l.type]==="off"||KIND[l.type]==="mat"?"color:#fff":""}">${esc(l.type)}</span><b>${esc(nameOf(l.staff))}</b> ` +
+    `<span class="muted">${fmt(l.from)} – ${l.to?fmt(l.to):"until back"}</span></div><button class="sec small" data-del="${l.id}" type="button">Remove</button></div>`).join("")
+    : `<p class="muted">No leave entered.</p>`;
+
+  // staff table
+  $("staffTable").innerHTML = "<tr><th>Name</th><th>FAR</th><th>Weekly day off</th></tr>" +
+    roster.staff.filter(p => p.name && p.type!=="vacant").map(p =>
+      `<tr><td class="name">${esc(p.name)}</td><td><input type="checkbox" data-far="${p.id}" ${p.far?"checked":""}></td>` +
+      `<td><select data-woff="${p.id}"><option value="">—</option>${DAYS.map((n,i)=>`<option value="${i}" ${p.weeklyOff[0]===i?"selected":""}>${n}</option>`).join("")}</select></td></tr>`).join("");
+
+  // fairness
+  const n = roster.weeks.length;
+  $("fairSub").textContent = `Open/close counts for rotating staff across the current ${n}-week roster (days worked, including cover changes).`;
+  $("fairTable").innerHTML = "<tr><th>Name</th><th>Open (7:30)</th><th>Close (6:00)</th><th>Middle</th><th>Cover changes</th><th>Leave / off days</th></tr>" +
+    roster.rots.map(p => { const t=roster.counts[p.id]; return `<tr><td class="name">${esc(p.name)}${p.far?'<span class="far">FAR</span>':""}</td><td>${t.open}</td><td>${t.close}</td><td>${t.mid}</td><td>${t.cover}</td><td>${t.leave}</td></tr>`; }).join("");
+}
+
+// ---------- PDF ----------
+function drawWeek(doc, wk, idx){
+  const W = doc.internal.pageSize.getWidth();
+  doc.setFont("times","bold"); doc.setFontSize(22); doc.setTextColor(224,74,50);
+  doc.text("STAFF ROSTER", 14, 18);
+  doc.setFont("helvetica","bold"); doc.setFontSize(13); doc.setTextColor(0);
+  doc.text(rangeText(wk.days), 14, 26);
+
+  const head = [["Name", ...wk.days.map((d,i)=>`${DAYS[i]}\n${d.getDate()} ${MONTHS[d.getMonth()].slice(0,3)}`)]];
+  const body = [];
+  roster.staff.forEach(p => {
+    if(p.type==="blank") return;
+    const row = [{ content: p.name + (p.far?"  (FAR)":""), styles:{ halign:"left", fontStyle:"bold" } }];
+    wk.cells[p.id].forEach(c => {
+      const v = cellView(c); const st = {};
+      if(v.cls==="cover"){ st.fillColor = COLORS.cover; st.fontStyle="bold"; }
+      else if(v.cls){ st.fillColor = COLORS[v.cls]; st.fontStyle="bold"; if(v.cls==="off"||v.cls==="mat") st.textColor=[255,255,255]; }
+      row.push({ content: v.text + (v.sub?"\n"+v.sub:""), styles: st });
+    });
+    body.push(row);
+  });
+  doc.autoTable({
+    startY: 31, head, body, theme:"grid", margin:{left:14,right:14},
+    styles:{ fontSize:9, halign:"center", valign:"middle", cellPadding:2, lineColor:[128,128,128], lineWidth:0.2, textColor:0 },
+    headStyles:{ fillColor:[217,217,217], textColor:0, fontStyle:"bold" },
+    columnStyles:{ 0:{ cellWidth:38 } },
+  });
+  let y = doc.lastAutoTable.finalY + 6;
+  const extra = [
+    ["FAR opening", ...wk.days.map((_,d)=>farNames(wk,d,"open").join(", ")||"-")],
+    ["FAR closing", ...wk.days.map((_,d)=>farNames(wk,d,"close").join(", ")||"-")],
+  ];
+  doc.autoTable({
+    startY: y, body: extra, theme:"grid", margin:{left:14,right:14},
+    styles:{ fontSize:8, halign:"center", valign:"middle", cellPadding:1.8, lineColor:[128,128,128], lineWidth:0.2, textColor:0 },
+    columnStyles:{ 0:{ cellWidth:38, halign:"left", fontStyle:"bold", fillColor:[241,241,241] } },
+  });
+  y = doc.lastAutoTable.finalY + 7;
+  // legend
+  const items = [["Holiday",COLORS.holiday],["Off",COLORS.off],["Maternity Leave",COLORS.mat],["Sick",COLORS.sick],["Shift changed to cover an absence",COLORS.cover]];
+  doc.setFont("helvetica","normal"); doc.setFontSize(8); let x = 14;
+  items.forEach(([t,col]) => {
+    doc.setFillColor(...col); doc.setDrawColor(100); doc.rect(x, y-3, 4, 4, "FD");
+    doc.setTextColor(0); doc.text(t, x+6, y);
+    x += 6 + doc.getTextWidth(t) + 6;
+  });
+  y += 8;
+  wk.warnings.forEach(w => {
+    doc.setFillColor(255,199,206); doc.rect(14, y-4, W-28, 6.5, "F");
+    doc.setTextColor(156,0,6); doc.setFont("helvetica","bold"); doc.text("WARNING: "+w, 16, y);
+    y += 8;
+  });
+}
+
+function savePdf(indices, filename){
+  if(!window.jspdf){ throw new Error("PDF library did not load"); }
+  const doc = new window.jspdf.jsPDF({ unit:"mm", format:"a4", orientation:"portrait" });
+  indices.forEach((wi,k) => { if(k>0) doc.addPage(); drawWeek(doc, roster.weeks[wi], wi); });
+  doc.save(filename);   // direct download: no new tab or window
+  return indices.length;
+}
+
+function exportPdf(scope, value){
+  let idx, name;
+  if(scope==="week"){ idx=[+value]; name=`Donabate_Roster_${iso(roster.weeks[+value].monday)}.pdf`; }
+  else if(scope==="month"){
+    const [y,m] = value.split("-").map(Number);
+    idx = roster.weeks.map((wk,i)=>i).filter(i => roster.weeks[i].days.some(d => d.getFullYear()===y && d.getMonth()===m));
+    name = `Donabate_Roster_${MONTHS[m]}_${y}.pdf`;
+  } else { idx = roster.weeks.map((_,i)=>i); name = `Donabate_Roster_${iso(roster.weeks[0].monday)}_all_weeks.pdf`; }
+  try{
+    const n = savePdf(idx, name);
+    $("msg").innerHTML = `<div class="ok">Saved ${esc(name)} (${n} page${n>1?"s":""}).</div>`;
+  }catch(e){ $("msg").innerHTML = `<div class="warn">Could not create the PDF: ${esc(e.message)}</div>`; }
+}
+
+// ---------- events ----------
+$("tabs").addEventListener("click", e => { const b=e.target.closest("button[data-w]"); if(b){ curWeek=+b.dataset.w; render(); } });
+$("startDate").addEventListener("change", e => { if(e.target.value){ state.start = iso(mondayOf(e.target.value)); saveState(); render(); } });
+$("numWeeks").innerHTML = Array.from({length:12},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join("");
+$("numWeeks").addEventListener("change", e => { state.weeks = +e.target.value; saveState(); render(); });
+$("resetBtn").addEventListener("click", () => { if(confirm("Reset staff, leave and dates to the printed roster?")){ state = clone(DEFAULT_STATE); saveState(); curWeek=0; render(); } });
+$("leaveForm").addEventListener("submit", e => {
+  e.preventDefault();
+  const from = $("lvFrom").value, to = $("lvTo").value;
+  if(!from) return;
+  if(to && to < from){ alert("'To' date is before 'From' date."); return; }
+  state.leave.push({ id: state.nextLeaveId++, staff:$("lvStaff").value, type:$("lvType").value, from, to: to||null });
+  saveState(); render();
+});
+$("leaveList").addEventListener("click", e => { const b=e.target.closest("button[data-del]"); if(b){ state.leave = state.leave.filter(l => l.id!==+b.dataset.del); saveState(); render(); } });
+$("staffTable").addEventListener("change", e => {
+  const t = e.target, id = t.dataset.far || t.dataset.woff; if(!id) return;
+  const ed = state.edits[id] = state.edits[id] || {};
+  if(t.dataset.far) ed.far = t.checked;
+  else ed.weeklyOff = t.value==="" ? [] : [+t.value];
+  saveState(); render();
+});
+$("printWeekBtn").addEventListener("click", () => exportPdf("week", curWeek));
+$("pdfBtn").addEventListener("click", () => {
+  const scope = document.querySelector("input[name=scope]:checked").value;
+  exportPdf(scope, scope==="week" ? $("pdfWeek").value : $("pdfMonth").value);
+});
+$("pdfWeek").addEventListener("focus", () => $("scWeek").checked = true);
+$("pdfMonth").addEventListener("focus", () => $("scMonth").checked = true);
+
+render();
+</script>
+</body>
+</html>
