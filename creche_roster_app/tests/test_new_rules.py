@@ -220,3 +220,19 @@ class SharedDuty(unittest.TestCase):
             self.assertEqual(len(set(everyone)), 11)  # nobody does two
             seen.append(shared[0])
         self.assertGreaterEqual(len(set(seen)), 2, seen)  # it rotates
+
+
+class DisplayOrder(unittest.TestCase):
+    def test_moving_a_row_changes_only_where_it_shows(self):
+        a = inputs(date(2026, 10, 19), 3, new_start=None)
+        b = inputs(date(2026, 10, 19), 3, new_start=None)
+        names = [st.name for st in b.staff]
+        i, j = names.index("Deoshree"), names.index("Usha")
+        b.staff[i].display_order, b.staff[j].display_order = j, i
+        ra, rb = build_roster(a), build_roster(b)
+        shown = [st.name for _, st in rb.staff_keys]
+        self.assertLess(shown.index("Usha"), shown.index("Deoshree"))
+        self.assertEqual(shown.index("Usha"), names.index("Deoshree"))
+        for wi in range(3):
+            for n in ROT:
+                self.assertEqual(week_slot(ra, wi, n), week_slot(rb, wi, n), (wi, n))

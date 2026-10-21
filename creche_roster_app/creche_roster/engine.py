@@ -1459,9 +1459,15 @@ def build_roster(inputs: Inputs) -> Roster:
 
     _balance_protected_slots(weeks, by_name, room_of, period, hist, last_slot, inputs.last_slot, n_old_weeks)
 
+    # Output order only: rows may be moved for display without touching the
+    # order the planner used.
+    shown_keys = sorted(
+        enumerate(staff_keys),
+        key=lambda iks: (iks[1][1].display_order if iks[1][1].display_order is not None else iks[0], iks[0]),
+    )
     return Roster(
         inputs=inputs,
-        staff_keys=staff_keys,
+        staff_keys=[ks for _, ks in shown_keys],
         weeks=weeks,
         checks=checks,
         period_counts={n: dict(c) for n, c in period.items()},

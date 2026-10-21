@@ -1975,7 +1975,15 @@
     balanceProtectedSlots(weeks, byName, roomOf, period, hist, lastSlot, inputs.last_slot, nOldWeeks);
 
     return {
-      inputs: inputs, staff_keys: staffKeys, weeks: weeks, checks: checks,
+      // Output order only: rows may be moved for display without touching the
+      // order the planner used.
+      inputs: inputs, staff_keys: staffKeys.map(function (ks, i) { return [i, ks]; })
+        .sort(function (a, b) {
+          var da = a[1][1].display_order, db = b[1][1].display_order;
+          da = (da === null || da === undefined) ? a[0] : da; db = (db === null || db === undefined) ? b[0] : db;
+          return da !== db ? da - db : a[0] - b[0];
+        }).map(function (p) { return p[1]; }),
+      weeks: weeks, checks: checks,
       period_counts: period, cumulative_counts: hist, last_slot: lastSlot,
     };
   }
@@ -2306,6 +2314,7 @@
       fixed_slot: fixedSlot, hours: hours.slice(), number: doc.number || '',
       start_date: doc.startDate || null, end_date: doc.endDate || null, room: doc.room || '',
       rotate_from: doc.rotateFrom || null,
+      display_order: (doc.displayOrder === undefined || doc.displayOrder === null) ? null : doc.displayOrder,
       room_from: doc.roomFrom || null, prev_room: doc.prevRoom || '',
     };
   }

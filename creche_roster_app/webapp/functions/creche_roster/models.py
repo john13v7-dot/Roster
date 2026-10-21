@@ -81,6 +81,10 @@ class Staff:
     # on this date (a Monday): before it they show their hours and take no part
     # in the rotation or the fairness counts.
     rotate_from: Optional[date] = None
+    # Where this row shows on the printed roster and the screen. Display only:
+    # the planner's own tie-break order (the staff list order) is untouched, so
+    # moving a row never changes anyone's shifts or duties.
+    display_order: Optional[float] = None
     # A room move: `room` applies from this Monday, `prev_room` before it - so
     # moving someone never rewrites the weeks that came before.
     room_from: Optional[date] = None
