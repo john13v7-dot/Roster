@@ -148,6 +148,17 @@ def _weekly_slot(roster: Roster, week_index: int, name: str) -> Optional[str]:
 # (shown as a warning, never blocked).
 REPEAT_GAP_WEEKS = 6
 
+# When there are more people than duties (an eleventh person joins the
+# rota), one late-finish duty a week is shared by two people so everyone has
+# a duty. Which one rotates through these, by calendar week, so it doesn't
+# shift when the roster window moves.
+SHARED_CANDIDATES: List[str] = [
+    "Kitchen",
+    "Children's Toilets",
+    "Hallway downstairs / windows / door handles",
+]
+_SHARE_BLANK = 5 * 10 ** 8  # leaving the shared slot empty costs less than a real duty blank, more than any pick
+
 # When a week has fewer people than duties (or the no-repeat rule plus
 # finish times leave a duty with nobody), these are left blank first -
 # the least important duties, in the order the manager ranked them.
@@ -356,13 +367,20 @@ def build_duty_roster(
             tie_order = pool[offset:] + pool[:offset]
             people = [n for n in tie_order if n in remaining and slot_of.get(n)]
             keep = keep_weeks.get(monday.isoformat()) or {}
+            # More people than duties: this week's shared late duty gets a
+            # second person (an extra row for the same duty).
+            rows = [(d, False) for d in open_duties]
+            shared_duty = SHARED_CANDIDATES[(monday.toordinal() // 7) % len(SHARED_CANDIDATES)]
+            if len(people) > len(open_duties):
+                rows.append((shared_duty, True))
             cost: List[List[int]] = []
-            for r, duty in enumerate(open_duties):
+            for r, (duty, is_extra) in enumerate(rows):
                 row = []
                 min_index = SLOTS.index(DUTY_MIN_SLOT[duty])
+                kept_list = keep.get(duty) or []
                 for k, n in enumerate(people):
                     gap = weeks_since(n, duty, wi)
-                    kept = keep.get(duty) == [n]
+                    kept = (len(kept_list) > 1 and kept_list[1] == n) if is_extra else (bool(kept_list) and kept_list[0] == n)
                     if SLOTS.index(slot_of[n]) < min_index or (gap is not None and gap < REPEAT_GAP_WEEKS and not kept):
                         row.append(_FORBID)
                         continue
@@ -373,9 +391,12 @@ def build_duty_roster(
                     c += (_RECENCY_CAP - min(gap if gap is not None else _RECENCY_CAP, _RECENCY_CAP)) * _PER_WEEK_RECENT
                     c += k
                     row.append(c)
-                for b, blank_duty in enumerate(open_duties):
+                for b in range(len(rows)):
                     if b != r:
                         row.append(_FORBID)
+                        continue
+                    if is_extra:
+                        row.append(_SHARE_BLANK)
                         continue
                     c = _BLANK + (BLANK_FIRST.index(duty) if duty in BLANK_FIRST else _BLANK_IMPORTANT)
                     if keep.get(duty):
@@ -384,7 +405,11 @@ def build_duty_roster(
                 cost.append(row)
             for r, col in enumerate(_min_cost_assignment(cost)):
                 if 0 <= col < len(people) and cost[r][col] < _FORBID:
-                    assigned_by_duty[open_duties[r]] = [people[col]]
+                    duty_r, extra_r = rows[r]
+                    if extra_r:
+                        assigned_by_duty[duty_r] = assigned_by_duty.get(duty_r, []) + [people[col]]
+                    else:
+                        assigned_by_duty[duty_r] = [people[col]]
 
         for duty, names in assigned_by_duty.items():
             for n in names:

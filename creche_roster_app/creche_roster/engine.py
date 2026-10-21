@@ -306,6 +306,17 @@ def _assign_weekly_base(
 # Newer rules: whole-week planning with a rolling fairness window and the
 # 8:00 / 8:30 age-group mix (weeks on or after Settings.new_rules_start)
 # --------------------------------------------------------------------------
+def auto_fairness_weeks(n_rotating: int, seats_open: int, seats_close: int) -> int:
+    """The shortest number of weeks in which every rotating person can get
+    exactly the same number of openings and of closings: the smallest w where
+    both seats-per-week x w divide evenly by the number of rotating staff."""
+    n = max(1, n_rotating)
+    for w in range(1, 4 * n + 1):
+        if (max(seats_open, 1) * w) % n == 0 and (max(seats_close, 1) * w) % n == 0:
+            return w
+    return 9
+
+
 def _window_stats(recs, window_weeks: int):
     """Counts over the last `window_weeks` - 1 recorded weeks (the week being
     planned is the last of the window): openings, closings, weeks eligible to
@@ -992,6 +1003,17 @@ def build_roster(inputs: Inputs) -> Roster:
         for n, st in by_name.items() if st.role == "rotating"
     }
     cover_count: Counter = Counter()
+    joined: set = set()  # rotators already given a team-average starting position
+    n_rotating = sum(1 for st in by_name.values() if st.role == "rotating")
+    n_pair = sum(1 for st in by_name.values() if st.role == "paired")
+    window_weeks = s.fairness_weeks or auto_fairness_weeks(
+        n_rotating, s.min_open[s.floors[0]] - (1 if n_pair else 0), s.min_close[s.floors[0]] - (1 if n_pair else 0)
+    )
+
+    def pre_rot(name: str, d: date) -> bool:
+        st = by_name.get(name)
+        return bool(st and st.role == "rotating" and st.rotate_from and d < st.rotate_from)
+
     new_start = s.new_rules_start
     n_old_weeks = sum(
         1 for wi in range(s.weeks)
@@ -1080,8 +1102,33 @@ def build_roster(inputs: Inputs) -> Roster:
     for wi in range(s.weeks):
         monday = s.roster_start + timedelta(weeks=wi)
         days = [monday + timedelta(days=i) for i in range(NDAYS)]
-        present = {n: [d for d in days if not leave_kind(n, d)] for n in by_name}
+        present = {n: [d for d in days if not leave_kind(n, d) and not pre_rot(n, d)] for n in by_name}
         new_rules = bool(new_start and monday >= new_start)
+        # A room move applies from its date; weeks before it keep the old room.
+        for n, st0 in by_name.items():
+            if st0.room_from:
+                r0 = st0.room if monday >= st0.room_from else st0.prev_room
+                if r0:
+                    room_of[n] = r0
+                else:
+                    room_of.pop(n, None)
+                group_of[n] = "Y" if r0 in s.younger_rooms else "O" if r0 in s.older_rooms else None
+        # A person who joins the rotation this week starts at the team's
+        # average (not at zero, which would make them the most "owed" and send
+        # them every opening and closing at once).
+        for n, st0 in by_name.items():
+            if st0.role == "rotating" and st0.rotate_from and n not in joined and monday >= st0.rotate_from:
+                joined.add(n)
+                others = [o for o, so in by_name.items() if so.role == "rotating" and o != n and o in window and not pre_rot(o, monday)]
+                if others:
+                    for sl in SLOTS:
+                        hist[n][sl] = round(sum(hist[o][sl] for o in others) / len(others))
+                    stats = [_window_stats(window[o], window_weeks) for o in others]
+                    avg_o = round(sum(x[0] for x in stats) / len(others))
+                    avg_c = round(sum(x[1] for x in stats) / len(others))
+                    avg_m1 = round(sum(x[4].get("mid1", 0) for x in stats) / len(others))
+                    avg_m2 = round(sum(x[4].get("mid2", 0) for x in stats) / len(others))
+                    window[n] = [(sl, False, False) for sl in ["early"] * avg_o + ["mid1"] * avg_m1 + ["late"] * avg_c + ["mid2"] * avg_m2]
         mix_days: Dict[tuple, list] = {}
 
         # ---- weekly base -------------------------------------------------
@@ -1170,7 +1217,7 @@ def build_roster(inputs: Inputs) -> Roster:
                         if new_rules:
                             base.update(
                                 _assign_weekly_base_v2(
-                                    members, pre, s.min_open[floor], min_close, window, s.fairness_weeks,
+                                    members, pre, s.min_open[floor], min_close, window, window_weeks,
                                     last_slot, wi, room_of, taken_by_room, group_of,
                                 )
                             )
@@ -1214,10 +1261,11 @@ def build_roster(inputs: Inputs) -> Roster:
         # slot a real, non-rotating claim already holds. Only the rotating
         # pool itself is forced "present" here - that's the one absence
         # this patch is meant to absorb without disturbing anyone else.
-        present_credit = {n: [d for d in days if not credited_kind(n, d)] for n in by_name}
+        present_credit = {n: [d for d in days if not credited_kind(n, d) and not pre_rot(n, d)] for n in by_name}
         base_if_nobody_away = compute_base(present_credit)
         present_full_rotating = {
-            n: (days if st.role == "rotating" else present[n]) for n, st in by_name.items()
+            n: ([d for d in days if not pre_rot(n, d)] if st.role == "rotating" else present[n])
+            for n, st in by_name.items()
         }
         full_rotating_base = compute_base(present_full_rotating)
         base = compute_base(present, full_rotating_base)
@@ -1232,7 +1280,8 @@ def build_roster(inputs: Inputs) -> Roster:
         # widening it here can never change what "patch, don't reshuffle"
         # patches the real schedule against.
         present_everyone_rotation_driven = {
-            n: (days if st.role in ("rotating", "paired") else present[n]) for n, st in by_name.items()
+            n: ([d for d in days if not pre_rot(n, d)] if st.role in ("rotating", "paired") else present[n])
+            for n, st in by_name.items()
         }
         full_base = compute_base(present_everyone_rotation_driven)
         covering_because_of_leave = {
@@ -1260,6 +1309,9 @@ def build_roster(inputs: Inputs) -> Roster:
                 lk = leave_kind(st.name, d)
                 if lk:
                     cells[(key, d)] = Assignment("leave", text=lk)
+                    continue
+                if pre_rot(st.name, d):
+                    cells[(key, d)] = Assignment("static", text=st.hours[d.weekday()] or st.note)
                     continue
                 if st.role == "static":
                     text = override_text(st.name, d) or st.hours[d.weekday()] or st.note

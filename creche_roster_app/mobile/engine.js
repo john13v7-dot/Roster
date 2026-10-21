@@ -262,7 +262,7 @@
       new_rules_start: '2026-11-09',
       younger_rooms: ['Toddlers Room', 'Preschoolers Room'],
       older_rooms: ['ECEC 1', 'ECEC 2'],
-      fairness_weeks: 9,
+      fairness_weeks: 0, // 0 = worked out from the number of rotating staff (autoFairnessWeeks)
       // Days the creche is closed (a bank holiday): {isoDate: label}. Everyone
       // shows the label that day; no cover, pairing or room rule applies.
       closure_days: { '2026-10-26': 'Bank Holiday' },
@@ -462,6 +462,14 @@
   // Port of engine.py's _assign_weekly_base_v2/_fix_mid_mix - see the Python
   // docstrings. Integer costs, same scan order, so both engines agree.
   var N_CLASH = 1e6, N_MIX = 1e5, N_REPEAT = 300;
+
+  function autoFairnessWeeks(nRotating, seatsOpen, seatsClose) {
+    var n = Math.max(1, nRotating);
+    for (var w = 1; w <= 4 * n; w++) {
+      if ((Math.max(seatsOpen, 1) * w) % n === 0 && (Math.max(seatsClose, 1) * w) % n === 0) return w;
+    }
+    return 9;
+  }
 
   function windowStats(recs, windowWeeks) {
     var o = 0, c = 0, wo = 0, wc = 0, mids = {};
@@ -1105,6 +1113,16 @@
       win[nw] = ((inputs.prior_slots || {})[nw] || []).map(function (sl) { return [sl, false, false]; });
     }
     var coverCount = {};
+    var joined = {};
+    var nRotating = 0, nPair = 0;
+    for (var nr in byName) { if (byName[nr].role === 'rotating') nRotating++; if (byName[nr].role === 'paired') nPair++; }
+    var windowWeeks = s.fairness_weeks || autoFairnessWeeks(
+      nRotating, s.min_open[s.floors[0]] - (nPair ? 1 : 0), s.min_close[s.floors[0]] - (nPair ? 1 : 0)
+    );
+    function preRot(name, d) {
+      var st = byName[name];
+      return !!(st && st.role === 'rotating' && st.rotate_from && d < st.rotate_from);
+    }
     var newStart = s.new_rules_start || null;
     var nOldWeeks = 0;
     for (var wo = 0; wo < s.weeks; wo++) {
@@ -1188,8 +1206,41 @@
       var days = [];
       for (var i = 0; i < NDAYS; i++) days.push(addDays(monday, i));
       var present = {};
-      for (var n5 in byName) present[n5] = days.filter(function (d) { return !leaveKind(n5, d); });
+      for (var n5 in byName) present[n5] = days.filter(function (d) { return !leaveKind(n5, d) && !preRot(n5, d); });
       var newRules = !!(newStart && monday >= newStart);
+      // A room move applies from its date; weeks before it keep the old room.
+      for (var nrm in byName) {
+        var srm = byName[nrm];
+        if (!srm.room_from) continue;
+        var r0 = monday >= srm.room_from ? srm.room : srm.prev_room;
+        if (r0) roomOf[nrm] = r0; else delete roomOf[nrm];
+        groupOf[nrm] = (s.younger_rooms || []).indexOf(r0) !== -1 ? 'Y' : (s.older_rooms || []).indexOf(r0) !== -1 ? 'O' : null;
+      }
+      // A person who joins the rotation this week starts at the team's average
+      // (not at zero, which would make them the most "owed").
+      for (var nj in byName) {
+        var sj = byName[nj];
+        if (sj.role !== 'rotating' || !sj.rotate_from || joined[nj] || monday < sj.rotate_from) continue;
+        joined[nj] = true;
+        var others = Object.keys(byName).filter(function (o) {
+          return byName[o].role === 'rotating' && o !== nj && Object.prototype.hasOwnProperty.call(win, o) && !preRot(o, monday);
+        });
+        if (others.length) {
+          SLOTS.forEach(function (sl) {
+            hist[nj][sl] = pyRound(others.reduce(function (sum, o) { return sum + g(hist[o], sl); }, 0) / others.length);
+          });
+          var sts = others.map(function (o) { return windowStats(win[o], windowWeeks); });
+          var avg = function (fn) { return pyRound(sts.reduce(function (sum, x) { return sum + fn(x); }, 0) / others.length); };
+          var aO = avg(function (x) { return x.o; }), aC = avg(function (x) { return x.c; });
+          var aM1 = avg(function (x) { return x.mids.mid1 || 0; }), aM2 = avg(function (x) { return x.mids.mid2 || 0; });
+          var synth = [], qi;
+          for (qi = 0; qi < aO; qi++) synth.push(['early', false, false]);
+          for (qi = 0; qi < aM1; qi++) synth.push(['mid1', false, false]);
+          for (qi = 0; qi < aC; qi++) synth.push(['late', false, false]);
+          for (qi = 0; qi < aM2; qi++) synth.push(['mid2', false, false]);
+          win[nj] = synth;
+        }
+      }
       var mixDays = {};
 
       // ---- weekly base ----
@@ -1254,7 +1305,7 @@
             var extTaken = copyTaken(takenByRoom);
             if (idealBase === undefined) {
               if (newRules) {
-                Object.assign(base, assignWeeklyBaseV2(members, pre, s.min_open[floor], minClose, win, s.fairness_weeks, lastSlot, wi, roomOf, takenByRoom, groupOf));
+                Object.assign(base, assignWeeklyBaseV2(members, pre, s.min_open[floor], minClose, win, windowWeeks, lastSlot, wi, roomOf, takenByRoom, groupOf));
               } else {
                 Object.assign(base, assignWeeklyBase(members, pre, s.min_open[floor], minClose, hist, lastSlot, wi, roomOf, takenByRoom, s.weeks));
               }
@@ -1286,10 +1337,10 @@
       // requirements match the real week exactly and only the rotating
       // pool's own actual absences get patched around.
       var presentCredit = {};
-      for (var n5b in byName) presentCredit[n5b] = days.filter(function (d) { return !creditedKind(n5b, d); });
+      for (var n5b in byName) presentCredit[n5b] = days.filter(function (d) { return !creditedKind(n5b, d) && !preRot(n5b, d); });
       var baseIfNobodyAway = computeBase(presentCredit);
       var presentFullRotating = {};
-      for (var n5d in byName) presentFullRotating[n5d] = byName[n5d].role === 'rotating' ? days : present[n5d];
+      for (var n5d in byName) presentFullRotating[n5d] = byName[n5d].role === 'rotating' ? days.filter(function (d) { return !preRot(n5d, d); }) : present[n5d];
       var fullRotatingBase = computeBase(presentFullRotating);
       var base = computeBase(present, fullRotatingBase);
       var coveringBecauseOfLeave = new Set();
@@ -1311,7 +1362,7 @@
       var presentEveryoneRotationDriven = {};
       for (var n5e in byName) {
         var role5e = byName[n5e].role;
-        presentEveryoneRotationDriven[n5e] = (role5e === 'rotating' || role5e === 'paired') ? days : present[n5e];
+        presentEveryoneRotationDriven[n5e] = (role5e === 'rotating' || role5e === 'paired') ? days.filter(function (d) { return !preRot(n5e, d); }) : present[n5e];
       }
       var fullBase = computeBase(presentEveryoneRotationDriven);
 
@@ -1329,6 +1380,7 @@
           if (st.role === 'vacant') { cells.set(cellKey(key, d), { kind: 'vacant', text: st.hours[weekday(d)] || st.note }); return; }
           var lk = leaveKind(st.name, d);
           if (lk) { cells.set(cellKey(key, d), { kind: 'leave', text: lk }); return; }
+          if (preRot(st.name, d)) { cells.set(cellKey(key, d), { kind: 'static', text: st.hours[weekday(d)] || st.note }); return; }
           if (st.role === 'static') {
             var text = overrideText(st.name, d) || st.hours[weekday(d)] || st.note;
             if (isOff(text)) cells.set(cellKey(key, d), { kind: 'leave', text: 'OFF' });
@@ -1549,6 +1601,9 @@
   var REPEAT_GAP_WEEKS = 6;
   var BLANK_FIRST = ['Paper & Soap dispensers', 'Front creche'];
   var D_FORBID = 1e12, D_BLANK = 1e9, D_BLANK_IMPORTANT = 1e7, D_MOVED = 1e6, D_NOT_IDEAL = 1e5;
+  // More people than duties: one late-finish duty a week is shared by two people.
+  var SHARED_CANDIDATES = ['Kitchen', "Children's Toilets", 'Hallway downstairs / windows / door handles'];
+  var D_SHARE_BLANK = 5e8;
   var D_PER_TIME_DONE = 1e3, D_PER_WEEK_RECENT = 10, D_RECENCY_CAP = DUTY_SLOTS.length;
 
   function minCostAssignment(cost) {
@@ -1662,13 +1717,18 @@
         var people = tieOrder.filter(function (n) { return remaining.indexOf(n) !== -1 && slotOf[n]; });
         var keep = (has(keepWeeks, monday) && keepWeeks[monday]) || {};
         var hasKeep = Object.keys(keep).length > 0;
-        var keptBy = function (duty, n) { var k = keep[duty]; return !!k && k.length === 1 && k[0] === n; };
-        var cost = openDuties.map(function (duty, r) {
+        var rows = openDuties.map(function (d) { return [d, false]; });
+        var ordinal = toEpochDay(monday) + 719163;
+        var sharedDuty = SHARED_CANDIDATES[Math.floor(ordinal / 7) % SHARED_CANDIDATES.length];
+        if (people.length > openDuties.length) rows.push([sharedDuty, true]);
+        var cost = rows.map(function (rowDef, r) {
+          var duty = rowDef[0], isExtra = rowDef[1];
           var row = [];
           var minIndex = SLOTS.indexOf(DUTY_MIN_SLOT[duty]);
+          var keptList = keep[duty] || [];
           people.forEach(function (n, k) {
             var gap = weeksSince(n, duty, wi);
-            var kept = keptBy(duty, n);
+            var kept = isExtra ? (keptList.length > 1 && keptList[1] === n) : (keptList.length > 0 && keptList[0] === n);
             if (SLOTS.indexOf(slotOf[n]) < minIndex || (gap !== null && gap < REPEAT_GAP_WEEKS && !kept)) { row.push(D_FORBID); return; }
             var c = DUTY_ELIGIBLE_SLOTS[duty].has(slotOf[n]) ? 0 : D_NOT_IDEAL;
             if (hasKeep && !kept) c += D_MOVED;
@@ -1677,8 +1737,9 @@
             c += k;
             row.push(c);
           });
-          openDuties.forEach(function (blankDuty, b) {
+          rows.forEach(function (rd, b) {
             if (b !== r) { row.push(D_FORBID); return; }
+            if (isExtra) { row.push(D_SHARE_BLANK); return; }
             var cb = D_BLANK + (BLANK_FIRST.indexOf(duty) !== -1 ? BLANK_FIRST.indexOf(duty) : D_BLANK_IMPORTANT);
             if (keep[duty] && keep[duty].length) cb += D_MOVED;
             row.push(cb);
@@ -1686,7 +1747,10 @@
           return row;
         });
         minCostAssignment(cost).forEach(function (col, r) {
-          if (col >= 0 && col < people.length && cost[r][col] < D_FORBID) assignedByDuty[openDuties[r]] = [people[col]];
+          if (col >= 0 && col < people.length && cost[r][col] < D_FORBID) {
+            if (rows[r][1]) assignedByDuty[rows[r][0]] = (assignedByDuty[rows[r][0]] || []).concat([people[col]]);
+            else assignedByDuty[rows[r][0]] = [people[col]];
+          }
         });
       }
 
@@ -1770,6 +1834,8 @@
       name: doc.name || '', floor: doc.floor || 'All', role: role, note: doc.note || '',
       fixed_slot: fixedSlot, hours: hours.slice(), number: doc.number || '',
       start_date: doc.startDate || null, end_date: doc.endDate || null, room: doc.room || '',
+      rotate_from: doc.rotateFrom || null,
+      room_from: doc.roomFrom || null, prev_room: doc.prevRoom || '',
     };
   }
   function leaveFromDoc(doc) { return { name: doc.name, start: doc.start, end: doc.end || null, kind: doc.kind || 'Leave' }; }

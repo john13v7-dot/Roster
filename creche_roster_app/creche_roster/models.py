@@ -59,7 +59,7 @@ class Settings:
     # Which rooms count as the younger / older age group (for the mix rule).
     younger_rooms: Tuple[str, ...] = ("Toddlers Room", "Preschoolers Room")
     older_rooms: Tuple[str, ...] = ("ECEC 1", "ECEC 2")
-    fairness_weeks: int = 9
+    fairness_weeks: int = 0  # 0 = worked out from the number of rotating staff (see auto_fairness_weeks)
     # Days the creche is closed (a bank holiday): {date: label}. Everyone shows
     # the label that day, and no cover, pairing or room rule applies to it.
     closure_days: Dict[date, str] = field(default_factory=dict)
@@ -77,6 +77,14 @@ class Staff:
     start_date: Optional[date] = None  # joiner: not scheduled before this date
     end_date: Optional[date] = None  # leaver: not scheduled after this date
     room: str = ""  # the physical room (Toddlers, Preschoolers, ECEC 1, ECEC 2...); "" = not placed
+    # A rotating person who starts on fixed hours (`note`) and joins the rotation
+    # on this date (a Monday): before it they show their hours and take no part
+    # in the rotation or the fairness counts.
+    rotate_from: Optional[date] = None
+    # A room move: `room` applies from this Monday, `prev_room` before it - so
+    # moving someone never rewrites the weeks that came before.
+    room_from: Optional[date] = None
+    prev_room: str = ""
 
 
 @dataclass

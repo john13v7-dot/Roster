@@ -139,3 +139,84 @@ class BankHoliday(unittest.TestCase):
         # The rest of the week is still fully rostered.
         tuesday = date(2026, 10, 27)
         self.assertEqual(sum(r.weeks[0].cells[(n, tuesday)].slot == "early" for n in ROT + ["Jason", "Shehnaz"]), 3)
+
+
+class JoiningTheRotation(unittest.TestCase):
+    """A new person starts on fixed hours and joins the rotation on a set Monday."""
+
+    def _inputs(self, start=date(2026, 10, 19), weeks=5, rotate_from=date(2026, 10, 26)):
+        from creche_roster.models import Staff
+        inp = inputs(start, weeks, new_start=NEW)
+        inp.leave = []
+        for st in inp.staff:
+            if st.name == "Deoshree":
+                st.room = "Toddlers Room"
+        # the vacant post with hours becomes the newcomer
+        post = next(st for st in inp.staff if st.role == "vacant" and st.note)
+        post.name, post.role, post.room = "Alexandru", "rotating", "Preschoolers Room"
+        post.start_date, post.rotate_from = date(2026, 10, 22), rotate_from
+        return inp
+
+    def test_fixed_hours_before_he_joins_then_rotates(self):
+        r = build_roster(self._inputs())
+        key = next(k for k, st in r.staff_keys if st.name == "Alexandru")
+        week3, week4 = r.weeks[0], r.weeks[1]
+        thu = date(2026, 10, 22)
+        self.assertEqual(week3.cells[(key, thu)].text, "8:30 – 5:30")
+        self.assertEqual(week3.cells[(key, date(2026, 10, 19))].text, "Not yet started")
+        self.assertEqual(week3.cells[(key, thu)].kind, "static")
+        slot = week_slot(r, 1, "Alexandru")
+        self.assertIn(slot, ("early", "mid1", "mid2", "late"))
+        self.assertEqual([c for c in r.checks if c.level == "BREACH"], [])
+
+    def test_starting_the_rotation_does_not_move_the_weeks_before_it(self):
+        base = build_roster(inputs(date(2026, 10, 19), 1, new_start=None))
+        mine = build_roster(self._inputs(weeks=1))
+        for n in ROT:
+            if n == "Deoshree":
+                continue  # her room changed, nothing else about her week
+            self.assertEqual(week_slot(base, 0, n), week_slot(mine, 0, n), n)
+
+    def test_he_joins_at_the_team_average_not_most_owed(self):
+        inp = self._inputs(date(2026, 10, 12), 8)
+        r = build_roster(inp)
+        seats = Counter()
+        for wi in range(3, 8):
+            slot = week_slot(r, wi, "Alexandru")
+            seats[slot] += 1
+        # He is not handed every opening and closing at once.
+        self.assertLessEqual(seats["early"] + seats["late"], 3, seats)
+
+    def test_window_with_ten_rotating_staff_is_five_weeks(self):
+        from creche_roster.engine import auto_fairness_weeks
+        self.assertEqual(auto_fairness_weeks(10, 2, 2), 5)
+        self.assertEqual(auto_fairness_weeks(9, 2, 2), 9)
+        self.assertEqual(auto_fairness_weeks(8, 2, 2), 4)
+
+
+class SharedDuty(unittest.TestCase):
+    def test_eleven_people_ten_duties_one_late_duty_is_shared(self):
+        from creche_roster.duties import DUTY_SLOTS, SHARED_CANDIDATES, build_duty_roster, duty_pool
+        inp = inputs(date(2026, 11, 9), 6, new_start=NEW)
+        inp.leave = []
+        for st in inp.staff:
+            if st.name == "Deoshree":
+                st.room = "Toddlers Room"
+        post = next(st for st in inp.staff if st.role == "vacant" and st.note)
+        post.name, post.role, post.room = "Alexandru", "rotating", "Preschoolers Room"
+        post.start_date = date(2026, 10, 22)
+        r = build_roster(inp)
+        self.assertEqual(len(duty_pool(inp)), 11)
+        weeks = build_duty_roster(inp, r)
+        seen = []
+        for w in weeks:
+            by = {a["duty"]: a["people"] for a in w["assignments"] if a["duty"] in DUTY_SLOTS}
+            shared = [d for d, p in by.items() if len(p) == 2]
+            self.assertEqual(len(shared), 1, by)
+            self.assertIn(shared[0], SHARED_CANDIDATES)
+            self.assertEqual(w["unfilled"], [])
+            everyone = [n for p in by.values() for n in p]
+            self.assertEqual(len(everyone), 11)
+            self.assertEqual(len(set(everyone)), 11)  # nobody does two
+            seen.append(shared[0])
+        self.assertGreaterEqual(len(set(seen)), 2, seen)  # it rotates

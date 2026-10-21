@@ -35,6 +35,9 @@ def _staff_from_doc(doc: Dict[str, Any]) -> Staff:
         start_date=parse_date(doc["startDate"]) if doc.get("startDate") else None,
         end_date=parse_date(doc["endDate"]) if doc.get("endDate") else None,
         room=doc.get("room") or "",
+        rotate_from=parse_date(doc["rotateFrom"]) if doc.get("rotateFrom") else None,
+        room_from=parse_date(doc["roomFrom"]) if doc.get("roomFrom") else None,
+        prev_room=doc.get("prevRoom") or "",
     )
 
 
