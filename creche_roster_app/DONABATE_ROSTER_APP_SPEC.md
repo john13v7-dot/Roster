@@ -396,3 +396,17 @@ A single-week print keeps the plain titles (`STAFF ROSTER`, `CLEANING DUTIES`). 
 8. **Greedy week-by-week fairness can't be perfect.** Use caps per window and rates based on weeks worked, and measure balance over rolling windows, not the whole build.
 9. **Test old behaviour stays identical** whenever a new rule is added, by comparing against the previous engine on real data.
 10. **Parity bugs hide in tie-breaks.** Use integer costs, the same scan order and the same combination order in both engines.
+
+
+---
+
+## Additions since the first version of this spec (app version 89)
+
+- **Closure days (bank holidays):** a setting `closure_days {date: label}`. On that day everyone shows the label (for example `Bank Holiday`); no cover, pairing or room rule applies, and no breach is raised. The label prints in the same orange as holidays.
+- **Joining the rotation on a date (`rotateFrom`, a Monday):** a staff member starts on fixed hours (their `note`, shown as a normal fixed-hours cell) and becomes a full `rotating` member from that Monday. Before it they take no part in the rotation, fairness counts or duties. On the day they join they start at the **team-average** fairness position (not zero) so they are not sent every opening and closing at once. `startDate` still gives "Not yet started" before they arrive.
+- **Dated room moves (`roomFrom`, `prevRoom`):** `room` applies from `roomFrom`, `prevRoom` before it, so moving someone never rewrites earlier weeks (and never creates a retroactive room clash).
+- **Shared late duty:** when there are more people than duties, one late-finish duty a week (Kitchen, Children's Toilets or Hallway downstairs, rotating by calendar week) is shared by two people. The 6-week no-repeat rule and finishing-time rules apply to both people.
+- **Automatic fairness window:** worked out from the number of rotating staff (10 staff -> 5 weeks, 9 -> 9, 8 -> 4); `fairness_weeks = 0` means automatic.
+- **A staff edit never reopens the current week:** it reopens only weeks that have not started (and never the first two weeks of the window).
+- **Manual shift pins:** a person's manual shift pins (stored as `transfers`) override the planner. When a rule change (such as a room move) conflicts with a pin in a week that has not been shared, release that pin so the person can be re-planned.
+- **Management label** `(F.A.R)` after the named management staff everywhere they are shown (Donabate to say who).
