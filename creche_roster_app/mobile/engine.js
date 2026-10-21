@@ -263,6 +263,9 @@
       younger_rooms: ['Toddlers Room', 'Preschoolers Room'],
       older_rooms: ['ECEC 1', 'ECEC 2'],
       fairness_weeks: 9,
+      // Days the creche is closed (a bank holiday): {isoDate: label}. Everyone
+      // shows the label that day; no cover, pairing or room rule applies.
+      closure_days: { '2026-10-26': 'Bank Holiday' },
     };
   }
 
@@ -1001,11 +1004,12 @@
     }
   }
 
-  function reportPairing(pair, days, cells, leaveKind, ignoredOverride, checks, wi) {
+  function reportPairing(pair, days, cells, leaveKind, ignoredOverride, checks, wi, closure) {
     var a = pair[0], b = pair[1];
     var suspended = {};
     var bothAway = [];
     days.forEach(function (d) {
+      if (closure && closure[d]) return;
       var la = leaveKind(a, d), lb = leaveKind(b, d);
       if (!la && !lb) {
         var sa = cells.get(cellKey(a, d)).slot, sb = cells.get(cellKey(b, d)).slot;
@@ -1118,6 +1122,7 @@
     var weeks = [];
 
     function leaveKind(name, d) {
+      if (s.closure_days && s.closure_days[d]) return s.closure_days[d]; // closed for everyone
       var st = byName[name];
       if (st) {
         if (st.start_date && d < st.start_date) return 'Not yet started';
@@ -1340,6 +1345,8 @@
           } else { slotOf[st.name] = base[st.name]; }
         });
 
+        if (s.closure_days && s.closure_days[d]) return; // closed: no cover, pairing or room rule applies
+
         var fb = s.fallback_closer;
         var fbAssignment = fb ? cells.get(cellKey(fb, d)) : null;
         // The fallback closer covers whenever they're actually working that day
@@ -1395,7 +1402,7 @@
         }
       });
 
-      if (pair.length) reportPairing(pair, days, cells, leaveKind, ignoredOverride, checks, wi);
+      if (pair.length) reportPairing(pair, days, cells, leaveKind, ignoredOverride, checks, wi, s.closure_days);
 
       weeks.push({ monday: monday, days: days, cells: cells, full_base: fullBase });
 

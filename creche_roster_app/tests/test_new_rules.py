@@ -121,3 +121,21 @@ class StrictCover(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BankHoliday(unittest.TestCase):
+    def test_a_closure_day_shows_its_label_for_everyone_and_raises_no_breach(self):
+        inp = inputs(date(2026, 10, 26), 1, new_start=None)
+        inp.settings = dataclasses.replace(inp.settings, closure_days={date(2026, 10, 26): "Bank Holiday"})
+        inp.leave = []
+        r = build_roster(inp)
+        monday = date(2026, 10, 26)
+        for key, st in r.staff_keys:
+            if st.role in ("blank", "vacant"):
+                continue
+            self.assertEqual(r.weeks[0].cells[(key, monday)].text, "Bank Holiday", st.name)
+        self.assertEqual([c for c in r.checks if c.level == "BREACH"], [])
+        self.assertEqual([c for c in r.checks if c.rule == "Pairing policy"], [])
+        # The rest of the week is still fully rostered.
+        tuesday = date(2026, 10, 27)
+        self.assertEqual(sum(r.weeks[0].cells[(n, tuesday)].slot == "early" for n in ROT + ["Jason", "Shehnaz"]), 3)

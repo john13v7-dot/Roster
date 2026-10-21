@@ -1005,6 +1005,8 @@ def build_roster(inputs: Inputs) -> Roster:
     weeks: List[WeekRoster] = []
 
     def leave_kind(name: str, d: date) -> Optional[str]:
+        if d in s.closure_days:
+            return s.closure_days[d]  # closed for everyone (bank holiday)
         st = by_name.get(name)
         if st is not None:
             if st.start_date and d < st.start_date:
@@ -1277,6 +1279,9 @@ def build_roster(inputs: Inputs) -> Roster:
                 else:
                     slot_of[st.name] = base[st.name]
 
+            if d in s.closure_days:
+                continue  # closed: nobody works, so no cover, pairing or room rule applies
+
             fb = s.fallback_closer
             fb_assignment = cells.get((fb, d)) if fb else None
             # The fallback closer covers whenever they're actually working that
@@ -1353,7 +1358,7 @@ def build_roster(inputs: Inputs) -> Roster:
 
         # ---- pairing report ---------------------------------------------
         if pair:
-            _report_pairing(pair, days, cells, leave_kind, ignored_override, checks, wi)
+            _report_pairing(pair, days, cells, leave_kind, ignored_override, checks, wi, s.closure_days)
 
         weeks.append(WeekRoster(monday, days, cells, full_base=full_base))
 
@@ -1737,11 +1742,13 @@ def _check_rooms(d, slot_of, room_of, shifts, checks, wi) -> None:
                 )
 
 
-def _report_pairing(pair, days, cells, leave_kind, ignored_override, checks, wi) -> None:
+def _report_pairing(pair, days, cells, leave_kind, ignored_override, checks, wi, closure=()) -> None:
     a, b = pair
     suspended: Dict[str, List[date]] = {}
     both_away: List[date] = []
     for d in days:
+        if d in closure:
+            continue
         la, lb = leave_kind(a, d), leave_kind(b, d)
         if not la and not lb:
             sa, sb = cells[(a, d)].slot, cells[(b, d)].slot

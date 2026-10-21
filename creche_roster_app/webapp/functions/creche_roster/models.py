@@ -60,6 +60,9 @@ class Settings:
     younger_rooms: Tuple[str, ...] = ("Toddlers Room", "Preschoolers Room")
     older_rooms: Tuple[str, ...] = ("ECEC 1", "ECEC 2")
     fairness_weeks: int = 9
+    # Days the creche is closed (a bank holiday): {date: label}. Everyone shows
+    # the label that day, and no cover, pairing or room rule applies to it.
+    closure_days: Dict[date, str] = field(default_factory=dict)
 
 
 @dataclass

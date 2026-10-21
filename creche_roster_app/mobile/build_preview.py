@@ -21,6 +21,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
 from datetime import date, timedelta
@@ -79,6 +80,8 @@ def _prior_slots(db_export: dict, settings) -> dict:
 
 def build(db_export: dict, roster_start: date) -> tuple:
     base = sample_inputs(roster_start)
+    # Days the creche is closed (bank holidays), same as the live page's settings.
+    base.settings = dataclasses.replace(base.settings, closure_days={date(2026, 10, 26): "Bank Holiday"})
     # No carried-over history by default: each build's own 4 weeks are the
     # whole fairness picture, balanced among themselves - not skewed by
     # whatever was worked before the window (the Fairness screen only ever
