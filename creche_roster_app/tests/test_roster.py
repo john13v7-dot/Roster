@@ -1058,15 +1058,32 @@ class ProtectedRoster(unittest.TestCase):
         )
         self.assertTrue(all(not week0p.cells[("Daniel", d)].adjusted for d in week0p.days))
 
-    def test_touched_days_keep_the_adjusted_highlight(self):
+    def test_a_change_to_what_was_shared_is_highlighted(self):
+        # What staff already have: the roster before Manuel's holiday.
+        shared = build_roster(inputs())
+        locked = extract_locked_slots(shared)
         leave = [Leave("Manuel", START, START + timedelta(days=4), "Holiday")]
-        already_locked = build_roster(inputs(leave=leave))
-        locked = extract_locked_slots(already_locked)
-        # This time the leave's own week is still open (touched) - the
-        # highlight is live news there, so it should survive.
+        # The holiday's week is open: whoever moves to cover him now differs from
+        # the shared version, so that is genuine news and is highlighted.
         protected = build_protected_roster(inputs(leave=leave), locked, [(START, START + timedelta(days=4))])
         week0p = protected.weeks[0]
-        self.assertTrue(any(week0p.cells[("Daniel", d)].adjusted for d in week0p.days))
+        moved = [
+            n for n in ("Hanny", "Irene", "Deoshree", "Sandrine", "Daniel", "Arantza", "David", "Usha")
+            if any(week0p.cells[(n, d)].adjusted for d in week0p.days)
+        ]
+        self.assertTrue(moved)
+        for n in moved:  # and only because it really differs from the saved shift
+            self.assertTrue(any(week0p.cells[(n, d)].slot != locked[n][d.isoformat()] for d in week0p.days), n)
+
+    def test_nothing_is_highlighted_when_nothing_differs_from_what_was_shared(self):
+        shared = build_roster(inputs())
+        locked = extract_locked_slots(shared)
+        # Open every day but change nothing: the result equals the saved version.
+        protected = build_protected_roster(inputs(), locked, [(START, START + timedelta(days=27))])
+        for week in protected.weeks:
+            for d in week.days:
+                for n in ROTATING:
+                    self.assertFalse(week.cells[(n, d)].adjusted, (n, d))
 
     def test_a_day_with_no_lock_entry_is_left_as_freshly_computed(self):
         baseline = build_roster(inputs())

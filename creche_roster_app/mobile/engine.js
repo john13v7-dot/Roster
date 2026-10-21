@@ -2002,17 +2002,38 @@
       });
     }
 
+    // A cell is highlighted only when its shift differs from the version
+    // already saved (the lock) - a genuine change to what was shared. The
+    // engine's own `adjusted` flag compares against a no-leave counterfactual
+    // instead, which is not what anyone saw, so it is replaced here. A day
+    // with no saved version is never highlighted.
+    function markChanges(roster) {
+      roster.weeks.forEach(function (week) {
+        week.days.forEach(function (d) {
+          roster.staff_keys.forEach(function (ks) {
+            var st = ks[1];
+            if ((st.role !== 'rotating' && st.role !== 'paired') || !st.name) return;
+            var cell = week.cells.get(cellKey(ks[0], d));
+            if (!cell || cell.kind !== 'shift') return;
+            var locked = (lockedRoster[st.name] || {})[d];
+            cell.adjusted = locked !== undefined && locked !== null && locked !== cell.slot;
+          });
+        });
+      });
+    }
+
     var MAX_ROUNDS = 10;
     var pins = [];
     var roster = buildRoster(inputs);
     for (var i = 0; i < MAX_ROUNDS; i++) {
       var newCorrections = findCorrections(roster);
-      if (!newCorrections.length) { clearStaleAdjusted(roster); return roster; }
+      if (!newCorrections.length) { clearStaleAdjusted(roster); markChanges(roster); return roster; }
       pins = pins.concat(newCorrections);
       var protectedInputs = Object.assign({}, inputs, { overrides: inputs.overrides.concat(pins) });
       roster = buildRoster(protectedInputs);
     }
     clearStaleAdjusted(roster);
+    markChanges(roster);
     return roster;
   }
 

@@ -1594,6 +1594,23 @@ def build_protected_roster(
                     if cell is not None and cell.adjusted:
                         cell.adjusted = False
 
+    def mark_changes(roster: Roster) -> None:
+        """A cell is highlighted only when its shift differs from the version
+        already saved (the lock) - that is, when it is genuinely a change to
+        what was shared. The engine's own "adjusted" flag compares against a
+        no-leave counterfactual instead, which is not what anyone saw, so it
+        is replaced here. A day with no saved version is never highlighted."""
+        for week in roster.weeks:
+            for d in week.days:
+                for key, st in roster.staff_keys:
+                    if st.role not in ("rotating", "paired") or not st.name:
+                        continue
+                    cell = week.cells.get((key, d))
+                    if cell is None or cell.kind != "shift":
+                        continue
+                    locked = locked_roster.get(st.name, {}).get(d.isoformat())
+                    cell.adjusted = locked is not None and locked != cell.slot
+
     _MAX_ROUNDS = 10
     pins: List[Override] = []
     roster = build_roster(inputs)
@@ -1601,11 +1618,13 @@ def build_protected_roster(
         new_corrections = find_corrections(roster)
         if not new_corrections:
             clear_stale_adjusted(roster)
+            mark_changes(roster)
             return roster
         pins = pins + new_corrections
         protected_inputs = dataclasses.replace(inputs, overrides=list(inputs.overrides) + pins)
         roster = build_roster(protected_inputs)
     clear_stale_adjusted(roster)
+    mark_changes(roster)
     return roster
 
 
