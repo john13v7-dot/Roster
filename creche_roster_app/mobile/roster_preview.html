@@ -383,6 +383,10 @@
   <div class="card panel" id="requestsPanel">
     <div class="syncline"><span class="dot" id="syncDot"></span><span id="syncText">Connecting…</span></div>
 
+    <div class="note" style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin:2px 0 10px;">
+      <span id="sharedLine"></span>
+      <button class="actionbtn" data-action="shared-upto" disabled style="flex:none;">Set date</button>
+    </div>
     <div class="btnrow">
       <button class="actionbtn" data-action="add-staff" disabled>+ Add Staff</button>
       <button class="actionbtn" data-action="transfer" disabled>Transfer</button>
@@ -2727,6 +2731,11 @@
       var heading = document.createElement('div');
       heading.style.cssText = 'font-size:13px; font-weight:800; margin-bottom:10px;';
       heading.textContent = week.label;
+      var tag = document.createElement('span');
+      tag.className = 'sharedtag'; tag.setAttribute('data-monday', week.monday || '');
+      tag.style.cssText = 'margin-left:8px;font-size:10px;font-weight:700;padding:2px 6px;border-radius:8px;background:rgba(127,127,127,.18);display:none;';
+      tag.textContent = 'Shared';
+      heading.appendChild(tag);
       wrap.appendChild(heading);
 
       // Only shown when there's something to flag - a clean week says nothing,
@@ -3382,6 +3391,7 @@
   // computeBuild() falls back to the plain, unprotected build, and the
   // next successful change bootstraps both docs from its own result.
   var lockedRosterDoc = null, watermarkDoc = null, lockedDutiesDoc = null;
+  var sharedUpToDoc = null;   // settings/sharedUpTo {date}: the last day already shared with staff
 
   // ---------- instant client-side rebuild (no waiting on Claude) ----------
   var lastBuildOut = null; // {inputs, roster, dutyWeeks, summary} from the last successful build
@@ -3532,6 +3542,32 @@
       });
     return out;
   }
+  // The Friday of the last week already shared with staff (null = not set, so
+  // the first two weeks of the window count as shared).
+  function sharedUpToFriday(){
+    var d = sharedUpToDoc && sharedUpToDoc.date;
+    return d ? RosterEngine.addDays(RosterEngine.mondayOfWeek(d), 4) : null;
+  }
+  // The first Monday a staff change may touch: after every shared week, and
+  // never a week that has already started.
+  function firstOpenMonday(rosterStart){
+    var nm = nextMondayAfterToday();
+    var fri = sharedUpToFriday();
+    var first = fri ? RosterEngine.addDays(RosterEngine.mondayOfWeek(fri), 7)
+                    : RosterEngine.addDays(rosterStart, SHARED_WEEKS * 7);
+    return nm > first ? nm : first;
+  }
+  function renderSharedLine(){
+    var el = $('sharedLine'); if(!el) return;
+    var fri = sharedUpToFriday();
+    var rs = rosterStartAnchor || RosterEngine.mondayOfWeek(todayISO());
+    var eff = RosterEngine.addDays(firstOpenMonday(rs), -3);
+    el.innerHTML = fri
+      ? 'Shared with staff up to <b>' + esc(fmtDate(fri)) + '</b>' + (eff !== fri ? ' (the current week counts as shared too)' : '')
+      : 'Shared with staff: the first 2 weeks <span class="note">(no date set)</span>';
+    var wk = document.querySelectorAll('#weeks .sharedtag');
+    wk.forEach(function(t){ var m = t.getAttribute('data-monday'); t.style.display = (m && m < firstOpenMonday(rs)) ? '' : 'none'; });
+  }
   function computeBuild(){
     var rosterStart = rosterStartAnchor || RosterEngine.mondayOfWeek(todayISO());
     var historySeed = (startingHistoryDoc && startingHistoryDoc.history) || {};
@@ -3570,9 +3606,7 @@
     var freeRanges = [], dutyTouched = touched;
     if(staffChanged){
       var windowEnd = rosterWindowDays(rosterStart).slice(-1)[0];
-      var nextMonday = RosterEngine.addDays(RosterEngine.mondayOfWeek(todayISO()), 7);
-      var firstOpen = RosterEngine.addDays(rosterStart, SHARED_WEEKS * 7);
-      if(nextMonday > firstOpen) firstOpen = nextMonday;
+      var firstOpen = firstOpenMonday(rosterStart);
       freeRanges = [[firstOpen, windowEnd]];
       dutyTouched = touched.concat(freeRanges);   // duties re-plan (keeping what they can)
       if(openForEveryone) touched = touched.concat(freeRanges);
@@ -3661,6 +3695,7 @@
     data = out.summary;
     buildErrorEl.style.display = 'none';
     renderRoster(data);
+    renderSharedLine();
     renderDuties(currentDutyTab);
     renderFairness();
   }
@@ -3932,7 +3967,7 @@
         var at = pp.days.map(function(d){ return d.text; });
         var bp = bmap[pp.name];
         if(!bp){
-          if(at.every(function(t){ return t === 'Not yet started'; })) return;
+          if(at.every(function(t){ return !t || t === 'Not yet started' || t === '—' || t === 'Bank Holiday'; })) return;
           res.shifts.push({week: w.label, wi: wi, name: pp.name, from: null, to: describeDays(at)});
           return;
         }
@@ -4150,6 +4185,9 @@
       lockedRosterDoc = lr ? lr.data() : null;
       var ld = snap.docs.find(function(d){ return d.id === 'lockedDuties'; });
       lockedDutiesDoc = ld ? ld.data() : null;
+      var su = snap.docs.find(function(d){ return d.id === 'sharedUpTo'; });
+      sharedUpToDoc = su ? su.data() : null;
+      renderSharedLine();
       var wm = snap.docs.find(function(d){ return d.id === 'changeWatermark'; });
       watermarkDoc = wm ? wm.data() : null;
       historyLoaded = true;
@@ -4256,15 +4294,21 @@
         field('Role', selectHTML('f_role', ROLE_OPTS)) +
         field('Room (same room can\'t share a shift)', selectHTML('f_room', ROOM_OPTS)) +
         field('Start date', '<input id="f_start" type="date" value="'+todayISO()+'">');
+    } else if(action === 'shared-upto'){
+      formTitle.textContent = 'Shared with staff up to';
+      var curFri = sharedUpToFriday();
+      formBody.innerHTML =
+        field('Last day already shared', '<input id="f_shared" type="date" value="'+(curFri || '')+'">') +
+        '<p class="note" style="margin:0;">Pick any day in the last week you have given to staff - that whole week and every week before it is then protected from side effects: adding someone or moving a room only changes weeks after it, and never a week that has already started. Leave the date empty to go back to the default (the first 2 weeks). Leave, sick and shift changes you enter for a shared week still apply, because they are real changes.</p>';
     } else if(action === 'transfer'){
       formTitle.textContent = 'Transfer';
       formBody.innerHTML =
         field('Staff', '<select id="f_staff">'+staffOptionsHTML()+'</select>') +
         field('New floor', selectHTML('f_floor', FLOOR_OPTS)) +
         field('Room (same room can\'t share a shift)', selectHTML('f_room', ROOM_OPTS)) +
-        field('From (week starting)', '<input id="f_start" type="date" value="'+nextMondayAfterToday()+'">') +
+        field('From (week starting)', '<input id="f_start" type="date" value="'+firstOpenMonday(rosterStartAnchor || RosterEngine.mondayOfWeek(todayISO()))+'">') +
         '<div class="note" id="f_shiftHint" style="margin-top:-8px;"></div>' +
-        '<p class="note" style="margin:0;">A room move counts from that week (never from a week that has already started), so earlier weeks keep the old room. Before it is saved you will see exactly whose shifts would change. The floor is only recorded for now; it doesn\'t affect the schedule until floors are split.</p>';
+        '<p class="note" style="margin:0;">A room move counts from that week (never from a week already shared with staff), so earlier weeks keep the old room. Before it is saved you will see exactly whose shifts would change. The floor is only recorded for now; it doesn\'t affect the schedule until floors are split.</p>';
       $('f_staff').onchange = function(){ refreshTransferRoomField(); renderShiftHint(); };
       $('f_start').oninput = renderShiftHint;
       refreshTransferRoomField();
@@ -4393,7 +4437,13 @@
     if(!db){ formErr.textContent = 'Not connected.'; return; }
     formSave.disabled = true;
     try{
-      if(currentAction === 'add-staff'){
+      if(currentAction === 'shared-upto'){
+        var sv = $('f_shared').value || '';
+        await db.collection('settings').doc('sharedUpTo').set({date: sv || null});
+        sharedUpToDoc = {date: sv || null};
+        renderSharedLine();
+        toast(sv ? ('Shared with staff up to ' + fmtDate(sharedUpToFriday()) + '.') : 'Back to the default: first 2 weeks shared.');
+      } else if(currentAction === 'add-staff'){
         var name = ($('f_name').value || '').trim();
         if(!name){ formErr.textContent = 'Name is required.'; formSave.disabled=false; return; }
         var floor = $('f_floor').value, role = $('f_role').value, room = $('f_room').value, start = $('f_start').value;
@@ -4409,7 +4459,8 @@
         if(role === 'rotating'){
           var firstMon = RosterEngine.mondayOfWeek(start || todayISO());
           if(firstMon < (start || todayISO())) firstMon = RosterEngine.addDays(firstMon, 7);
-          if(firstMon < nextMondayAfterToday()) firstMon = nextMondayAfterToday();
+          var openMon = firstOpenMonday(rosterStartAnchor || RosterEngine.mondayOfWeek(todayISO()));
+          if(firstMon < openMon) firstMon = openMon;
           staffDoc.rotateFrom = firstMon;
         }
         var okAdd = await confirmChange('Adding ' + name, name, function(){
@@ -4442,7 +4493,8 @@
         // A room move counts from the Monday of the chosen week - and never from
         // a week that has already started - so earlier weeks keep the old room.
         var roomFromDate = RosterEngine.mondayOfWeek(start2 || todayISO());
-        if(roomFromDate < nextMondayAfterToday()) roomFromDate = nextMondayAfterToday();
+        var openMon2 = firstOpenMonday(rosterStartAnchor || RosterEngine.mondayOfWeek(todayISO()));
+        if(roomFromDate < openMon2) roomFromDate = openMon2;
         // If an earlier move has not started yet, weeks before it keep the room
         // from before that move, so re-moving never rewrites weeks already shared.
         var pendingMove = staffDoc2 && staffDoc2.roomFrom && staffDoc2.roomFrom >= nextMondayAfterToday();
