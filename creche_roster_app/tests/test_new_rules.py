@@ -236,3 +236,21 @@ class DisplayOrder(unittest.TestCase):
         for wi in range(3):
             for n in ROT:
                 self.assertEqual(week_slot(ra, wi, n), week_slot(rb, wi, n), (wi, n))
+
+
+class MovedOffDay(unittest.TestCase):
+    def test_a_fixed_hours_persons_off_day_can_move_within_a_week(self):
+        from creche_roster.models import Override
+        inp = inputs(date(2026, 10, 19), 1, new_start=None)
+        inp.leave = []
+        sue = next(st for st in inp.staff if st.name == "Sue")
+        thu, wed = date(2026, 10, 22), date(2026, 10, 21)
+        inp.overrides = [Override("Sue", thu, thu, text="8:30 – 1:30"), Override("Sue", wed, wed, text="OFF")]
+        r = build_roster(inp)
+        key = next(k for k, st in r.staff_keys if st.name == "Sue")
+        cells = r.weeks[0].cells
+        self.assertEqual(cells[(key, wed)].text, "OFF")
+        self.assertEqual(cells[(key, wed)].kind, "leave")
+        self.assertEqual(cells[(key, thu)].text, "8:30 – 1:30")
+        self.assertEqual(cells[(key, thu)].kind, "static")
+        self.assertEqual([c for c in r.checks if c.level == "BREACH"], [])

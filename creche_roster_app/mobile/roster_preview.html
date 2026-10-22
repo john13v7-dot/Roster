@@ -385,6 +385,7 @@
       <button class="actionbtn" data-action="add-sick" disabled>+ Add Sick</button>
       <button class="actionbtn" data-action="add-maternity" disabled>+ Add Maternity Leave</button>
       <button class="actionbtn" data-action="adjust-shift" disabled>Adjust Shift</button>
+      <button class="actionbtn" data-action="move-off" disabled>Move OFF day</button>
       <button class="actionbtn" data-action="adjust-duty" disabled>Adjust Duty</button>
     </div>
 
@@ -3768,7 +3769,15 @@
     var el = $('adjustList');
     el.innerHTML = '';
     var items = [];
-    transferDocs.filter(function(t){ return t.slot || t.text; }).forEach(function(t){ items.push({type:'shift', doc:t}); });
+    var moveGroups = {};
+    transferDocs.filter(function(t){ return t.slot || t.text; }).forEach(function(t){
+      if(t.moveOff){
+        if(!moveGroups[t.moveOff]){ moveGroups[t.moveOff] = {type:'moveoff', docs:[]}; items.push(moveGroups[t.moveOff]); }
+        moveGroups[t.moveOff].docs.push(t);
+      } else {
+        items.push({type:'shift', doc:t});
+      }
+    });
     dutyOverrideDocs.forEach(function(d){ items.push({type:'duty', doc:d}); });
     if(!items.length){ el.innerHTML = '<div class="empty">No manual shift or duty picks.</div>'; return; }
     items.forEach(function(it){
@@ -3777,7 +3786,15 @@
       var del = document.createElement('button');
       del.className = 'xbtn';
       del.textContent = '✕';
-      if(it.type === 'shift'){
+      if(it.type === 'moveoff'){
+        var mo = it.docs[0];
+        var toDay = mo.moveOffTo || mo.start, fromDay = mo.moveOffFrom || null;
+        row.innerHTML =
+          '<div><div class="name">'+esc(mo.name)+'</div><div class="meta">OFF day: '+
+          (fromDay ? esc(fmtDate(fromDay)) + ' → ' : '') + esc(fmtDate(toDay)) + '</div></div>' +
+          '<span class="pill">OFF moved</span>';
+        del.onclick = function(){ removeMoveOff(it.docs); };
+      } else if(it.type === 'shift'){
         var t = it.doc;
         var when = fmtDate(t.start) + (t.end && t.end !== t.start ? (' – ' + fmtDate(t.end)) : '');
         var val = t.slot ? (SLOT_TIME_LABEL[t.slot] || t.slot) : t.text;
@@ -3823,6 +3840,72 @@
       return Promise.resolve(true);
     }
     return new Promise(function(resolve){ confirmResolve = resolve; });
+  }
+
+  // ---------- Move OFF day (fixed-hours staff) ----------
+  var DAY_SHORT = ['Mon','Tue','Wed','Thu','Fri'];
+  function isOffText(t){ return (t || '').trim().toUpperCase() === 'OFF'; }
+  function fixedStaffOptionsHTML(){
+    var real = staffDocs.filter(function(s){ return s.role === 'static' && s.name; });
+    real.sort(function(a,b){ return (a.order||0)-(b.order||0); });
+    if(!real.length) return '<option value="">No fixed-hours staff</option>';
+    return real.map(function(s){ return '<option value="'+esc(s.name)+'">'+esc(s.name)+'</option>'; }).join('');
+  }
+  // What a fixed-hours person's usual week looks like: which weekday (if any)
+  // is their usual OFF, and the hours to put back on it. Looks at their own
+  // stored hours (not at manual adjustments), so the answer is the same
+  // however many times a week has been moved.
+  function moveOffInfo(name, wi){
+    var st = staffDocs.filter(function(x){ return x.name === name && x.role === 'static'; })[0];
+    var week = data.weeks && data.weeks[wi];
+    if(!st || !week) return null;
+    var days = []; for(var i = 0; i < 5; i++) days.push(RosterEngine.addDays(week.monday, i));
+    var usual = days.map(function(d, i){ return ((st.hours || [])[i] || st.note || '').trim(); });
+    var offIdx = -1;
+    usual.forEach(function(t, i){ if(offIdx === -1 && isOffText(t)) offIdx = i; });
+    var hoursText = '';
+    if(st.note && !isOffText(st.note)) hoursText = st.note;
+    else usual.forEach(function(t){ if(!hoursText && t && !isOffText(t)) hoursText = t; });
+    return {st: st, days: days, usual: usual, usualOffDate: offIdx === -1 ? null : days[offIdx], usualOffIdx: offIdx, usualHours: hoursText};
+  }
+  function refreshMoveOff(){
+    var wrap = $('f_offDayWrap'), hint = $('f_offHint');
+    if(!wrap || !hint) return;
+    var name = $('f_staff') ? $('f_staff').value : '';
+    var wi = $('f_week') ? parseInt($('f_week').value, 10) : 0;
+    var info = moveOffInfo(name, wi);
+    if(!info){ wrap.innerHTML = '<div class="note" style="margin-top:0;">Pick a fixed-hours staff member.</div>'; hint.textContent = ''; return; }
+    if(info.usualOffDate){
+      hint.textContent = name + '’s usual OFF day is ' + DAY_SHORT[info.usualOffIdx] + ' ' + fmtDate(info.usualOffDate) +
+        '. It goes back to their usual hours (' + (info.usualHours || 'none on file') + ') and the day you pick becomes OFF.';
+    } else {
+      hint.textContent = name + ' has no usual OFF day, so the day you pick is simply switched to OFF.';
+    }
+    var opts = [];
+    info.days.forEach(function(d, i){
+      if(d === info.usualOffDate) return;
+      opts.push([d, DAY_SHORT[i] + ' ' + fmtDate(d)]);
+    });
+    wrap.innerHTML = selectHTML('f_offday', opts);
+  }
+  async function removeMoveOff(docs){
+    if(!db || !docs || !docs.length) return;
+    var name = docs[0].name;
+    var ok = await askConfirm('Remove the moved OFF day for ' + name + '? Their usual days come back. The roster updates immediately.');
+    if(!ok) return;
+    var beforeRoster = lastBuildOut ? lastBuildOut.roster : null;
+    try{
+      for(var i = 0; i < docs.length; i++){
+        await db.collection('transfers').doc(docs[i]._id).delete();
+        transferDocs = transferDocs.filter(function(x){ return x._id !== docs[i]._id; });
+      }
+      renderAdjustList();
+      recompute();
+      await logChange('Remove the moved OFF day for ' + name + '.', name, beforeRoster);
+      toast('Removed. Roster updated.');
+    } catch(e){
+      toast('Could not remove it — try again.');
+    }
   }
 
   async function deleteDoc(collection, id, label, notify, personName){
@@ -4058,6 +4141,17 @@
       $('f_start').oninput = renderShiftHint;
       refreshShiftValueField();
       renderShiftHint();
+    } else if(action === 'move-off'){
+      formTitle.textContent = 'Move OFF day';
+      var weekOptsOff = (data.weeks || []).map(function(w, i){ return [String(i), w.label]; });
+      formBody.innerHTML =
+        field('Staff (fixed hours)', '<select id="f_staff">'+fixedStaffOptionsHTML()+'</select>') +
+        field('Week', selectHTML('f_week', weekOptsOff)) +
+        '<div class="note" id="f_offHint" style="margin-top:-8px;"></div>' +
+        field('New OFF day (this week only)', '<div id="f_offDayWrap"></div>');
+      $('f_staff').onchange = refreshMoveOff;
+      $('f_week').onchange = refreshMoveOff;
+      refreshMoveOff();
     } else if(action === 'adjust-duty'){
       formTitle.textContent = 'Adjust Duty';
       var weekOpts = (data.weeks || []).map(function(w, i){ return [String(i), w.label]; });
@@ -4264,6 +4358,41 @@
         await logChange(summary4, staff4, beforeRoster4);
         renderAdjustList();
         toast('Shift adjusted for ' + staff4 + '.');
+      } else if(currentAction === 'move-off'){
+        var staff7 = $('f_staff').value;
+        var wi7 = $('f_week') ? parseInt($('f_week').value, 10) : 0;
+        var newDay7 = $('f_offday') ? $('f_offday').value : '';
+        var info7 = moveOffInfo(staff7, wi7);
+        if(!info7){ formErr.textContent = 'Pick a fixed-hours staff member.'; formSave.disabled = false; return; }
+        if(!newDay7){ formErr.textContent = 'Pick the new OFF day.'; formSave.disabled = false; return; }
+        if(info7.usualOffDate && !info7.usualHours){ formErr.textContent = 'No usual hours on file to put back on the old OFF day.'; formSave.disabled = false; return; }
+        var group7 = 'moveoff-' + Date.now().toString(36);
+        var base7 = {name: staff7, createdAt: todayISO(), moveOff: group7, moveOffFrom: info7.usualOffDate || null, moveOffTo: newDay7};
+        var toAdd7 = [];
+        if(info7.usualOffDate){ toAdd7.push(Object.assign({}, base7, {start: info7.usualOffDate, end: info7.usualOffDate, text: info7.usualHours})); }
+        toAdd7.push(Object.assign({}, base7, {start: newDay7, end: newDay7, text: 'OFF'}));
+        var beforeRoster7 = lastBuildOut ? lastBuildOut.roster : null;
+        var addedIds7 = [];
+        for(var q7 = 0; q7 < toAdd7.length; q7++){
+          var ref7 = await db.collection('transfers').add(toAdd7[q7]);
+          var id7 = ref7 && ref7.id;
+          addedIds7.push(id7);
+          transferDocs = transferDocs.filter(function(t){ return t._id !== id7; }).concat([Object.assign({_id: id7}, toAdd7[q7])]);
+        }
+        if(!recompute()){
+          for(var r7 = 0; r7 < addedIds7.length; r7++){
+            if(addedIds7[r7]) await db.collection('transfers').doc(addedIds7[r7]).delete();
+            transferDocs = transferDocs.filter(function(t){ return t._id !== addedIds7[r7]; });
+          }
+          recompute();
+          formErr.textContent = 'Could not move that OFF day: ' + lastBuildErrorMessage;
+          formSave.disabled = false;
+          return;
+        }
+        var summary7 = 'Move OFF day: ' + staff7 + (info7.usualOffDate ? (', OFF moved from ' + fmtDate(info7.usualOffDate) + ' to ' + fmtDate(newDay7)) : (', OFF on ' + fmtDate(newDay7))) + '.';
+        await logChange(summary7, staff7, beforeRoster7);
+        renderAdjustList();
+        toast('OFF day moved for ' + staff7 + '.');
       } else if(currentAction === 'adjust-duty'){
         var staff5 = $('f_staff').value;
         var wi5 = $('f_week') ? parseInt($('f_week').value, 10) : 0;
