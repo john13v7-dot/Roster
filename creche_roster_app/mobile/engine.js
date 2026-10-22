@@ -1962,7 +1962,7 @@
     return out;
   }
 
-  function buildProtectedRoster(inputs, lockedRoster, touchedRanges, highlightRanges) {
+  function buildProtectedRoster(inputs, lockedRoster, touchedRanges, highlightRanges, freeNames, freeRanges) {
     function isTouched(d) {
       return touchedRanges.some(function (r) { return r[0] <= d && d <= r[1]; });
     }
@@ -1974,6 +1974,9 @@
           roster.staff_keys.forEach(function (ks) {
             var st = ks[1];
             if ((st.role !== 'rotating' && st.role !== 'paired') || !st.name) return;
+            // Open for this person only (just added / just changed room): planned
+            // freely while everyone else stays on their saved shift.
+            if (freeNames && freeNames[st.name] && (freeRanges || []).some(function (r) { return r[0] <= d && d <= r[1]; })) return;
             var lockedSlot = (lockedRoster[st.name] || {})[d];
             if (lockedSlot == null) return;
             var cell = week.cells.get(cellKey(st.name, d));
@@ -2072,11 +2075,11 @@
   // the app has a lockedRoster to protect; build() stays as-is for
   // callers (e.g. a staff add/remove, which deliberately reopens
   // everything) that want the plain, unprotected computation.
-  function buildProtected(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, lockedRoster, touchedRanges, lockedDuties, priorWeeks, highlightRanges, priorSlots) {
+  function buildProtected(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, lockedRoster, touchedRanges, lockedDuties, priorWeeks, highlightRanges, priorSlots, freeNames, freeRanges, dutyTouchedRanges) {
     var settings = buildSettings(rosterStartIso);
     var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs, priorSlots);
-    var roster = buildProtectedRoster(inputs, lockedRoster || {}, touchedRanges || [], highlightRanges);
-    var dutyWeeks = buildProtectedDutyRoster(inputs, roster, lockedDuties || {}, touchedRanges || [], priorWeeks || {});
+    var roster = buildProtectedRoster(inputs, lockedRoster || {}, touchedRanges || [], highlightRanges, freeNames, freeRanges);
+    var dutyWeeks = buildProtectedDutyRoster(inputs, roster, lockedDuties || {}, dutyTouchedRanges || touchedRanges || [], priorWeeks || {});
     var summary = summaryJson(inputs, roster);
     summary.duties = dutiesJson(inputs, dutyWeeks);
     summary.fairness = fairnessJson(inputs, roster, dutyWeeks);

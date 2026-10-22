@@ -208,6 +208,11 @@
   .dutyrow.fixed .dpeople{color:var(--warn-ink); font-weight:600;}
   .dutyrow.context .dpeople{font-style:italic;}
   .dutyrow.unfilled .dpeople{color:var(--bad-ink); font-weight:600;}
+  .pvhead{font-size:12px; font-weight:700; margin:10px 0 4px;}
+  .pvline{font-size:12.5px; padding:5px 0; border-bottom:1px solid var(--line); line-height:1.35;}
+  .pvline:last-child{border-bottom:none;}
+  .pvgood{color:var(--ink-dim); font-size:12.5px; padding:4px 0;}
+  .pvwarn{color:var(--bad-ink); font-weight:700;}
   .dutynote{font-size:11px; color:var(--ink-dim); margin-top:8px; line-height:1.4;}
 
   .logentry{padding:10px 2px; border-bottom:1px solid var(--line);}
@@ -437,6 +442,15 @@
   <div class="formfoot">
     <button type="button" class="cancel" id="formCancel">Cancel</button>
     <button type="button" class="save" id="formSave">Save</button>
+  </div>
+</dialog>
+
+<dialog id="previewDialog">
+  <div class="formhead" id="previewTitle">Check the changes</div>
+  <div class="confirmbody" id="previewBody" style="max-height:60vh; overflow:auto;"></div>
+  <div class="formfoot">
+    <button type="button" class="cancel" id="previewCancel">Cancel</button>
+    <button type="button" class="save" id="previewOk">Apply</button>
   </div>
 </dialog>
 
@@ -2434,7 +2448,7 @@
     return out;
   }
 
-  function buildProtectedRoster(inputs, lockedRoster, touchedRanges, highlightRanges) {
+  function buildProtectedRoster(inputs, lockedRoster, touchedRanges, highlightRanges, freeNames, freeRanges) {
     function isTouched(d) {
       return touchedRanges.some(function (r) { return r[0] <= d && d <= r[1]; });
     }
@@ -2446,6 +2460,9 @@
           roster.staff_keys.forEach(function (ks) {
             var st = ks[1];
             if ((st.role !== 'rotating' && st.role !== 'paired') || !st.name) return;
+            // Open for this person only (just added / just changed room): planned
+            // freely while everyone else stays on their saved shift.
+            if (freeNames && freeNames[st.name] && (freeRanges || []).some(function (r) { return r[0] <= d && d <= r[1]; })) return;
             var lockedSlot = (lockedRoster[st.name] || {})[d];
             if (lockedSlot == null) return;
             var cell = week.cells.get(cellKey(st.name, d));
@@ -2544,11 +2561,11 @@
   // the app has a lockedRoster to protect; build() stays as-is for
   // callers (e.g. a staff add/remove, which deliberately reopens
   // everything) that want the plain, unprotected computation.
-  function buildProtected(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, lockedRoster, touchedRanges, lockedDuties, priorWeeks, highlightRanges, priorSlots) {
+  function buildProtected(staffDocs, leaveDocs, transferDocs, rosterStartIso, dutyOverrideDocs, historySeed, lastSlotSeed, lockedRoster, touchedRanges, lockedDuties, priorWeeks, highlightRanges, priorSlots, freeNames, freeRanges, dutyTouchedRanges) {
     var settings = buildSettings(rosterStartIso);
     var inputs = buildInputsFromDb(settings, staffDocs, leaveDocs, transferDocs, historySeed || {}, lastSlotSeed || {}, dutyOverrideDocs, priorSlots);
-    var roster = buildProtectedRoster(inputs, lockedRoster || {}, touchedRanges || [], highlightRanges);
-    var dutyWeeks = buildProtectedDutyRoster(inputs, roster, lockedDuties || {}, touchedRanges || [], priorWeeks || {});
+    var roster = buildProtectedRoster(inputs, lockedRoster || {}, touchedRanges || [], highlightRanges, freeNames, freeRanges);
+    var dutyWeeks = buildProtectedDutyRoster(inputs, roster, lockedDuties || {}, dutyTouchedRanges || touchedRanges || [], priorWeeks || {});
     var summary = summaryJson(inputs, roster);
     summary.duties = dutiesJson(inputs, dutyWeeks);
     summary.fairness = fairnessJson(inputs, roster, dutyWeeks);
@@ -3420,6 +3437,18 @@
       }).sort(function(a,b){ return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; })
     );
   }
+  // One fingerprint per person (keyed by staff id), so a staff change can be
+  // traced to the people it is actually about.
+  function staffPeopleFingerprints(){
+    var out = {};
+    staffDocs.forEach(function(s){
+      out[s._id] = {name: s.name || '', fp: JSON.stringify([
+        s.name, s.role, s.room, s.floor, s.startDate, s.endDate, s.active, s.hours, s.note,
+        s.rotateFrom, s.roomFrom, s.prevRoom
+      ])};
+    });
+    return out;
+  }
   // Which date ranges changed since the watermark's own snapshot: a new
   // event opens its own [start, end] (open-ended leave clamped to the end
   // of this build's own window - nothing beyond that is ever computed
@@ -3521,20 +3550,41 @@
     }
     var touched = computeTouchedRanges(watermarkDoc ? (watermarkDoc.events || []) : [], rosterStart);
     var eventTouched = touched;
-    var staffChanged = !watermarkDoc || watermarkDoc.staffFingerprint !== staffFingerprint();
+    // Who a staff change is about. A staff edit only ever reopens weeks that
+    // haven't started (never the first SHARED_WEEKS of the window, never the
+    // week we are in) and, within them, only for the person it is about:
+    // everyone else stays on their saved shift. If someone was REMOVED, or
+    // there's no per-person record to compare with, it falls back to opening
+    // those weeks for everybody (a removal can leave a real hole in cover).
+    var subjects = {}, staffChanged = false, openForEveryone = false;
+    var curPeople = staffPeopleFingerprints();
+    if(watermarkDoc && watermarkDoc.staffPeople){
+      var prevPeople = watermarkDoc.staffPeople;
+      Object.keys(curPeople).forEach(function(id){
+        if(!prevPeople[id] || prevPeople[id].fp !== curPeople[id].fp){ subjects[curPeople[id].name] = true; staffChanged = true; }
+      });
+      Object.keys(prevPeople).forEach(function(id){ if(!curPeople[id]){ staffChanged = true; openForEveryone = true; } });
+    } else {
+      staffChanged = !watermarkDoc || watermarkDoc.staffFingerprint !== staffFingerprint();
+    }
+    var freeRanges = [], dutyTouched = touched;
     if(staffChanged){
       var windowEnd = rosterWindowDays(rosterStart).slice(-1)[0];
-      // A staff edit reopens only weeks that haven't started: never the first
-      // SHARED_WEEKS of the window, and never the week we are in right now.
       var nextMonday = RosterEngine.addDays(RosterEngine.mondayOfWeek(todayISO()), 7);
       var firstOpen = RosterEngine.addDays(rosterStart, SHARED_WEEKS * 7);
       if(nextMonday > firstOpen) firstOpen = nextMonday;
-      touched = touched.concat([[firstOpen, windowEnd]]);
+      freeRanges = [[firstOpen, windowEnd]];
+      dutyTouched = touched.concat(freeRanges);   // duties re-plan (keeping what they can)
+      if(openForEveryone) touched = touched.concat(freeRanges);
     }
     var out2 = RosterEngine.buildProtected(
       staffDocs, leaveDocs, transferDocs, rosterStart, dutyOverrideDocs, historySeed, lastSlotSeed,
-      lockedRosterDoc.slots || {}, touched, effectiveLockedDuties(rosterStart), priorWeeks, eventTouched, priorSlots
+      lockedRosterDoc.slots || {}, touched, effectiveLockedDuties(rosterStart), priorWeeks, eventTouched, priorSlots,
+      subjects, freeRanges, dutyTouched
     );
+    out2.subjects = subjects;
+    // For saving the lock: every day this change may have written to.
+    touched = touched.concat(freeRanges);
     out2.touchedRanges = touched;
     out2.fullRelock = false;
     out2.rosterStart = rosterStart;
@@ -3600,7 +3650,7 @@
         await db.collection('settings').doc('lockedDuties').set({weeks: mergedDuties, rules: DUTY_RULES_VERSION});
       }
       await db.collection('settings').doc('changeWatermark').set({
-        staffFingerprint: staffFingerprint(), events: eventFingerprint(),
+        staffFingerprint: staffFingerprint(), staffPeople: staffPeopleFingerprints(), events: eventFingerprint(),
       });
     } catch(e){ /* best-effort - a missed lock update just means the next change re-diffs from a slightly stale watermark, not a correctness issue */ }
   }
@@ -3841,6 +3891,106 @@
     }
     return new Promise(function(resolve){ confirmResolve = resolve; });
   }
+
+  // ---------- Preview a change before it is saved ----------
+  // Works out the roster as it WOULD be with a change applied (in memory only,
+  // nothing is written), compares it with what is on screen, and asks before
+  // anything is saved - listing the person the change is about, anyone else who
+  // would also move, the duties that shift, and any new problems.
+  var previewDialog = $('previewDialog'), previewResolve = null;
+  $('previewCancel').onclick = function(){ previewDialog.close('no'); };
+  $('previewOk').onclick = function(){ previewDialog.close('yes'); };
+  previewDialog.addEventListener('close', function(){
+    if(previewResolve){ previewResolve(previewDialog.returnValue === 'yes'); previewResolve = null; }
+  });
+  function simulateChange(mutate){
+    var keep = {st: staffDocs, tr: transferDocs, lv: leaveDocs, du: dutyOverrideDocs};
+    try{
+      staffDocs = staffDocs.slice(); transferDocs = transferDocs.slice(); leaveDocs = leaveDocs.slice(); dutyOverrideDocs = dutyOverrideDocs.slice();
+      mutate();
+      return computeBuild();
+    } catch(e){
+      return null;
+    } finally {
+      staffDocs = keep.st; transferDocs = keep.tr; leaveDocs = keep.lv; dutyOverrideDocs = keep.du;
+    }
+  }
+  function describeDays(texts){
+    var same = texts.every(function(t){ return t === texts[0]; });
+    if(same) return texts[0] || '—';
+    return texts.map(function(t, i){ return DAY_SHORT[i] + ' ' + (t || '—'); }).join(', ');
+  }
+  function diffBuilds(before, after){
+    var res = {shifts: [], duties: [], problems: []};
+    after.summary.weeks.forEach(function(w, wi){
+      var bw = before.summary.weeks[wi];
+      if(!bw) return;
+      var bmap = {};
+      bw.people.forEach(function(pp){ if(pp.name) bmap[pp.name] = pp; });
+      w.people.forEach(function(pp){
+        if(!pp.name) return;
+        var at = pp.days.map(function(d){ return d.text; });
+        var bp = bmap[pp.name];
+        if(!bp){
+          if(at.every(function(t){ return t === 'Not yet started'; })) return;
+          res.shifts.push({week: w.label, wi: wi, name: pp.name, from: null, to: describeDays(at)});
+          return;
+        }
+        var bt = bp.days.map(function(d){ return d.text; });
+        if(JSON.stringify(bt) !== JSON.stringify(at)) res.shifts.push({week: w.label, wi: wi, name: pp.name, from: describeDays(bt), to: describeDays(at)});
+      });
+      var bd = (before.summary.duties || [])[wi], ad = (after.summary.duties || [])[wi];
+      if(bd && ad){
+        var bduty = {};
+        bd.assignments.forEach(function(a){ bduty[a.duty] = a.people.join(' / '); });
+        ad.assignments.forEach(function(a){
+          if(RosterEngine.DUTY_SLOTS.indexOf(a.duty) === -1) return;
+          var now = a.people.join(' / ');
+          if((bduty[a.duty] || '') !== now) res.duties.push({week: w.label, duty: a.duty, from: bduty[a.duty] || '', to: now});
+        });
+      }
+      var seen = {};
+      bw.breaches.concat(bw.warnings).forEach(function(m){ seen[m] = 1; });
+      w.breaches.concat(w.warnings).forEach(function(m){ if(!seen[m]) res.problems.push(w.label + ': ' + m); });
+    });
+    return res;
+  }
+  // Returns true to go ahead. `mover` is the person the change is about.
+  async function confirmChange(title, mover, mutate){
+    if(!lastBuildOut) return true;
+    var out = simulateChange(mutate);
+    if(!out) return true;                       // couldn't preview: carry on as before
+    var d = diffBuilds(lastBuildOut, out);
+    if(!d.shifts.length && !d.duties.length && !d.problems.length) return true;
+    var own = d.shifts.filter(function(x){ return x.name === mover; });
+    var others = d.shifts.filter(function(x){ return x.name !== mover; });
+    var html = '';
+    html += '<div class="pvhead">' + esc(mover) + '</div>';
+    html += own.length ? own.map(function(x){
+      return '<div class="pvline"><b>' + esc(x.week) + '</b><br>' + (x.from ? esc(x.from) + ' → ' : 'new: ') + esc(x.to) + '</div>';
+    }).join('') : '<div class="pvgood">No existing shift changes.</div>';
+    html += '<div class="pvhead">Other people</div>';
+    html += others.length ? others.map(function(x){
+      return '<div class="pvline pvwarn"><b>' + esc(x.name) + ' · ' + esc(x.week) + '</b><br>' + esc(x.from || '') + ' → ' + esc(x.to) + '</div>';
+    }).join('') : '<div class="pvgood">Nobody else’s shift changes.</div>';
+    if(d.duties.length){
+      html += '<div class="pvhead">Cleaning duties that move</div>';
+      html += d.duties.map(function(x){
+        return '<div class="pvline"><b>' + esc(x.week) + '</b> · ' + esc(x.duty) + '<br>' + esc(x.from || '(blank)') + ' → ' + esc(x.to || '(blank)') + '</div>';
+      }).join('');
+    }
+    if(d.problems.length){
+      html += '<div class="pvhead pvwarn">New problems</div>';
+      html += d.problems.map(function(m){ return '<div class="pvline pvwarn">' + esc(m) + '</div>'; }).join('');
+    }
+    $('previewTitle').textContent = title;
+    $('previewBody').innerHTML = html;
+    $('previewOk').textContent = 'Apply';
+    previewDialog.returnValue = '';
+    try{ previewDialog.showModal(); } catch(e){ return true; }
+    return await new Promise(function(resolve){ previewResolve = resolve; });
+  }
+  function nextMondayAfterToday(){ return RosterEngine.addDays(RosterEngine.mondayOfWeek(todayISO()), 7); }
 
   // ---------- Move OFF day (fixed-hours staff) ----------
   var DAY_SHORT = ['Mon','Tue','Wed','Thu','Fri'];
@@ -4112,9 +4262,9 @@
         field('Staff', '<select id="f_staff">'+staffOptionsHTML()+'</select>') +
         field('New floor', selectHTML('f_floor', FLOOR_OPTS)) +
         field('Room (same room can\'t share a shift)', selectHTML('f_room', ROOM_OPTS)) +
-        field('From (week starting)', '<input id="f_start" type="date" value="'+todayISO()+'">') +
+        field('From (week starting)', '<input id="f_start" type="date" value="'+nextMondayAfterToday()+'">') +
         '<div class="note" id="f_shiftHint" style="margin-top:-8px;"></div>' +
-        '<p class="note" style="margin:0;">The room takes effect right away (there\'s no per-week room history yet); the floor is only recorded for now, per the note below - it doesn\'t affect the schedule until floors are split.</p>';
+        '<p class="note" style="margin:0;">A room move counts from that week (never from a week that has already started), so earlier weeks keep the old room. Before it is saved you will see exactly whose shifts would change. The floor is only recorded for now; it doesn\'t affect the schedule until floors are split.</p>';
       $('f_staff').onchange = function(){ refreshTransferRoomField(); renderShiftHint(); };
       $('f_start').oninput = renderShiftHint;
       refreshTransferRoomField();
@@ -4253,6 +4403,19 @@
           name: name, floor: floor, role: role, note: '', hours: ['','','','',''],
           number: '', order: order, active: true, startDate: start, room: room,
         };
+        // A new rotating person joins the rotation from the first Monday on or
+        // after their start date - never this week - at the team's average
+        // position, so they don't pull other people's shifts around.
+        if(role === 'rotating'){
+          var firstMon = RosterEngine.mondayOfWeek(start || todayISO());
+          if(firstMon < (start || todayISO())) firstMon = RosterEngine.addDays(firstMon, 7);
+          if(firstMon < nextMondayAfterToday()) firstMon = nextMondayAfterToday();
+          staffDoc.rotateFrom = firstMon;
+        }
+        var okAdd = await confirmChange('Adding ' + name, name, function(){
+          staffDocs.push(Object.assign({_id: id}, staffDoc));
+        });
+        if(!okAdd){ formSave.disabled = false; return; }
         var beforeRoster1 = lastBuildOut ? lastBuildOut.roster : null;
         await db.collection('staff').doc(id).set(staffDoc);
         staffDocs = staffDocs.filter(function(s){ return s._id !== id; }).concat([Object.assign({_id:id}, staffDoc)]);
@@ -4276,20 +4439,36 @@
         var oldRoom2 = (staffDoc2 && staffDoc2.room) || '';
         var roomChanged = staffDoc2 && room2 !== oldRoom2;
         var transferDoc = { name: staff, newFloor: floor2, start: start2, end: null, createdAt: todayISO() };
+        // A room move counts from the Monday of the chosen week - and never from
+        // a week that has already started - so earlier weeks keep the old room.
+        var roomFromDate = RosterEngine.mondayOfWeek(start2 || todayISO());
+        if(roomFromDate < nextMondayAfterToday()) roomFromDate = nextMondayAfterToday();
+        // If an earlier move has not started yet, weeks before it keep the room
+        // from before that move, so re-moving never rewrites weeks already shared.
+        var pendingMove = staffDoc2 && staffDoc2.roomFrom && staffDoc2.roomFrom >= nextMondayAfterToday();
+        var prevForPatch = pendingMove ? (staffDoc2.prevRoom || '') : oldRoom2;
+        var roomPatch = roomChanged ? {room: room2, prevRoom: prevForPatch, roomFrom: roomFromDate} : null;
+        var okTr = await confirmChange(roomChanged ? ('Moving ' + staff + ' to ' + (room2 || 'no room')) : ('Transferring ' + staff), staff, function(){
+          transferDocs.push(Object.assign({_id: '__preview__'}, transferDoc));
+          if(roomPatch) staffDocs = staffDocs.map(function(x){ return x._id === staffDoc2._id ? Object.assign({}, x, roomPatch) : x; });
+        });
+        if(!okTr){ formSave.disabled = false; return; }
+        var oldPrev2 = (staffDoc2 && staffDoc2.prevRoom) || '', oldFrom2 = (staffDoc2 && staffDoc2.roomFrom) || null;
         var beforeRoster2 = lastBuildOut ? lastBuildOut.roster : null;
         var tref = await db.collection('transfers').add(transferDoc);
         var transferId = tref && tref.id;
         transferDocs = transferDocs.filter(function(t){ return t._id !== transferId; }).concat([Object.assign({_id: transferId}, transferDoc)]);
         if(roomChanged){
-          await db.collection('staff').doc(staffDoc2._id).update({room: room2});
-          staffDocs = staffDocs.map(function(s){ return s._id === staffDoc2._id ? Object.assign({}, s, {room: room2}) : s; });
+          await db.collection('staff').doc(staffDoc2._id).update(roomPatch);
+          staffDocs = staffDocs.map(function(s){ return s._id === staffDoc2._id ? Object.assign({}, s, roomPatch) : s; });
         }
         if(!recompute()){
           if(transferId) await db.collection('transfers').doc(transferId).delete();
           transferDocs = transferDocs.filter(function(t){ return t._id !== transferId; });
           if(roomChanged){
-            await db.collection('staff').doc(staffDoc2._id).update({room: oldRoom2});
-            staffDocs = staffDocs.map(function(s){ return s._id === staffDoc2._id ? Object.assign({}, s, {room: oldRoom2}) : s; });
+            var undoPatch = {room: oldRoom2, prevRoom: oldPrev2, roomFrom: oldFrom2};
+            await db.collection('staff').doc(staffDoc2._id).update(undoPatch);
+            staffDocs = staffDocs.map(function(s){ return s._id === staffDoc2._id ? Object.assign({}, s, undoPatch) : s; });
           }
           recompute();
           formErr.textContent = 'Could not record that transfer: ' + lastBuildErrorMessage;

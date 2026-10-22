@@ -254,3 +254,50 @@ class MovedOffDay(unittest.TestCase):
         self.assertEqual(cells[(key, thu)].text, "8:30 – 1:30")
         self.assertEqual(cells[(key, thu)].kind, "static")
         self.assertEqual([c for c in r.checks if c.level == "BREACH"], [])
+
+
+class OnlyTheMoverMoves(unittest.TestCase):
+    """A staff change moves the person it is about, and nobody else."""
+
+    START = date(2026, 10, 12)
+
+    def _locked_baseline(self):
+        from creche_roster.engine import extract_locked_slots
+        base = inputs(self.START, 4, new_start=None)
+        base.leave = []
+        return base, extract_locked_slots(build_roster(base))
+
+    def test_adding_a_person_moves_nobody_else(self):
+        from creche_roster.engine import build_protected_roster
+        base, locked = self._locked_baseline()
+        inp = inputs(self.START, 4, new_start=None)
+        inp.leave = []
+        post = next(st for st in inp.staff if st.role == "vacant" and st.note)
+        post.name, post.role, post.room = "Newcomer", "rotating", "Preschoolers Room"
+        post.start_date = post.rotate_from = date(2026, 10, 19)
+        whole = [(self.START, date(2026, 11, 6))]
+        r = build_protected_roster(inp, locked, [], None, {"Newcomer"}, whole)
+        ref = build_roster(base)
+        for wi in range(4):
+            for n in ROT:
+                self.assertEqual(week_slot(r, wi, n), week_slot(ref, wi, n), (wi, n))
+        self.assertIsNotNone(week_slot(r, 1, "Newcomer"))
+        self.assertEqual([c for c in r.checks if c.level == "BREACH" and c.rule != "Opening cover"], [])
+
+    def test_a_room_move_moves_only_the_person_who_moved(self):
+        from creche_roster.engine import build_protected_roster
+        base, locked = self._locked_baseline()
+        inp = inputs(self.START, 4, new_start=None)
+        inp.leave = []
+        mover = next(st for st in inp.staff if st.name == "Deoshree")
+        mover.prev_room, mover.room, mover.room_from = mover.room, "Toddlers Room", date(2026, 10, 19)
+        whole = [(self.START, date(2026, 11, 6))]
+        r = build_protected_roster(inp, locked, [], None, {"Deoshree"}, whole)
+        ref = build_roster(base)
+        for wi in range(4):
+            for n in ROT:
+                if n != "Deoshree":
+                    self.assertEqual(week_slot(r, wi, n), week_slot(ref, wi, n), (wi, n))
+        # and the earlier week, before the room moved, is untouched for her too
+        self.assertEqual(week_slot(r, 0, "Deoshree"), week_slot(ref, 0, "Deoshree"))
+        self.assertEqual([c for c in r.checks if c.level == "BREACH"], [])

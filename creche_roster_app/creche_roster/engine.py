@@ -1508,6 +1508,8 @@ def build_protected_roster(
     locked_roster: Dict[str, Dict[str, str]],
     touched_ranges: List[Tuple[date, date]],
     highlight_ranges: Optional[List[Tuple[date, date]]] = None,
+    free_names: Optional[set] = None,
+    free_ranges: Optional[List[Tuple[date, date]]] = None,
 ) -> Roster:
     """Build the roster, then pin every rotating/paired person's day back
     to `locked_roster` (their last known-good slot: {name: {iso_date:
@@ -1528,6 +1530,11 @@ def build_protected_roster(
     opening shift the day a colleague's new leave falls on), not a
     half-protected state where the person on leave can move but nobody
     else can adjust around them.
+
+    `free_names` + `free_ranges` open a day for specific PEOPLE only (the
+    person just added, or who just changed room): inside `free_ranges` they
+    are planned freely while everyone else stays pinned to the saved shift,
+    so a staff change moves the person it is about and nobody else.
 
     Callers that want this build's results to become the NEW lock for
     the days that were open should call extract_locked_slots(result,
@@ -1562,6 +1569,8 @@ def build_protected_roster(
                     continue
                 for _, st in roster.staff_keys:
                     if st.role not in ("rotating", "paired") or not st.name:
+                        continue
+                    if free_names and st.name in free_names and any(a <= d <= b for a, b in (free_ranges or [])):
                         continue
                     locked_slot = locked_roster.get(st.name, {}).get(d.isoformat())
                     if locked_slot is None:
