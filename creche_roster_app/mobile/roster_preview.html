@@ -3391,6 +3391,7 @@
   // computeBuild() falls back to the plain, unprotected build, and the
   // next successful change bootstraps both docs from its own result.
   var lockedRosterDoc = null, watermarkDoc = null, lockedDutiesDoc = null;
+  var undoMode = false;
   var sharedUpToDoc = null;   // settings/sharedUpTo {date}: the last day already shared with staff
 
   // ---------- instant client-side rebuild (no waiting on Claude) ----------
@@ -3606,14 +3607,14 @@
     // everyone else stays on their saved shift. If someone was REMOVED, or
     // there's no per-person record to compare with, it falls back to opening
     // those weeks for everybody (a removal can leave a real hole in cover).
-    var subjects = {}, staffChanged = false, openForEveryone = false;
+    var subjects = {}, staffChanged = false, openForEveryone = false;   // undoMode: taking back an Add Staff must not shuffle anyone else
     var curPeople = staffPeopleFingerprints();
     if(watermarkDoc && watermarkDoc.staffPeople){
       var prevPeople = watermarkDoc.staffPeople;
       Object.keys(curPeople).forEach(function(id){
         if(!prevPeople[id] || prevPeople[id].fp !== curPeople[id].fp){ subjects[curPeople[id].name] = true; staffChanged = true; }
       });
-      Object.keys(prevPeople).forEach(function(id){ if(!curPeople[id]){ staffChanged = true; openForEveryone = true; } });
+      Object.keys(prevPeople).forEach(function(id){ if(!curPeople[id]){ staffChanged = true; if(!undoMode) openForEveryone = true; } });
     } else {
       staffChanged = !watermarkDoc || watermarkDoc.staffFingerprint !== staffFingerprint();
     }
@@ -3734,7 +3735,7 @@
   // page recomputes on every db change (harmless, idempotent), but writing
   // the change-log entry only from here avoids every open copy writing its
   // own duplicate entry for the same edit.
-  async function logChange(requestText, changedName, beforeRoster){
+  async function logChange(requestText, changedName, beforeRoster, undo){
     if(!db || !lastBuildOut) return;
     var perWeek = RosterEngine.diffRosters(beforeRoster || null, lastBuildOut.roster, changedName || null);
     var breaches = lastBuildOut.summary.weeks.reduce(function(n,w){ return n + w.breaches.length; }, 0);
@@ -3746,6 +3747,7 @@
     try{
       await db.collection('changelog').add({
         request: requestText, createdAt: new Date().toISOString(), breaches: breaches, impact: impact,
+        undo: (undo && undo.ops && undo.ops.length) ? undo.ops : null, undoName: (undo && undo.name) || changedName || '',
       });
     } catch(e){ /* the roster itself already saved; a missed log entry isn't worth failing the action over */ }
     await persistLock(lastBuildOut);
@@ -4226,6 +4228,49 @@
   }
   init();
 
+  // ---- Undo: takes back the most recent change by reversing the exact
+  // database writes it made (recorded on its log entry). Only the latest
+  // change can be undone, so nothing later depends on it.
+  function applyUndoLocal(ops){
+    ops.forEach(function(o){
+      if(o.op === 'dropSlots') return;
+      var key = {staff: 'staffDocs', transfers: 'transferDocs', leave: 'leaveDocs', dutyOverrides: 'dutyOverrideDocs'}[o.col];
+      if(!key) return;
+      var arr = key === 'staffDocs' ? staffDocs : key === 'transferDocs' ? transferDocs : key === 'leaveDocs' ? leaveDocs : dutyOverrideDocs;
+      var out = o.op === 'delete'
+        ? arr.filter(function(x){ return x._id !== o.id; })
+        : arr.map(function(x){ return x._id === o.id ? Object.assign({}, x, o.data) : x; });
+      if(key === 'staffDocs') staffDocs = out; else if(key === 'transferDocs') transferDocs = out;
+      else if(key === 'leaveDocs') leaveDocs = out; else dutyOverrideDocs = out;
+    });
+  }
+  async function undoLastChange(entry){
+    if(!db || !entry || !entry.undo) return;
+    var ops = entry.undo, who = entry.undoName || '';
+    undoMode = true;
+    try{
+      var ok = await confirmChange('Undo: ' + (entry.request || 'last change'), who, function(){ applyUndoLocal(ops); });
+      if(!ok) return;
+      var before = lastBuildOut ? lastBuildOut.roster : null;
+      for(var i = 0; i < ops.length; i++){
+        var o = ops[i];
+        if(o.op === 'delete') await db.collection(o.col).doc(o.id).delete();
+        else if(o.op === 'update') await db.collection(o.col).doc(o.id).update(o.data);
+        else if(o.op === 'dropSlots' && lockedRosterDoc && lockedRosterDoc.slots && lockedRosterDoc.slots[o.name]){
+          var slots = Object.assign({}, lockedRosterDoc.slots); delete slots[o.name];
+          lockedRosterDoc = Object.assign({}, lockedRosterDoc, {slots: slots});
+          await db.collection('settings').doc('lockedRoster').set({slots: slots});
+        }
+      }
+      applyUndoLocal(ops);
+      if(!recompute()){ toast('Undone, but the roster could not be rebuilt: ' + lastBuildErrorMessage); }
+      await db.collection('changelog').doc(entry._id).update({undone: true});
+      await logChange('Undid: ' + (entry.request || 'last change'), who, before);
+      toast('Change undone.');
+    } catch(e){
+      toast('Could not undo: ' + (e && e.message ? e.message : 'try again.'));
+    } finally { undoMode = false; }
+  }
   function renderChangeLog(entries){
     var el = $('changeLogList');
     if(!entries.length){ el.innerHTML = '<div class="empty">No changes logged yet.</div>'; return; }
@@ -4266,6 +4311,14 @@
         row.appendChild(noteEl);
       });
 
+      if(e.undone){
+        var ud = document.createElement('div'); ud.className = 'lognote'; ud.textContent = 'Undone'; row.appendChild(ud);
+      } else if(e.undo && e._id === entries[0]._id){
+        var ub = document.createElement('button');
+        ub.className = 'lognotebtn'; ub.textContent = '↶ Undo this change'; ub.setAttribute('data-undo', '1');
+        ub.onclick = function(){ undoLastChange(e); };
+        row.appendChild(ub);
+      }
       var addNote = document.createElement('button');
       addNote.className = 'lognotebtn';
       addNote.textContent = '+ Note';
@@ -4507,7 +4560,7 @@
         }
         var summary = 'Add staff: ' + name + ', floor ' + floor + ', role ' + role +
           (room ? ', room ' + room : '') + ', starting ' + start + (staffDoc.rotateFrom ? ', in the rotation from ' + staffDoc.rotateFrom : '') + '.';
-        await logChange(summary, name, beforeRoster1);
+        await logChange(summary, name, beforeRoster1, {name: name, ops: [{col: 'staff', id: id, op: 'delete'}, {op: 'dropSlots', name: name}]});
         toast('Added ' + name + '. Roster updated.');
       } else if(currentAction === 'transfer'){
         var staff = $('f_staff').value, floor2 = $('f_floor').value, start2 = $('f_start').value;
@@ -4555,7 +4608,9 @@
         var summary2 = 'Transfer: ' + staff + ' to ' + floor2 +
           (roomChanged ? ', room ' + (room2 || 'not placed') : '') +
           ', from ' + (roomChanged ? roomFromDate : start2) + ' onward (earlier weeks unchanged).';
-        await logChange(summary2, staff, beforeRoster2);
+        await logChange(summary2, staff, beforeRoster2, {name: staff, ops:
+          (transferId ? [{col: 'transfers', id: transferId, op: 'delete'}] : []).concat(
+            roomChanged ? [{col: 'staff', id: staffDoc2._id, op: 'update', data: {room: oldRoom2, prevRoom: oldPrev2, roomFrom: oldFrom2}}] : [])});
         toast('Transfer recorded for ' + staff + '.');
       } else if(currentAction in LEAVE_KIND_BY_ACTION){
         var kindWord = LEAVE_KIND_BY_ACTION[currentAction];
@@ -4590,7 +4645,7 @@
           return;
         }
         var summary3 = 'Add ' + kindWord + ': ' + staff3 + ', from ' + start3 + (end3 ? (' to ' + end3) : ' (open-ended, until back)') + '.';
-        await logChange(summary3, staff3, beforeRoster3);
+        await logChange(summary3, staff3, beforeRoster3, {name: staff3, ops: leaveId ? [{col: 'leave', id: leaveId, op: 'delete'}] : []});
         toast(kindWord + ' recorded for ' + staff3 + '. Roster updated.');
       } else if(currentAction === 'adjust-shift'){
         var staff4 = $('f_staff').value, date4 = $('f_start').value, value4 = ($('f_shiftvalue').value || '').trim();
@@ -4619,7 +4674,7 @@
         }
         var label4 = isStatic4 ? value4 : (SLOT_TIME_LABEL[value4] || value4);
         var summary4 = 'Adjust shift: ' + staff4 + ' on ' + fmtDate(date4) + ' → ' + label4 + '.';
-        await logChange(summary4, staff4, beforeRoster4);
+        await logChange(summary4, staff4, beforeRoster4, {name: staff4, ops: overrideId ? [{col: 'transfers', id: overrideId, op: 'delete'}] : []});
         renderAdjustList();
         toast('Shift adjusted for ' + staff4 + '.');
       } else if(currentAction === 'move-off'){
@@ -4658,7 +4713,7 @@
           return;
         }
         var summary7 = 'Move OFF day: ' + staff7 + (info7.usualOffDate ? (', OFF moved from ' + fmtDate(info7.usualOffDate) + ' to ' + fmtDate(newDay7)) : (', OFF on ' + fmtDate(newDay7))) + '.';
-        await logChange(summary7, staff7, beforeRoster7);
+        await logChange(summary7, staff7, beforeRoster7, {name: staff7, ops: addedIds7.filter(Boolean).map(function(i){ return {col: 'transfers', id: i, op: 'delete'}; })});
         renderAdjustList();
         toast('OFF day moved for ' + staff7 + '.');
       } else if(currentAction === 'adjust-duty'){
@@ -4707,7 +4762,7 @@
           }
         }
         var summary5 = 'Adjust duty: ' + staff5 + ', week of ' + fmtDate(weekMonday) + ' → ' + duty5 + '.';
-        await logChange(summary5, staff5, beforeRoster5);
+        await logChange(summary5, staff5, beforeRoster5, {name: staff5, ops: dutyOverrideId ? [{col: 'dutyOverrides', id: dutyOverrideId, op: 'delete'}] : []});
         renderAdjustList();
         toast('Duty set for ' + staff5 + '.');
       } else if(currentAction === 'log-note'){
