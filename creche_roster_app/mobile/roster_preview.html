@@ -3744,8 +3744,12 @@
       if(names.length) parts.push('Week ' + (wi+1) + ': ' + names.join(', ') + '’s ' + (names.length>1 ? 'shifts changed' : 'shift changed'));
     });
     var impact = parts.length ? (parts.join('; ') + '.') : 'No one else’s shift changed.';
+    var notice = '';
+    try{ if(noticeBase && lastBuildOut !== noticeBase) notice = buildNoticeText(requestText, noticeBase, lastBuildOut); } catch(e){ notice = ''; }
+    noticeBase = null;
     try{
       await db.collection('changelog').add({
+        notice: notice,
         request: requestText, createdAt: new Date().toISOString(), breaches: breaches, impact: impact,
         undo: (undo && undo.ops && undo.ops.length) ? undo.ops : null, undoName: (undo && undo.name) || changedName || '',
       });
@@ -4036,10 +4040,57 @@
     }
     $('previewTitle').textContent = title;
     $('previewBody').innerHTML = html;
-    $('previewOk').textContent = 'Apply';
+    $('previewOk').textContent = 'Apply'; $('previewCancel').textContent = 'Cancel';
     previewDialog.returnValue = '';
     try{ previewDialog.showModal(); } catch(e){ return true; }
     return await new Promise(function(resolve){ previewResolve = resolve; });
+  }
+  // ---- Notice for staff: a short plain-text message, written when a change
+  // is saved, that management can copy and send. It lists only what really
+  // changed, and says so plainly when someone's shifts stay the same.
+  var noticeBase = null;
+  function buildNoticeText(request, before, after){
+    var d = diffBuilds(before, after);
+    var lines = ['Roster update – ' + fmtDate(todayISO()), request.replace(/\.$/, '') + '.', ''];
+    if(d.shifts.length){
+      var byPerson = {}, order = [];
+      d.shifts.forEach(function(x){ if(!byPerson[x.name]){ byPerson[x.name] = []; order.push(x.name); } byPerson[x.name].push(x); });
+      order.forEach(function(n){
+        lines.push(n + ':');
+        byPerson[n].forEach(function(x){ lines.push('  • ' + x.week + ' – ' + (x.from ? x.from + ' → ' : '') + x.to); });
+      });
+      lines.push('');
+    }
+    if(d.duties.length){
+      lines.push('Cleaning duties that change:');
+      d.duties.forEach(function(x){ lines.push('  • ' + x.week + ' – ' + x.duty + ': ' + (x.from || '(none)') + ' → ' + (x.to || '(none)')); });
+      lines.push('');
+    }
+    lines.push(d.shifts.length ? 'Anyone not listed above keeps their shifts exactly as they were.' : 'No one’s shifts change.');
+    return lines.join('\n');
+  }
+  function copyText(t){
+    try{
+      if(navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(t).then(function(){ return true; }, function(){ return legacyCopy(t); });
+    } catch(e){}
+    return Promise.resolve(legacyCopy(t));
+  }
+  function legacyCopy(t){
+    try{
+      var ta = document.createElement('textarea'); ta.value = t; ta.style.cssText = 'position:fixed;opacity:0;';
+      document.body.appendChild(ta); ta.select(); var ok = document.execCommand('copy'); document.body.removeChild(ta); return ok;
+    } catch(e){ return false; }
+  }
+  function showNotice(entry){
+    $('previewTitle').textContent = 'Notice for staff';
+    $('previewBody').innerHTML = '<div id="noticeText" style="white-space:pre-wrap;font-size:13px;line-height:1.5;user-select:all;">' + esc(entry.notice || '') + '</div>';
+    $('previewOk').textContent = 'Copy'; $('previewCancel').textContent = 'Close';
+    previewDialog.returnValue = '';
+    try{ previewDialog.showModal(); } catch(e){ return; }
+    new Promise(function(resolve){ previewResolve = resolve; }).then(function(yes){
+      $('previewCancel').textContent = 'Cancel'; $('previewOk').textContent = 'Apply';
+      if(yes) copyText(entry.notice || '').then(function(ok){ toast(ok ? 'Notice copied.' : 'Could not copy - select the text and copy it.'); });
+    });
   }
   function nextMondayAfterToday(){ return RosterEngine.addDays(RosterEngine.mondayOfWeek(todayISO()), 7); }
 
@@ -4248,6 +4299,7 @@
     if(!db || !entry || !entry.undo) return;
     var ops = entry.undo, who = entry.undoName || '';
     undoMode = true;
+    noticeBase = lastBuildOut;
     try{
       var ok = await confirmChange('Undo: ' + (entry.request || 'last change'), who, function(){ applyUndoLocal(ops); });
       if(!ok) return;
@@ -4269,7 +4321,7 @@
       toast('Change undone.');
     } catch(e){
       toast('Could not undo: ' + (e && e.message ? e.message : 'try again.'));
-    } finally { undoMode = false; }
+    } finally { undoMode = false; noticeBase = null; }
   }
   function renderChangeLog(entries){
     var el = $('changeLogList');
@@ -4318,6 +4370,12 @@
         ub.className = 'lognotebtn'; ub.textContent = '↶ Undo this change'; ub.setAttribute('data-undo', '1');
         ub.onclick = function(){ undoLastChange(e); };
         row.appendChild(ub);
+      }
+      if(e.notice){
+        var nb = document.createElement('button');
+        nb.className = 'lognotebtn'; nb.textContent = '✉ Notice for staff'; nb.setAttribute('data-notice', '1');
+        nb.onclick = function(){ showNotice(e); };
+        row.appendChild(nb);
       }
       var addNote = document.createElement('button');
       addNote.className = 'lognotebtn';
@@ -4516,6 +4574,7 @@
   }
 
   formSave.onclick = async function(){
+    noticeBase = lastBuildOut;
     formErr.textContent = '';
     if(!db){ formErr.textContent = 'Not connected.'; return; }
     formSave.disabled = true;
@@ -4779,6 +4838,7 @@
     } catch(e){
       formErr.textContent = 'Could not save: ' + (e && e.message ? e.message : 'try again.');
     }
+    noticeBase = null;
     formSave.disabled = false;
   };
 })();
