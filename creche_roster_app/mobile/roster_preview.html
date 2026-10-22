@@ -3557,6 +3557,20 @@
                     : RosterEngine.addDays(rosterStart, SHARED_WEEKS * 7);
     return nm > first ? nm : first;
   }
+  function rosterStartNow(){ return rosterStartAnchor || RosterEngine.mondayOfWeek(todayISO()); }
+  // The Monday a change really takes effect from: the Monday of the chosen
+  // week (or the next one, when `roundUp`), but never inside a shared week.
+  function effectiveMonday(iso, roundUp){
+    var m = RosterEngine.mondayOfWeek(iso || todayISO());
+    if(roundUp && m < (iso || todayISO())) m = RosterEngine.addDays(m, 7);
+    var open = firstOpenMonday(rosterStartNow());
+    return m < open ? open : m;
+  }
+  function effectiveNote(chosen, eff){
+    return 'Takes effect from <b>' + esc(fmtDate(eff)) + '</b>' +
+      (chosen && eff !== RosterEngine.mondayOfWeek(chosen) ? ' (moved on from the date you picked, because earlier weeks are already shared with staff)' : '') +
+      '. Weeks before it stay exactly as they are.';
+  }
   function renderSharedLine(){
     var el = $('sharedLine'); if(!el) return;
     var fri = sharedUpToFriday();
@@ -4293,7 +4307,18 @@
         field('Floor', selectHTML('f_floor', FLOOR_OPTS)) +
         field('Role', selectHTML('f_role', ROLE_OPTS)) +
         field('Room (same room can\'t share a shift)', selectHTML('f_room', ROOM_OPTS)) +
-        field('Start date', '<input id="f_start" type="date" value="'+todayISO()+'">');
+        field('Start date', '<input id="f_start" type="date" value="'+todayISO()+'">') +
+        field('Joins the rotation from (a Monday)', '<input id="f_eff" type="date" value="'+effectiveMonday(todayISO(), true)+'">') +
+        '<div class="note" id="f_effHint" style="margin-top:-8px;"></div>';
+      var refreshAddEff = function(){
+        var rot = $('f_role').value === 'rotating';
+        $('f_eff').parentNode.style.display = rot ? '' : 'none';
+        var eff = effectiveMonday($('f_eff').value || $('f_start').value, true);
+        $('f_effHint').innerHTML = rot ? effectiveNote($('f_eff').value, eff) : '';
+      };
+      $('f_role').onchange = refreshAddEff; $('f_eff').oninput = refreshAddEff;
+      $('f_start').oninput = function(){ $('f_eff').value = effectiveMonday($('f_start').value, true); refreshAddEff(); };
+      refreshAddEff();
     } else if(action === 'shared-upto'){
       formTitle.textContent = 'Shared with staff up to';
       var curFri = sharedUpToFriday();
@@ -4307,10 +4332,15 @@
         field('New floor', selectHTML('f_floor', FLOOR_OPTS)) +
         field('Room (same room can\'t share a shift)', selectHTML('f_room', ROOM_OPTS)) +
         field('From (week starting)', '<input id="f_start" type="date" value="'+firstOpenMonday(rosterStartAnchor || RosterEngine.mondayOfWeek(todayISO()))+'">') +
+        '<div class="note" id="f_effHint" style="margin-top:-8px;"></div>' +
         '<div class="note" id="f_shiftHint" style="margin-top:-8px;"></div>' +
         '<p class="note" style="margin:0;">A room move counts from that week (never from a week already shared with staff), so earlier weeks keep the old room. Before it is saved you will see exactly whose shifts would change. The floor is only recorded for now; it doesn\'t affect the schedule until floors are split.</p>';
       $('f_staff').onchange = function(){ refreshTransferRoomField(); renderShiftHint(); };
-      $('f_start').oninput = renderShiftHint;
+      var refreshTrEff = function(){
+        $('f_effHint').innerHTML = effectiveNote($('f_start').value, effectiveMonday($('f_start').value, false));
+      };
+      $('f_start').oninput = function(){ renderShiftHint(); refreshTrEff(); };
+      refreshTrEff();
       refreshTransferRoomField();
       renderShiftHint();
     } else if(action in LEAVE_KIND_BY_ACTION){
@@ -4457,11 +4487,8 @@
         // after their start date - never this week - at the team's average
         // position, so they don't pull other people's shifts around.
         if(role === 'rotating'){
-          var firstMon = RosterEngine.mondayOfWeek(start || todayISO());
-          if(firstMon < (start || todayISO())) firstMon = RosterEngine.addDays(firstMon, 7);
-          var openMon = firstOpenMonday(rosterStartAnchor || RosterEngine.mondayOfWeek(todayISO()));
-          if(firstMon < openMon) firstMon = openMon;
-          staffDoc.rotateFrom = firstMon;
+          var chosenEff = ($('f_eff') && $('f_eff').value) || start || todayISO();
+          staffDoc.rotateFrom = effectiveMonday(chosenEff, true);
         }
         var okAdd = await confirmChange('Adding ' + name, name, function(){
           staffDocs.push(Object.assign({_id: id}, staffDoc));
@@ -4479,7 +4506,7 @@
           return;
         }
         var summary = 'Add staff: ' + name + ', floor ' + floor + ', role ' + role +
-          (room ? ', room ' + room : '') + ', starting ' + start + '.';
+          (room ? ', room ' + room : '') + ', starting ' + start + (staffDoc.rotateFrom ? ', in the rotation from ' + staffDoc.rotateFrom : '') + '.';
         await logChange(summary, name, beforeRoster1);
         toast('Added ' + name + '. Roster updated.');
       } else if(currentAction === 'transfer'){
@@ -4492,9 +4519,7 @@
         var transferDoc = { name: staff, newFloor: floor2, start: start2, end: null, createdAt: todayISO() };
         // A room move counts from the Monday of the chosen week - and never from
         // a week that has already started - so earlier weeks keep the old room.
-        var roomFromDate = RosterEngine.mondayOfWeek(start2 || todayISO());
-        var openMon2 = firstOpenMonday(rosterStartAnchor || RosterEngine.mondayOfWeek(todayISO()));
-        if(roomFromDate < openMon2) roomFromDate = openMon2;
+        var roomFromDate = effectiveMonday(start2 || todayISO(), false);
         // If an earlier move has not started yet, weeks before it keep the room
         // from before that move, so re-moving never rewrites weeks already shared.
         var pendingMove = staffDoc2 && staffDoc2.roomFrom && staffDoc2.roomFrom >= nextMondayAfterToday();
@@ -4529,7 +4554,7 @@
         }
         var summary2 = 'Transfer: ' + staff + ' to ' + floor2 +
           (roomChanged ? ', room ' + (room2 || 'not placed') : '') +
-          ', from ' + start2 + ' onward (past weeks unchanged).';
+          ', from ' + (roomChanged ? roomFromDate : start2) + ' onward (earlier weeks unchanged).';
         await logChange(summary2, staff, beforeRoster2);
         toast('Transfer recorded for ' + staff + '.');
       } else if(currentAction in LEAVE_KIND_BY_ACTION){
