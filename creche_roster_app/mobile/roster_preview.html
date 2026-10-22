@@ -4496,6 +4496,10 @@
           return;
         }
         var leaveDoc = { name: staff3, kind: kindWord, start: start3, end: end3, createdAt: todayISO() };
+        var okLv = await confirmChange(kindWord + ' for ' + staff3, staff3, function(){
+          leaveDocs.push(Object.assign({_id: '__preview__'}, leaveDoc));
+        });
+        if(!okLv){ formSave.disabled = false; return; }
         var beforeRoster3 = lastBuildOut ? lastBuildOut.roster : null;
         var lref = await db.collection('leave').add(leaveDoc);
         var leaveId = lref && lref.id;
@@ -4520,6 +4524,10 @@
         if(isStatic4 && !value4){ formErr.textContent = 'Type the hours (e.g. 10:00 - 2:00) or OFF.'; formSave.disabled=false; return; }
         var overrideDoc = { name: staff4, start: date4, end: date4, createdAt: todayISO() };
         if(isStatic4){ overrideDoc.text = value4; } else { overrideDoc.slot = value4; }
+        var okAs = await confirmChange('Adjusting ' + staff4 + '’s shift', staff4, function(){
+          transferDocs.push(Object.assign({_id: '__preview__'}, overrideDoc));
+        });
+        if(!okAs){ formSave.disabled = false; return; }
         var beforeRoster4 = lastBuildOut ? lastBuildOut.roster : null;
         var oref = await db.collection('transfers').add(overrideDoc);
         var overrideId = oref && oref.id;
@@ -4550,6 +4558,10 @@
         var toAdd7 = [];
         if(info7.usualOffDate){ toAdd7.push(Object.assign({}, base7, {start: info7.usualOffDate, end: info7.usualOffDate, text: info7.usualHours})); }
         toAdd7.push(Object.assign({}, base7, {start: newDay7, end: newDay7, text: 'OFF'}));
+        var okMo = await confirmChange('Moving ' + staff7 + '’s OFF day', staff7, function(){
+          toAdd7.forEach(function(d, i){ transferDocs.push(Object.assign({_id: '__preview' + i + '__'}, d)); });
+        });
+        if(!okMo){ formSave.disabled = false; return; }
         var beforeRoster7 = lastBuildOut ? lastBuildOut.roster : null;
         var addedIds7 = [];
         for(var q7 = 0; q7 < toAdd7.length; q7++){
