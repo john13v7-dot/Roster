@@ -2832,10 +2832,14 @@
   }
 
   // ---------- duties (real weekly rota) ----------
-  // Management staff are shown with "(F.A.R)" after their name on every
+  // First Aid Response certificate holders are shown with "(F.A.R)" after their name on every
   // roster and duty list, on screen and in the printouts. Display only -
   // the underlying names stay plain so nothing else depends on the suffix.
-  function dispName(n){ return (n === 'Priscilla' || n === 'Shehnaz' || n === 'Jason') ? n + ' (F.A.R)' : n; }
+  // (the list lives inside the function: the first render runs before this line is reached)
+  function dispName(n){
+    var firstAid = ['David', 'Irene', 'Sandrine', 'Arantza', 'Usha', 'Jason', 'Shehnaz', 'Priscilla'];
+    return firstAid.indexOf(n) !== -1 ? n + ' (F.A.R)' : n;
+  }
   function dispPeople(arr){ return (arr || []).map(dispName).join(' / '); }
   var CONTEXT_DUTIES = {'Cot Room':1, 'Changing Area':1};
   var FIXED_DUTIES = {'Dusting':1, 'Laundry':1};
