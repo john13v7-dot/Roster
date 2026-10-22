@@ -35,7 +35,8 @@ DUTY_SLOTS: List[str] = [
     "Staff Room",
     "Hallway downstairs / windows / door handles",
     "Staff Toilet",
-    "Back Garden & Bins",
+    "Bins",
+    "Back Garden",
     "Front creche",
     "Paper & Soap dispensers",
 ]
@@ -61,7 +62,8 @@ DUTY_ELIGIBLE_SLOTS: Dict[str, FrozenSet[str]] = {
     "Kitchen": frozenset({"mid2", "late"}),
     "Hallway downstairs / windows / door handles": frozenset({"mid1", "mid2", "late"}),
     "Children's Toilets": frozenset({"mid2", "late"}),
-    "Back Garden & Bins": frozenset({"early", "mid1"}),
+    "Bins": frozenset({"early"}),
+    "Back Garden": frozenset({"mid1", "mid2"}),
     "Staff Toilet upstairs": frozenset({"early"}),
     "Staff Toilet": frozenset({"early"}),
     "Hallway upstairs / Hoover stairs upstairs": frozenset({"mid1"}),
@@ -74,6 +76,18 @@ DUTY_ELIGIBLE_SLOTS: Dict[str, FrozenSet[str]] = {
 # floor: whoever finishes at this slot or later can stand in when the
 # duty's ideal match (DUTY_ELIGIBLE_SLOTS, above) isn't available.
 DUTY_MIN_SLOT: Dict[str, str] = {duty: min(slots, key=SLOTS.index) for duty, slots in DUTY_ELIGIBLE_SLOTS.items()}
+
+# Duties that go ONLY to the shifts listed for them above - nobody finishing
+# earlier or later is ever picked: Bins to the 7:30 starters (early), Back
+# Garden to the 17:00 / 17:30 finishers (mid1, mid2). If nobody fits that
+# week the duty is left blank and flagged, rather than given to the wrong
+# shift.
+STRICT_DUTIES: FrozenSet[str] = frozenset({"Bins", "Back Garden"})
+
+# Weeks saved before Bins and Back Garden were split carry this one old
+# duty; such a week is re-planned (keeping the other duties where it can)
+# instead of being pinned.
+LEGACY_DUTY = "Back Garden & Bins"
 
 # Filled by whoever's already working that room - never a named, rotating
 # assignment.
@@ -351,6 +365,8 @@ def build_duty_roster(
                 ov_slot = slot_of.get(ov.name)
                 if not ov_slot or SLOTS.index(ov_slot) < SLOTS.index(DUTY_MIN_SLOT[ov.duty]):
                     continue
+                if ov.duty in STRICT_DUTIES and ov_slot not in DUTY_ELIGIBLE_SLOTS[ov.duty]:
+                    continue
                 gap = weeks_since(ov.name, ov.duty, wi)
                 if gap is not None and gap < REPEAT_GAP_WEEKS:
                     repeat_picks.append({"duty": ov.duty, "name": ov.name, "weeks_ago": gap})
@@ -381,7 +397,9 @@ def build_duty_roster(
                 for k, n in enumerate(people):
                     gap = weeks_since(n, duty, wi)
                     kept = (len(kept_list) > 1 and kept_list[1] == n) if is_extra else (bool(kept_list) and kept_list[0] == n)
-                    if SLOTS.index(slot_of[n]) < min_index or (gap is not None and gap < REPEAT_GAP_WEEKS and not kept):
+                    if (SLOTS.index(slot_of[n]) < min_index
+                            or (duty in STRICT_DUTIES and slot_of[n] not in DUTY_ELIGIBLE_SLOTS[duty])
+                            or (gap is not None and gap < REPEAT_GAP_WEEKS and not kept)):
                         row.append(_FORBID)
                         continue
                     c = 0 if slot_of[n] in DUTY_ELIGIBLE_SLOTS[duty] else _NOT_IDEAL
@@ -486,7 +504,8 @@ def build_protected_duty_roster(
         monday = inputs.settings.roster_start + timedelta(weeks=wi)
         locked_week = locked_duties.get(monday.isoformat())
         if locked_week:
-            (keep if week_is_touched(monday) else pinned)[monday.isoformat()] = locked_week
+            legacy = LEGACY_DUTY in locked_week
+            (keep if (legacy or week_is_touched(monday)) else pinned)[monday.isoformat()] = locked_week
     return build_duty_roster(inputs, roster, prior_weeks, pinned, keep)
 
 

@@ -1526,7 +1526,8 @@
     'Staff Room',
     'Hallway downstairs / windows / door handles',
     'Staff Toilet',
-    'Back Garden & Bins',
+    'Bins',
+    'Back Garden',
     'Front creche',
     'Paper & Soap dispensers',
   ];
@@ -1540,7 +1541,8 @@
     'Kitchen': new Set(['mid2', 'late']),
     'Hallway downstairs / windows / door handles': new Set(['mid1', 'mid2', 'late']),
     "Children's Toilets": new Set(['mid2', 'late']),
-    'Back Garden & Bins': new Set(['early', 'mid1']),
+    'Bins': new Set(['early']),
+    'Back Garden': new Set(['mid1', 'mid2']),
     'Staff Toilet upstairs': new Set(['early']),
     'Staff Toilet': new Set(['early']),
     'Hallway upstairs / Hoover stairs upstairs': new Set(['mid1']),
@@ -1556,6 +1558,12 @@
     });
     DUTY_MIN_SLOT[duty] = best;
   });
+  // Bins and Back Garden go ONLY to their listed shifts (Bins: the 7:30
+  // starters; Back Garden: the 17:00 / 17:30 finishers) - left blank rather
+  // than given to another shift. LEGACY_DUTY marks weeks saved before the
+  // split: they are re-planned instead of pinned.
+  var STRICT_DUTIES = { 'Bins': true, 'Back Garden': true };
+  var LEGACY_DUTY = 'Back Garden & Bins';
   var CONTEXT_ROWS = ['Cot Room', 'Changing Area'];
   var FIXED_DUTIES = [['Dusting', ['Sue']], ['Laundry', ['Shehnaz', 'Priscilla']]];
   var EXTRA_POOL = ['Jason'];
@@ -1713,6 +1721,7 @@
           if (assignedByDuty[ov.duty] || remaining.indexOf(ov.name) === -1) return;
           var ovSlot = slotOf[ov.name];
           if (!ovSlot || SLOTS.indexOf(ovSlot) < SLOTS.indexOf(DUTY_MIN_SLOT[ov.duty])) return;
+          if (STRICT_DUTIES[ov.duty] && !DUTY_ELIGIBLE_SLOTS[ov.duty].has(ovSlot)) return;
           var gap = weeksSince(ov.name, ov.duty, wi);
           if (gap !== null && gap < REPEAT_GAP_WEEKS) repeatPicks.push({ duty: ov.duty, name: ov.name, weeks_ago: gap });
           remaining = remaining.filter(function (x) { return x !== ov.name; });
@@ -1737,7 +1746,7 @@
           people.forEach(function (n, k) {
             var gap = weeksSince(n, duty, wi);
             var kept = isExtra ? (keptList.length > 1 && keptList[1] === n) : (keptList.length > 0 && keptList[0] === n);
-            if (SLOTS.indexOf(slotOf[n]) < minIndex || (gap !== null && gap < REPEAT_GAP_WEEKS && !kept)) { row.push(D_FORBID); return; }
+            if (SLOTS.indexOf(slotOf[n]) < minIndex || (STRICT_DUTIES[duty] && !DUTY_ELIGIBLE_SLOTS[duty].has(slotOf[n])) || (gap !== null && gap < REPEAT_GAP_WEEKS && !kept)) { row.push(D_FORBID); return; }
             var c = DUTY_ELIGIBLE_SLOTS[duty].has(slotOf[n]) ? 0 : D_NOT_IDEAL;
             if (hasKeep && !kept) c += D_MOVED;
             c += ((timesDone[n] && timesDone[n][duty]) || 0) * D_PER_TIME_DONE;
@@ -1813,7 +1822,7 @@
     for (var wi = 0; wi < inputs.settings.weeks; wi++) {
       var monday = addDays(inputs.settings.roster_start, wi * 7);
       var lockedWeek = lockedDuties[monday];
-      if (lockedWeek && Object.keys(lockedWeek).length) (weekIsTouched(monday) ? keep : pinned)[monday] = lockedWeek;
+      if (lockedWeek && Object.keys(lockedWeek).length) ((lockedWeek[LEGACY_DUTY] || weekIsTouched(monday)) ? keep : pinned)[monday] = lockedWeek;
     }
     return buildDutyRoster(inputs, roster, priorWeeks, pinned, keep);
   }

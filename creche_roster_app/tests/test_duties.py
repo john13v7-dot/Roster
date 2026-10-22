@@ -60,7 +60,7 @@ class DutyRoster(unittest.TestCase):
         inp, roster, weeks = build()
         self.assertEqual(len(weeks), 4)
         for week in weeks:
-            self.assertEqual(week["unfilled"], [])
+            self.assertLessEqual(set(week["unfilled"]), {"Paper & Soap dispensers"})  # 11 duties, 10 people
             by_duty = {a["duty"]: a["people"] for a in week["assignments"]}
             self.assertEqual(set(by_duty), set(DUTY_SLOTS) | {n for n, _ in FIXED_DUTIES} | set(CONTEXT_ROWS))
             self.assertEqual(by_duty["Dusting"], ["Sue"])
@@ -103,7 +103,7 @@ class DutyRoster(unittest.TestCase):
         over = [Override("Jason", START, START + timedelta(days=27), "early")]
         inp, roster, weeks = build(leave=leave, overrides=over)
         for wi, week in enumerate(weeks):
-            self.assertEqual(week["unfilled"], [])
+            self.assertLessEqual(set(week["unfilled"]), {"Paper & Soap dispensers"})  # 11 duties, 10 people
             for a in week["assignments"]:
                 if a["duty"] not in DUTY_SLOTS or not a["people"]:
                     continue
@@ -198,7 +198,7 @@ class DutyRoster(unittest.TestCase):
             "Irene": ("Staff Room", "mid2"),
             "Deoshree": ("Hallway downstairs / windows / door handles", "late"),
             "Sandrine": ("Staff Toilet", "early"),
-            "Daniel": ("Back Garden & Bins", "mid2"),
+            "Daniel": ("Back Garden", "mid2"),
             "Arantza": ("Front creche", "late"),
             "Usha": ("Paper & Soap dispensers", "early"),
         }
@@ -247,7 +247,7 @@ class DutyRoster(unittest.TestCase):
         inp, roster, weeks = build(leave=leave)
         week0_people = [p for a in weeks[0]["assignments"] if a["duty"] in DUTY_SLOTS for p in a["people"]]
         self.assertIn("Irene", week0_people)
-        self.assertEqual(weeks[0]["unfilled"], [])
+        self.assertLessEqual(set(weeks[0]["unfilled"]), {"Paper & Soap dispensers"})  # 11 duties, 10 people
 
     def test_someone_on_holiday_all_four_weeks_leaves_duties_unfilled(self):
         leave = [
@@ -275,7 +275,7 @@ class DutyRoster(unittest.TestCase):
         inp, roster, weeks = build(duty_overrides=over)
         by_duty = {a["duty"]: a["people"] for a in weeks[0]["assignments"]}
         self.assertEqual(by_duty["Kitchen"], ["Hanny"])
-        self.assertEqual(weeks[0]["unfilled"], [])
+        self.assertLessEqual(set(weeks[0]["unfilled"]), {"Paper & Soap dispensers"})  # 11 duties, 10 people
         # Every other duty that week is still filled exactly once, same as
         # the unforced build - the manual pick doesn't leave a gap
         # elsewhere or double up.
@@ -292,7 +292,7 @@ class DutyRoster(unittest.TestCase):
         inp, roster, weeks = build(duty_overrides=over)
         by_duty = {a["duty"]: a["people"] for a in weeks[0]["assignments"]}
         self.assertNotIn("Manuel", by_duty["Kitchen"])
-        self.assertEqual(weeks[0]["unfilled"], [])
+        self.assertLessEqual(set(weeks[0]["unfilled"]), {"Paper & Soap dispensers"})  # 11 duties, 10 people
         # Manuel still gets some other duty that week - dropping the
         # invalid pick falls back to the normal fair assignment, not to
         # leaving him without one.
@@ -320,7 +320,7 @@ class DutyRoster(unittest.TestCase):
         over = [DutyOverride("Hanny", START, "Kitchen")]
         _, _, weeks = build(duty_overrides=over)
         for wi in (1, 2, 3):
-            self.assertEqual(weeks[wi]["unfilled"], [])
+            self.assertLessEqual(set(weeks[wi]["unfilled"]), {"Paper & Soap dispensers"})  # 11 duties, 10 people
 
     def test_uneven_headcount_falls_back_instead_of_leaving_gaps(self):
         # Jason pinned to "early" and Shehnaz away the whole run is the
@@ -332,7 +332,7 @@ class DutyRoster(unittest.TestCase):
         over = [Override("Jason", START, START + timedelta(days=27), "early")]
         inp, roster, weeks = build(leave=leave, overrides=over)
         for week in weeks:
-            self.assertEqual(week["unfilled"], [])
+            self.assertLessEqual(set(week["unfilled"]), {"Paper & Soap dispensers"})  # 11 duties, 10 people
 
 
 class ProtectedDutyRoster(unittest.TestCase):
@@ -428,7 +428,8 @@ class NoRepeatWithinSixWeeks(unittest.TestCase):
         inp, roster, weeks = build(weeks=12)
         self.assertEqual(_repeats([_by_duty(w) for w in weeks]), [])
         for w in weeks:
-            self.assertEqual(w["unfilled"], [])
+            self.assertLessEqual(set(w["unfilled"]), {"Paper & Soap dispensers", "Front creche", "Bins", "Back Garden"})  # 11 duties, 10 people; Bins/Back Garden only go to their own shifts
+            self.assertLessEqual(len(w["unfilled"]), 2)
 
     def test_no_repeats_with_people_away(self):
         leave = [
@@ -457,7 +458,7 @@ class NoRepeatWithinSixWeeks(unittest.TestCase):
         fresh = build_duty_roster(inp, roster)
         old_monday = (START - timedelta(weeks=REPEAT_GAP_WEEKS)).isoformat()
         weeks = build_duty_roster(inp, roster, {old_monday: _by_duty(fresh[0])})
-        self.assertEqual(weeks[0]["unfilled"], [])
+        self.assertLessEqual(set(weeks[0]["unfilled"]), {"Paper & Soap dispensers"})  # 11 duties, 10 people
 
     def test_pinned_weeks_are_kept_exactly_and_respected_later(self):
         inp = inputs(weeks=5)
@@ -470,18 +471,20 @@ class NoRepeatWithinSixWeeks(unittest.TestCase):
         self.assertEqual(_repeats([_by_duty(w) for w in weeks]), [])
 
     def test_least_important_duties_are_left_blank_first(self):
-        # Two people away for the whole of week 1: 8 people, 10 duties.
+        # Two people away for the whole of week 1: 8 people, 11 duties.
         leave = [
             Leave("Irene", START, START + timedelta(days=4), "Holiday"),
             Leave("Daniel", START, START + timedelta(days=4), "Holiday"),
         ]
         inp, roster, weeks = build(leave=leave)
-        self.assertEqual(sorted(weeks[0]["unfilled"]), sorted(BLANK_FIRST))
+        self.assertEqual(len(weeks[0]["unfilled"]), 3)
+        self.assertTrue(set(BLANK_FIRST) <= set(weeks[0]["unfilled"]))
 
     def test_one_short_blanks_paper_and_soap_first(self):
+        # 9 people for 11 duties: the two least important are the ones left blank.
         leave = [Leave("Irene", START, START + timedelta(days=4), "Holiday")]
         inp, roster, weeks = build(leave=leave)
-        self.assertEqual(weeks[0]["unfilled"], ["Paper & Soap dispensers"])
+        self.assertEqual(sorted(weeks[0]["unfilled"]), sorted(BLANK_FIRST))
 
     def test_nobody_ever_gets_a_duty_after_they_have_gone_home(self):
         inp, roster, weeks = build(weeks=12)
@@ -513,8 +516,9 @@ class NoRepeatWithinSixWeeks(unittest.TestCase):
         self.assertEqual(protected[1]["repeat_picks"], [{"duty": duty, "name": name, "weeks_ago": 1}])
 
     def test_bins_ideal_finish_includes_17_00(self):
-        self.assertEqual(DUTY_ELIGIBLE_SLOTS["Back Garden & Bins"], frozenset({"early", "mid1"}))
-        self.assertEqual(DUTY_MIN_SLOT["Back Garden & Bins"], "early")
+        self.assertEqual(DUTY_ELIGIBLE_SLOTS["Bins"], frozenset({"early"}))
+        self.assertEqual(DUTY_ELIGIBLE_SLOTS["Back Garden"], frozenset({"mid1", "mid2"}))
+        self.assertEqual(DUTY_MIN_SLOT["Back Garden"], "mid1")
 
 
 class MinCostAssignment(unittest.TestCase):
@@ -534,3 +538,33 @@ class MinCostAssignment(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BinsAndBackGarden(unittest.TestCase):
+    def test_two_separate_duties_replace_the_combined_one(self):
+        self.assertIn("Bins", DUTY_SLOTS)
+        self.assertIn("Back Garden", DUTY_SLOTS)
+        self.assertNotIn("Back Garden & Bins", DUTY_SLOTS)
+
+    def test_bins_only_to_7_30_starters_and_back_garden_only_to_17_00_or_17_30(self):
+        from creche_roster.duties import _weekly_slot
+        inp, roster, weeks = build(weeks=12)
+        for wi, w in enumerate(weeks):
+            by = _by_duty(w)
+            for n in by.get("Bins", []):
+                self.assertEqual(_weekly_slot(roster, wi, n), "early", (wi, n))
+            for n in by.get("Back Garden", []):
+                self.assertIn(_weekly_slot(roster, wi, n), ("mid1", "mid2"), (wi, n))
+
+    def test_old_saved_weeks_are_replanned_not_pinned(self):
+        inp, roster, weeks = build()
+        locked = extract_locked_duties(weeks)
+        old = {d: p for d, p in locked[START.isoformat()].items() if d not in ("Bins", "Back Garden")}
+        old["Back Garden & Bins"] = ["Hanny"]
+        locked[START.isoformat()] = old
+        out = build_protected_duty_roster(inp, roster, locked, [])
+        got = _by_duty(out[0])
+        self.assertNotIn("Back Garden & Bins", got)
+        # the other duties mostly stay where they were
+        same = sum(1 for d, p in old.items() if d != "Back Garden & Bins" and got.get(d) == p)
+        self.assertGreaterEqual(same, 5)

@@ -195,8 +195,10 @@ class JoiningTheRotation(unittest.TestCase):
 
 
 class SharedDuty(unittest.TestCase):
-    def test_eleven_people_ten_duties_one_late_duty_is_shared(self):
-        from creche_roster.duties import DUTY_SLOTS, SHARED_CANDIDATES, build_duty_roster, duty_pool
+    def test_eleven_people_eleven_duties_each_does_one(self):
+        # Bins and Back Garden are now two duties, so 11 people fill 11
+        # duties one each; nothing needs sharing until there is a 12th.
+        from creche_roster.duties import DUTY_SLOTS, build_duty_roster, duty_pool
         inp = inputs(date(2026, 11, 9), 6, new_start=NEW)
         inp.leave = []
         for st in inp.staff:
@@ -208,18 +210,12 @@ class SharedDuty(unittest.TestCase):
         r = build_roster(inp)
         self.assertEqual(len(duty_pool(inp)), 11)
         weeks = build_duty_roster(inp, r)
-        seen = []
         for w in weeks:
             by = {a["duty"]: a["people"] for a in w["assignments"] if a["duty"] in DUTY_SLOTS}
-            shared = [d for d, p in by.items() if len(p) == 2]
-            self.assertEqual(len(shared), 1, by)
-            self.assertIn(shared[0], SHARED_CANDIDATES)
-            self.assertEqual(w["unfilled"], [])
+            self.assertFalse([d for d, p in by.items() if len(p) == 2], by)
             everyone = [n for p in by.values() for n in p]
-            self.assertEqual(len(everyone), 11)
-            self.assertEqual(len(set(everyone)), 11)  # nobody does two
-            seen.append(shared[0])
-        self.assertGreaterEqual(len(set(seen)), 2, seen)  # it rotates
+            self.assertEqual(len(everyone), len(set(everyone)))  # nobody does two
+            self.assertLessEqual(len(w["unfilled"]), 1)  # only if the strict Bins / Back Garden shift is not there
 
 
 class DisplayOrder(unittest.TestCase):
