@@ -4593,6 +4593,10 @@
         var weekMonday = data.weeks[wi5] && data.weeks[wi5].monday;
         if(!weekMonday){ formErr.textContent = 'Pick a week.'; formSave.disabled=false; return; }
         var dutyDoc = { name: staff5, week: weekMonday, duty: duty5, createdAt: todayISO() };
+        var okDu = await confirmChange('Setting ' + staff5 + '’s duty', staff5, function(){
+          dutyOverrideDocs.push(Object.assign({_id: '__preview__'}, dutyDoc));
+        });
+        if(!okDu){ formSave.disabled = false; return; }
         var beforeRoster5 = lastBuildOut ? lastBuildOut.roster : null;
         var dref = await db.collection('dutyOverrides').add(dutyDoc);
         var dutyOverrideId = dref && dref.id;
