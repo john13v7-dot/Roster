@@ -1910,7 +1910,7 @@
         if (!label) return;
         var daysOut = week.days.map(function (d) {
           var c = week.cells.get(cellKey(key, d));
-          return { text: c.text || '', kind: c.kind, adjusted: !!c.adjusted };
+          return { text: c.text || '', kind: c.kind, adjusted: !!c.adjusted, cover_for: c.cover_for || [] };
         });
         people.push({ name: label, role: st.role, days: daysOut });
         if (st.role !== 'vacant' && week.days.some(function (d) {
@@ -2043,18 +2043,57 @@
       });
     }
 
+    // Also highlight a day where someone works a different shift from the
+    // rest of their own week while a colleague is away - they are covering.
+    // The colleague must have been working that week (a part-week absence)
+    // or the week before (a leave that has just begun), so a long-running
+    // leave does not colour everyone for months.
+    function markCover(roster) {
+      roster.weeks.forEach(function (week, wi) {
+        var prev = wi > 0 ? roster.weeks[wi - 1] : null;
+        function working(w, key) {
+          return w.days.some(function (dd) { var c = w.cells.get(cellKey(key, dd)); return c && c.kind === 'shift'; });
+        }
+        week.days.forEach(function (d) {
+          var away = [];
+          roster.staff_keys.forEach(function (ks) {
+            var st = ks[1];
+            if ((st.role !== 'rotating' && st.role !== 'paired') || !st.name) return;
+            var c = week.cells.get(cellKey(ks[0], d));
+            if (!c || c.kind !== 'leave' || c.text === 'Bank Holiday') return;
+            if (working(week, ks[0]) || (prev && working(prev, ks[0]))) away.push(st.name);
+          });
+          if (!away.length) return;
+          roster.staff_keys.forEach(function (ks) {
+            var st = ks[1];
+            if ((st.role !== 'rotating' && st.role !== 'paired') || !st.name) return;
+            var cell = week.cells.get(cellKey(ks[0], d));
+            if (!cell || cell.kind !== 'shift' || cell.adjusted) return;
+            var slots = [];
+            week.days.forEach(function (dd) { var c = week.cells.get(cellKey(ks[0], dd)); if (c && c.kind === 'shift') slots.push(c.slot); });
+            var order = [], counts = {};
+            slots.forEach(function (sl) { if (!(sl in counts)) { counts[sl] = 0; order.push(sl); } counts[sl]++; });
+            var usual = order[0];
+            order.forEach(function (sl) { if (counts[sl] > counts[usual]) usual = sl; });
+            if (cell.slot !== usual) { cell.adjusted = true; cell.cover_for = away.slice(); }
+          });
+        });
+      });
+    }
+
     var MAX_ROUNDS = 10;
     var pins = [];
     var roster = buildRoster(inputs);
     for (var i = 0; i < MAX_ROUNDS; i++) {
       var newCorrections = findCorrections(roster);
-      if (!newCorrections.length) { clearStaleAdjusted(roster); markChanges(roster); return roster; }
+      if (!newCorrections.length) { clearStaleAdjusted(roster); markChanges(roster); markCover(roster); return roster; }
       pins = pins.concat(newCorrections);
       var protectedInputs = Object.assign({}, inputs, { overrides: inputs.overrides.concat(pins) });
       roster = buildRoster(protectedInputs);
     }
     clearStaleAdjusted(roster);
     markChanges(roster);
+    markCover(roster);
     return roster;
   }
 

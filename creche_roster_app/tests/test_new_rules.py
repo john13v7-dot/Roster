@@ -297,3 +297,24 @@ class OnlyTheMoverMoves(unittest.TestCase):
         # and the earlier week, before the room moved, is untouched for her too
         self.assertEqual(week_slot(r, 0, "Deoshree"), week_slot(ref, 0, "Deoshree"))
         self.assertEqual([c for c in r.checks if c.level == "BREACH"], [])
+
+
+class CoverHighlight(unittest.TestCase):
+    def test_cover_day_is_highlighted_even_when_nothing_changed_from_the_saved_week(self):
+        from creche_roster.engine import build_protected_roster, extract_locked_slots
+        inp = inputs(date(2026, 11, 9), 4, leave=[Leave("Arantza", date(2026, 11, 20), None, "Holiday")])
+        base = build_roster(inp)
+        locked = extract_locked_slots(base)
+        # rebuild against its own lock: nothing differs from the saved version
+        r = build_protected_roster(inp, locked, [])
+        keys = {st.name: k for k, st in r.staff_keys}
+        week = r.weeks[1]
+        day = date(2026, 11, 20)
+        flagged = [(n, week.cells[(k, day)].cover_for) for n, k in keys.items()
+                   if (k, day) in week.cells and week.cells[(k, day)].adjusted]
+        self.assertTrue(flagged, "someone covering Arantza on her first day away is highlighted")
+        self.assertTrue(all(c == ["Arantza"] for _, c in flagged))
+        # and not a single day is flagged where nobody is part-week away
+        other = [(n, d) for n, k in keys.items() for d in r.weeks[0].days
+                 if (k, d) in r.weeks[0].cells and r.weeks[0].cells[(k, d)].adjusted]
+        self.assertEqual(other, [])

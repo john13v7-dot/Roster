@@ -150,6 +150,7 @@ class Assignment:
     text: str = ""
     overridden: bool = False
     adjusted: bool = False  # this day's slot was moved to cover for someone else's absence
+    cover_for: List[str] = field(default_factory=list)  # who they are covering, when that is why it is highlighted
 
 
 @dataclass
