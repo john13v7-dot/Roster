@@ -141,6 +141,12 @@ class Inputs:
     # roster (oldest first; None = away that week), from the archive - so the
     # newer rules' rolling fairness window can see back past the start.
     prior_slots: Dict[str, List[Optional[str]]] = field(default_factory=dict)
+    # {name: {iso_date: slot}}: on these days the person starts from this slot
+    # (their saved shift) instead of the weekly rotation - but, unlike an
+    # override, the daily cover repair may still move them. This is how a day
+    # that a new leave opens keeps everyone else where they were and moves
+    # only as many people as the cover rules truly need.
+    soft_slots: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
 
 @dataclass

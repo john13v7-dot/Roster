@@ -1329,7 +1329,8 @@ def build_roster(inputs: Inputs) -> Roster:
                     if bounded_override(st.name, d):
                         bounded_overridden.add(st.name)
                 else:
-                    slot_of[st.name] = base[st.name]
+                    soft = inputs.soft_slots.get(st.name, {}).get(d.isoformat()) if st.role == "rotating" else None
+                    slot_of[st.name] = soft or base[st.name]
 
             if d in s.closure_days:
                 continue  # closed: nobody works, so no cover, pairing or room rule applies
@@ -1663,6 +1664,25 @@ def build_protected_roster(
                     if cell.slot != usual:
                         cell.adjusted = True
                         cell.cover_for = list(away)
+
+    # A day a new change opens starts from everyone's saved shift (the repair
+    # below still moves whoever cover truly needs), instead of a fresh weekly
+    # solve that would reshuffle people who were never affected.
+    soft: Dict[str, Dict[str, str]] = {}
+    for week_i in range(inputs.settings.weeks):
+        for off in range(NDAYS):
+            d0 = inputs.settings.roster_start + timedelta(days=week_i * 7 + off)
+            if not is_touched(d0):
+                continue
+            for st0 in inputs.staff:
+                if st0.role != "rotating" or not st0.name:
+                    continue
+                if free_names and st0.name in free_names and any(a <= d0 <= b for a, b in (free_ranges or [])):
+                    continue
+                sl0 = locked_roster.get(st0.name, {}).get(d0.isoformat())
+                if sl0:
+                    soft.setdefault(st0.name, {})[d0.isoformat()] = sl0
+    inputs = dataclasses.replace(inputs, soft_slots=soft)
 
     _MAX_ROUNDS = 10
     pins: List[Override] = []

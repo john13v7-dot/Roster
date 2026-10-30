@@ -1394,7 +1394,10 @@
             slotOf[st.name] = ov;
             overridden.add(st.name);
             if (boundedOverride(st.name, d)) boundedOverridden.add(st.name);
-          } else { slotOf[st.name] = base[st.name]; }
+          } else {
+            var softSlot = st.role === 'rotating' && inputs.soft_slots && inputs.soft_slots[st.name] ? inputs.soft_slots[st.name][d] : null;
+            slotOf[st.name] = softSlot || base[st.name];
+          }
         });
 
         if (s.closure_days && s.closure_days[d]) return; // closed: no cover, pairing or room rule applies
@@ -2080,6 +2083,24 @@
         });
       });
     }
+
+    // A day a new change opens starts from everyone's saved shift (the repair
+    // below still moves whoever cover truly needs), instead of a fresh weekly
+    // solve that would reshuffle people who were never affected.
+    var soft = {};
+    for (var wk = 0; wk < inputs.settings.weeks; wk++) {
+      for (var off = 0; off < NDAYS; off++) {
+        var d0 = addDays(inputs.settings.roster_start, wk * 7 + off);
+        if (!isTouched(d0)) continue;
+        inputs.staff.forEach(function (st0) {
+          if (st0.role !== 'rotating' || !st0.name) return;
+          if (freeNames && freeNames[st0.name] && (freeRanges || []).some(function (r) { return r[0] <= d0 && d0 <= r[1]; })) return;
+          var sl0 = (lockedRoster[st0.name] || {})[d0];
+          if (sl0) { (soft[st0.name] = soft[st0.name] || {})[d0] = sl0; }
+        });
+      }
+    }
+    inputs = Object.assign({}, inputs, { soft_slots: soft });
 
     var MAX_ROUNDS = 10;
     var pins = [];

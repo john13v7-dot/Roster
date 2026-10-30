@@ -318,3 +318,25 @@ class CoverHighlight(unittest.TestCase):
         other = [(n, d) for n, k in keys.items() for d in r.weeks[0].days
                  if (k, d) in r.weeks[0].cells and r.weeks[0].cells[(k, d)].adjusted]
         self.assertEqual(other, [])
+
+
+class OneAbsenceMovesLittle(unittest.TestCase):
+    def test_a_day_off_does_not_reshuffle_anyone_who_cover_does_not_need(self):
+        from creche_roster.engine import build_protected_roster, extract_locked_slots
+        base_in = inputs(date(2026, 11, 9), 4)
+        base = build_roster(base_in)
+        locked = extract_locked_slots(base)
+        keys = {st.name: k for k, st in base.staff_keys}
+        day = date(2026, 11, 24)
+        # someone on a middle shift (not an opener/closer) takes one day off
+        who = next(n for n, k in keys.items()
+                   if base.weeks[2].cells.get((k, day)) is not None
+                   and base.weeks[2].cells[(k, day)].kind == "shift"
+                   and base.weeks[2].cells[(k, day)].slot in ("mid1", "mid2")
+                   and base_in.staff[[s.name for s in base_in.staff].index(n)].role == "rotating")
+        leave = [Leave(who, day, day, "Holiday")]
+        prot = build_protected_roster(inputs(date(2026, 11, 9), 4, leave=leave), locked, [(day, day)])
+        moved = [n for n, k in keys.items() if n != who
+                 and base.weeks[2].cells[(k, day)].kind == "shift"
+                 and prot.weeks[2].cells[(k, day)].slot != base.weeks[2].cells[(k, day)].slot]
+        self.assertEqual(moved, [], f"{who} off for a day moved {moved}")

@@ -1009,16 +1009,21 @@ class ProtectedRoster(unittest.TestCase):
         self.assertEqual(protected.breaches, [])
         self.assertEqual([c for c in protected.checks if c.level == "WARNING"], [])
 
-    def test_touched_week_is_left_free_to_adjust(self):
+    def test_touched_week_moves_only_as_many_people_as_are_away(self):
+        # A day a new leave opens starts from everyone's saved shift; cover is
+        # repaired by moving at most one person per person away - never a
+        # reshuffle of the whole week.
         baseline = build_roster(inputs())
         locked = extract_locked_slots(baseline)
         leave_start, leave_end = START + timedelta(days=14), START + timedelta(days=18)
         leave = [Leave("Irene", leave_start, leave_end, "Holiday")]
-        natural = build_roster(inputs(leave=leave))
         protected = build_protected_roster(inputs(leave=leave), locked, [(leave_start, leave_end)])
-        # The touched week itself isn't pinned to the baseline - it's free
-        # to be whatever the natural (unprotected) recompute produces.
-        self.assertEqual(self._week_slots(protected, 2), self._week_slots(natural, 2))
+        base_slots = self._week_slots(baseline, 2)
+        new_slots = self._week_slots(protected, 2)
+        for di in range(5):
+            moved = [n for n in base_slots if n != "Irene" and base_slots[n][di] != new_slots[n][di]]
+            self.assertLessEqual(len(moved), 1, (di, moved))
+        self.assertEqual(protected.breaches, [])
 
     def test_no_op_when_nothing_has_drifted(self):
         baseline = build_roster(inputs())
