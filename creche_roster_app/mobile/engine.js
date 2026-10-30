@@ -2064,6 +2064,7 @@
         function working(w, key) {
           return w.days.some(function (dd) { var c = w.cells.get(cellKey(key, dd)); return c && c.kind === 'shift'; });
         }
+        var awayOn = {};
         week.days.forEach(function (d) {
           var away = [];
           roster.staff_keys.forEach(function (ks) {
@@ -2073,19 +2074,31 @@
             if (!c || c.kind !== 'leave' || c.text === 'Bank Holiday') return;
             if (working(week, ks[0]) || (prev && working(prev, ks[0]))) away.push(st.name);
           });
-          if (!away.length) return;
-          roster.staff_keys.forEach(function (ks) {
-            var st = ks[1];
-            if ((st.role !== 'rotating' && st.role !== 'paired') || !st.name) return;
-            var cell = week.cells.get(cellKey(ks[0], d));
-            if (!cell || cell.kind !== 'shift' || cell.adjusted) return;
-            var slots = [];
-            week.days.forEach(function (dd) { var c = week.cells.get(cellKey(ks[0], dd)); if (c && c.kind === 'shift') slots.push(c.slot); });
-            var order = [], counts = {};
-            slots.forEach(function (sl) { if (!(sl in counts)) { counts[sl] = 0; order.push(sl); } counts[sl]++; });
-            var usual = order[0];
-            order.forEach(function (sl) { if (counts[sl] > counts[usual]) usual = sl; });
-            if (cell.slot !== usual) { cell.adjusted = true; cell.cover_for = away.slice(); }
+          if (away.length) awayOn[d] = away;
+        });
+        if (!Object.keys(awayOn).length) return;
+        roster.staff_keys.forEach(function (ks) {
+          var st = ks[1];
+          if ((st.role !== 'rotating' && st.role !== 'paired') || !st.name) return;
+          // A person's normal shift is the one they have on the days nobody is
+          // away. Judging it by "most days of the week" goes wrong as soon as
+          // someone covers on more days than they are normal.
+          var all = [], clean = [];
+          week.days.forEach(function (dd) {
+            var c = week.cells.get(cellKey(ks[0], dd));
+            if (c && c.kind === 'shift') { all.push(c.slot); if (!awayOn[dd]) clean.push(c.slot); }
+          });
+          var pool = clean.length ? clean : all;
+          if (!pool.length) return;
+          var order = [], counts = {};
+          pool.forEach(function (sl) { if (!(sl in counts)) { counts[sl] = 0; order.push(sl); } counts[sl]++; });
+          var usual = order[0];
+          order.forEach(function (sl) { if (counts[sl] > counts[usual]) usual = sl; });
+          week.days.forEach(function (dd) {
+            var cell = week.cells.get(cellKey(ks[0], dd));
+            if (cell && cell.kind === 'shift' && awayOn[dd] && !cell.adjusted && cell.slot !== usual) {
+              cell.adjusted = true; cell.cover_for = awayOn[dd].slice();
+            }
           });
         });
       });

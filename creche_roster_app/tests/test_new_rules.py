@@ -349,3 +349,84 @@ class MixNotCheckedWhenSomeoneIsAway(unittest.TestCase):
         away_days = {date(2026, 11, 20), date(2026, 11, 23)}
         bad = [c for c in r.checks if c.rule == "Age-group mix" and c.day in away_days]
         self.assertEqual(bad, [])
+
+
+class CoverColouringInvariant(unittest.TestCase):
+    """The colour for "covering" must follow one rule, whatever the leave:
+    a coloured day is a day someone is away, the person's slot then differs
+    from the slot they hold on the days nobody is away, and every name shown
+    is really away that day. A shift they hold on a normal day is never
+    coloured (the Usha bug: covering 3 days made her normal Monday look odd)."""
+
+    def check(self, leave, start=date(2026, 11, 9), weeks=4):
+        from creche_roster.engine import build_protected_roster, extract_locked_slots
+        base = build_roster(inputs(start, weeks))
+        locked = extract_locked_slots(base)
+        inp = inputs(start, weeks, leave=leave)
+        ranges = [(l.start, l.end or start + timedelta(days=weeks * 7)) for l in leave]
+        r = build_protected_roster(inp, locked, ranges)
+        problems = []
+        for wi, w in enumerate(r.weeks):
+            away_names = {}
+            for k, st in r.staff_keys:
+                if st.role not in ("rotating", "paired") or not st.name:
+                    continue
+                for d in w.days:
+                    c = w.cells[(k, d)]
+                    if c.kind == "leave" and c.text not in ("Bank Holiday", "OFF"):
+                        away_names.setdefault(d, set()).add(st.name)
+            for k, st in r.staff_keys:
+                if st.role not in ("rotating", "paired") or not st.name:
+                    continue
+                clean = [w.cells[(k, d)].slot for d in w.days
+                         if w.cells[(k, d)].kind == "shift" and d not in away_names]
+                for d in w.days:
+                    c = w.cells[(k, d)]
+                    if not c.cover_for:
+                        continue
+                    if d not in away_names:
+                        problems.append((wi, st.name, d, "coloured on a day nobody is away"))
+                    if clean and c.slot in clean:
+                        problems.append((wi, st.name, d, "coloured but it is their normal shift"))
+                    if not set(c.cover_for) <= away_names.get(d, set()):
+                        problems.append((wi, st.name, d, "names someone who is not away"))
+        return problems
+
+    def test_usha_case_cover_days_outnumber_normal_days(self):
+        leave = [Leave("Arantza", date(2026, 11, 9), date(2026, 11, 11), "Holiday"),
+                 Leave("Irene", date(2026, 11, 9), date(2026, 11, 12), "Holiday")]
+        self.assertEqual(self.check(leave), [])
+
+    def test_assorted_leave_patterns(self):
+        import itertools
+        names = ["Hanny", "Manuel", "Irene", "Arantza", "Daniel", "David", "Usha", "Sandrine"]
+        starts = [date(2026, 11, 9), date(2026, 11, 10), date(2026, 11, 16), date(2026, 11, 18)]
+        lens = [0, 1, 3, 4]
+        for i, (n1, n2) in enumerate(itertools.combinations(names, 2)):
+            leave = [Leave(n1, starts[i % 4], starts[i % 4] + timedelta(days=lens[i % 4]), "Holiday"),
+                     Leave(n2, starts[(i + 1) % 4], starts[(i + 1) % 4] + timedelta(days=lens[(i + 2) % 4]), "Holiday")]
+            self.assertEqual(self.check(leave), [], leave)
+
+
+class CoverColouringUshaCase(unittest.TestCase):
+    def test_the_slot_held_on_normal_days_is_never_coloured(self):
+        from creche_roster.engine import mark_cover
+        base = build_roster(inputs(date(2026, 11, 9), 1))
+        w = base.weeks[0]
+        keys = {st.name: k for k, st in base.staff_keys}
+        for n in ("Usha", "Irene", "Arantza"):
+            for d in w.days:
+                w.cells[(keys[n], d)].adjusted = False
+        from creche_roster.models import Assignment
+        # Irene away Mon-Thu, Arantza Mon-Wed; Usha closes Tue-Thu to cover,
+        # and is on her normal mid2 on Mon and Fri.
+        for d in w.days[:4]:
+            w.cells[(keys["Irene"], d)] = Assignment("leave", text="Holiday")
+        for d in w.days[:3]:
+            w.cells[(keys["Arantza"], d)] = Assignment("leave", text="Holiday")
+        for i, d in enumerate(w.days):
+            w.cells[(keys["Usha"], d)] = Assignment("shift", "late" if i in (1, 2, 3) else "mid2", "x")
+        mark_cover(base)
+        flags = [w.cells[(keys["Usha"], d)].adjusted for d in w.days]
+        self.assertEqual(flags, [False, True, True, True, False])
+        self.assertEqual(w.cells[(keys["Usha"], w.days[1])].cover_for, ["Irene", "Arantza"])

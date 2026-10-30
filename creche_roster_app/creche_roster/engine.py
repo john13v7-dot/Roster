@@ -1515,6 +1515,55 @@ def extract_locked_slots(
     return out
 
 
+def mark_cover(roster: Roster) -> None:
+    """Also highlight a day where someone works a different shift from
+    the rest of their own week while a colleague is away - they are
+    covering. The colleague must have been working that week (a
+    part-week absence) or the week before (a leave that has just begun),
+    so a long-running leave does not colour everyone for months. This is
+    in addition to "differs from the saved version" above: a cover shift
+    that was saved along with the leave is still cover."""
+    for wi, week in enumerate(roster.weeks):
+        prev = roster.weeks[wi - 1] if wi > 0 else None
+
+        def working(w, key) -> bool:
+            return any((c := w.cells.get((key, dd))) is not None and c.kind == "shift" for dd in w.days)
+
+        away_on: Dict[date, List[str]] = {}
+        for d in week.days:
+            away = []
+            for key, st in roster.staff_keys:
+                if st.role not in ("rotating", "paired") or not st.name:
+                    continue
+                c = week.cells.get((key, d))
+                if c is None or c.kind != "leave" or c.text == "Bank Holiday":
+                    continue
+                if working(week, key) or (prev is not None and working(prev, key)):
+                    away.append(st.name)
+            if away:
+                away_on[d] = away
+        if not away_on:
+            continue
+        for key, st in roster.staff_keys:
+            if st.role not in ("rotating", "paired") or not st.name:
+                continue
+            # A person's normal shift is the one they have on the days nobody
+            # is away. Judging it by "most days of the week" goes wrong as
+            # soon as someone covers on more days than they are normal.
+            shifts = {d: week.cells[(key, d)].slot for d in week.days
+                      if (key, d) in week.cells and week.cells[(key, d)].kind == "shift"}
+            clean = [shifts[d] for d in week.days if d in shifts and d not in away_on]
+            pool = clean or list(shifts.values())
+            if not pool:
+                continue
+            usual = max(dict.fromkeys(pool), key=pool.count)
+            for d, slot in shifts.items():
+                cell = week.cells[(key, d)]
+                if d in away_on and not cell.adjusted and slot != usual:
+                    cell.adjusted = True
+                    cell.cover_for = list(away_on[d])
+
+
 def build_protected_roster(
     inputs: Inputs,
     locked_roster: Dict[str, Dict[str, str]],
@@ -1637,44 +1686,6 @@ def build_protected_roster(
                         continue
                     locked = locked_roster.get(st.name, {}).get(d.isoformat())
                     cell.adjusted = locked is not None and locked != cell.slot
-
-    def mark_cover(roster: Roster) -> None:
-        """Also highlight a day where someone works a different shift from
-        the rest of their own week while a colleague is away - they are
-        covering. The colleague must have been working that week (a
-        part-week absence) or the week before (a leave that has just begun),
-        so a long-running leave does not colour everyone for months. This is
-        in addition to "differs from the saved version" above: a cover shift
-        that was saved along with the leave is still cover."""
-        for wi, week in enumerate(roster.weeks):
-            prev = roster.weeks[wi - 1] if wi > 0 else None
-
-            def working(w, key) -> bool:
-                return any((c := w.cells.get((key, dd))) is not None and c.kind == "shift" for dd in w.days)
-
-            for d in week.days:
-                away = []
-                for key, st in roster.staff_keys:
-                    if st.role not in ("rotating", "paired") or not st.name:
-                        continue
-                    c = week.cells.get((key, d))
-                    if c is None or c.kind != "leave" or c.text == "Bank Holiday":
-                        continue
-                    if working(week, key) or (prev is not None and working(prev, key)):
-                        away.append(st.name)
-                if not away:
-                    continue
-                for key, st in roster.staff_keys:
-                    if st.role not in ("rotating", "paired") or not st.name:
-                        continue
-                    cell = week.cells.get((key, d))
-                    if cell is None or cell.kind != "shift" or cell.adjusted:
-                        continue
-                    slots = [c.slot for dd in week.days if (c := week.cells.get((key, dd))) is not None and c.kind == "shift"]
-                    usual = max(dict.fromkeys(slots), key=slots.count)
-                    if cell.slot != usual:
-                        cell.adjusted = True
-                        cell.cover_for = list(away)
 
     # A day a new change opens starts from everyone's saved shift (the repair
     # below still moves whoever cover truly needs), instead of a fresh weekly
