@@ -340,3 +340,12 @@ class OneAbsenceMovesLittle(unittest.TestCase):
                  and base.weeks[2].cells[(k, day)].kind == "shift"
                  and prot.weeks[2].cells[(k, day)].slot != base.weeks[2].cells[(k, day)].slot]
         self.assertEqual(moved, [], f"{who} off for a day moved {moved}")
+
+
+class MixNotCheckedWhenSomeoneIsAway(unittest.TestCase):
+    def test_no_age_group_warning_on_a_day_with_an_absence(self):
+        inp = inputs(date(2026, 11, 9), 6, leave=[Leave("Daniel", date(2026, 11, 20), date(2026, 11, 23), "Holiday")])
+        r = build_roster(inp)
+        away_days = {date(2026, 11, 20), date(2026, 11, 23)}
+        bad = [c for c in r.checks if c.rule == "Age-group mix" and c.day in away_days]
+        self.assertEqual(bad, [])

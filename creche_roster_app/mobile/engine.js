@@ -1312,7 +1312,7 @@
             } else {
               Object.assign(base, patchWeeklyBase(members, idealBase, pre, s.min_open[floor], minClose, hist, lastSlot, wi, roomOf, takenByRoom, s.weeks, !newRules));
             }
-            if (newRules) {
+            if (newRules && (idealBase === undefined || idealBase === null)) {
               var mine = {};
               members.forEach(function (nm) { if (Object.prototype.hasOwnProperty.call(base, nm)) mine[nm] = base[nm]; });
               fixMidMix(mine, roomOf, groupOf, extTaken);
@@ -1402,6 +1402,13 @@
 
         if (s.closure_days && s.closure_days[d]) return; // closed: no cover, pairing or room rule applies
 
+        // A day with someone away is judged on opening / closing cover only:
+        // the age-group mix is not checked (or reported) on it.
+        var awayToday = staffKeys.some(function (ks2) {
+          var c2 = cells.get(cellKey(ks2[0], d));
+          return (ks2[1].role === 'rotating' || ks2[1].role === 'paired') && c2 && c2.kind === 'leave' &&
+            c2.text !== 'Bank Holiday' && c2.text !== 'OFF' && c2.text !== 'Maternity Leave';
+        });
         var fb = s.fallback_closer;
         var fbAssignment = fb ? cells.get(cellKey(fb, d)) : null;
         // The fallback closer covers whenever they're actually working that day
@@ -1434,7 +1441,7 @@
           repairFloor(d, floor, slotOf, overridden, byName, s, costFn, checks, wi, need, roomOf, adjusted, newRules, coverCount);
           if (fallbackCovering) capLateForFallback(d, floor, slotOf, overridden, byName, s, need, costFn, checks, wi, fb, roomOf, adjusted);
           checkFloor(d, floor, slotOf, byName, s, checks, wi, need);
-          if (newRules) {
+          if (newRules && !awayToday) {
             ['mid1', 'mid2'].forEach(function (mid) {
               var group = Object.keys(slotOf).filter(function (nm) { return slotOf[nm] === mid && byName[nm].floor === floor; });
               var kinds = {};

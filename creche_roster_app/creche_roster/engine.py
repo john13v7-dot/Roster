@@ -1235,7 +1235,10 @@ def build_roster(inputs: Inputs) -> Roster:
                                 room_of, taken_by_room, s.weeks, not new_rules,
                             )
                         )
-                    if new_rules:
+                    if new_rules and ideal_base is None:
+                        # Age-group mix is only a preference for the full-strength
+                        # week; a week with absences is patched from it and is
+                        # never reshuffled for the mix.
                         mine = {n: base[n] for n in members if n in base}
                         _fix_mid_mix(mine, room_of, group_of, ext_taken)
                         base.update(mine)
@@ -1335,6 +1338,14 @@ def build_roster(inputs: Inputs) -> Roster:
             if d in s.closure_days:
                 continue  # closed: nobody works, so no cover, pairing or room rule applies
 
+            # A day with someone away is judged on opening / closing cover only:
+            # the age-group mix is not checked (or reported) on it.
+            away_today = any(
+                (key, d) in cells and cells[(key, d)].kind == "leave"
+                and cells[(key, d)].text not in ("Bank Holiday", "OFF", "Maternity Leave")
+                for key, st2 in staff_keys if st2.role in ("rotating", "paired")
+            )
+
             fb = s.fallback_closer
             fb_assignment = cells.get((fb, d)) if fb else None
             # The fallback closer covers whenever they're actually working that
@@ -1381,7 +1392,7 @@ def build_roster(inputs: Inputs) -> Roster:
                 if fallback_covering:
                     _cap_late_for_fallback(d, floor, slot_of, overridden, by_name, s, need, cost_fn, checks, wi, fb, room_of=room_of, adjusted=adjusted)
                 _check_floor(d, floor, slot_of, by_name, s, checks, wi, need=need)
-                if new_rules:
+                if new_rules and not away_today:
                     for mid in ("mid1", "mid2"):
                         group = [n for n in slot_of if slot_of[n] == mid and by_name[n].floor == floor]
                         kinds = {group_of.get(n) for n in group}
