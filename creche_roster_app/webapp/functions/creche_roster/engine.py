@@ -1508,8 +1508,6 @@ def build_protected_roster(
     locked_roster: Dict[str, Dict[str, str]],
     touched_ranges: List[Tuple[date, date]],
     highlight_ranges: Optional[List[Tuple[date, date]]] = None,
-    free_names: Optional[set] = None,
-    free_ranges: Optional[List[Tuple[date, date]]] = None,
 ) -> Roster:
     """Build the roster, then pin every rotating/paired person's day back
     to `locked_roster` (their last known-good slot: {name: {iso_date:
@@ -1530,11 +1528,6 @@ def build_protected_roster(
     opening shift the day a colleague's new leave falls on), not a
     half-protected state where the person on leave can move but nobody
     else can adjust around them.
-
-    `free_names` + `free_ranges` open a day for specific PEOPLE only (the
-    person just added, or who just changed room): inside `free_ranges` they
-    are planned freely while everyone else stays pinned to the saved shift,
-    so a staff change moves the person it is about and nobody else.
 
     Callers that want this build's results to become the NEW lock for
     the days that were open should call extract_locked_slots(result,
@@ -1569,8 +1562,6 @@ def build_protected_roster(
                     continue
                 for _, st in roster.staff_keys:
                     if st.role not in ("rotating", "paired") or not st.name:
-                        continue
-                    if free_names and st.name in free_names and any(a <= d <= b for a, b in (free_ranges or [])):
                         continue
                     locked_slot = locked_roster.get(st.name, {}).get(d.isoformat())
                     if locked_slot is None:
@@ -1626,44 +1617,6 @@ def build_protected_roster(
                     locked = locked_roster.get(st.name, {}).get(d.isoformat())
                     cell.adjusted = locked is not None and locked != cell.slot
 
-    def mark_cover(roster: Roster) -> None:
-        """Also highlight a day where someone works a different shift from
-        the rest of their own week while a colleague is away - they are
-        covering. The colleague must have been working that week (a
-        part-week absence) or the week before (a leave that has just begun),
-        so a long-running leave does not colour everyone for months. This is
-        in addition to "differs from the saved version" above: a cover shift
-        that was saved along with the leave is still cover."""
-        for wi, week in enumerate(roster.weeks):
-            prev = roster.weeks[wi - 1] if wi > 0 else None
-
-            def working(w, key) -> bool:
-                return any((c := w.cells.get((key, dd))) is not None and c.kind == "shift" for dd in w.days)
-
-            for d in week.days:
-                away = []
-                for key, st in roster.staff_keys:
-                    if st.role not in ("rotating", "paired") or not st.name:
-                        continue
-                    c = week.cells.get((key, d))
-                    if c is None or c.kind != "leave" or c.text == "Bank Holiday":
-                        continue
-                    if working(week, key) or (prev is not None and working(prev, key)):
-                        away.append(st.name)
-                if not away:
-                    continue
-                for key, st in roster.staff_keys:
-                    if st.role not in ("rotating", "paired") or not st.name:
-                        continue
-                    cell = week.cells.get((key, d))
-                    if cell is None or cell.kind != "shift" or cell.adjusted:
-                        continue
-                    slots = [c.slot for dd in week.days if (c := week.cells.get((key, dd))) is not None and c.kind == "shift"]
-                    usual = max(dict.fromkeys(slots), key=slots.count)
-                    if cell.slot != usual:
-                        cell.adjusted = True
-                        cell.cover_for = list(away)
-
     _MAX_ROUNDS = 10
     pins: List[Override] = []
     roster = build_roster(inputs)
@@ -1672,14 +1625,12 @@ def build_protected_roster(
         if not new_corrections:
             clear_stale_adjusted(roster)
             mark_changes(roster)
-            mark_cover(roster)
             return roster
         pins = pins + new_corrections
         protected_inputs = dataclasses.replace(inputs, overrides=list(inputs.overrides) + pins)
         roster = build_roster(protected_inputs)
     clear_stale_adjusted(roster)
     mark_changes(roster)
-    mark_cover(roster)
     return roster
 
 
